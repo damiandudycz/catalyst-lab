@@ -569,7 +569,7 @@ prepare_stages() {
 
 # Build stages.
 build_stages() {
-	echo_color ${color_turquoise_bold} "[ Building stages ]"
+	echo_color ${color_turquoise} "[ Building stages ]"
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		use_stage ${i}
 		if [[ ${rebuild} = false ]]; then
