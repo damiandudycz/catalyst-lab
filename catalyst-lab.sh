@@ -11,6 +11,8 @@ declare -A ARCH_MAPPINGS=([aarch64]=arm64) # Map from arch command to release ar
 
 readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
 readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
+readonly qemu_has_static_user=$(grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE && echo true || echo false)
+readonly qemu_binfmt_is_running=$(grep -q '^enabled$' /proc/sys/fs/binfmt_misc/status && echo true || echo false)
 
 readonly color_red='\033[0;31m'
 readonly color_green='\033[0;32m'
@@ -382,7 +384,7 @@ prepare_stages() {
 
 		# Determine if stage's parent will also be rebuild, to know if it should use available_source_subpath or new parent build.
 		if [[ -n "${parent_index}" ]] && [[ "${parent_rebuild}" = false ]] && [[ -n ${parent_available_build} ]]; then
-			echo "Using existing source ${parent_available_build} for ${platform}/${release}/${stage}"
+			echo_color ${color_turquoise} "Using existing source ${parent_available_build} for ${platform}/${release}/${stage}"
 			stages[${i},source_subpath]=${parent_available_build%.tar.xz}
 			use_stage ${i} # Reload data
 		fi
@@ -406,11 +408,11 @@ prepare_stages() {
 			local matching_source_builds=($(printf "%s\n" "${available_builds[@]}" | grep -E "${source_target_regex}"))
 			local source_available_build=$(printf "%s\n" "${matching_source_builds[@]}" | sort -r | head -n 1)
 			if [[ ${#selected_stages_templates[@]} -ne 0 ]] && [[ -n ${source_available_build} ]] && [[ ! ${CLEAN_BUILD} = true ]]; then
-				echo "Using existing source ${source_available_build} for ${platform}/${release}/${stage}"
+				echo_color ${color_turquoise} "Using existing source ${source_available_build} for ${platform}/${release}/${stage}"
 				stages[${i},source_subpath]=${source_available_build%.tar.xz}
 			else
 				# Download seed for ${source_subpath} to file ${source_filename}
-				echo "Get seed info: ${platform}/${release}/${stage}"
+				echo_color ${color_turquoise} "Getting seed info: ${platform}/${release}/${stage}"
 				local seeds_arch_url=$(echo ${seeds_url} | sed "s/@ARCH_FAMILY@/${arch_family}/")
 				local metadata_url=${seeds_arch_url}/latest-${source_target_stripped}.txt
 				local metadata_content=$(wget -q -O - ${metadata_url} --no-http-keep-alive --no-cache --no-cookies)
@@ -456,7 +458,15 @@ prepare_stages() {
 			interpreter=${arch_interpreter}
 			stages[${i},interpreter]=${arch_interpreter}
 			if [[ ! -f ${arch_interpreter} ]]; then
-				echo "Required interpreter: ${arch_interpreter} is not found"
+				echo "Required interpreter: ${arch_interpreter} is not found."
+				exit 1
+			fi
+			if [[ ${qemu_has_static_user} = false ]]; then
+				echo "Qemu needs to be installed with static_user USE flag."
+				exit 1
+			fi
+			if [[ ${qemu_binfmt_is_running} = false ]]; then
+				echo "qemu-binfmt service is not running."
 				exit 1
 			fi
 		fi
@@ -553,7 +563,7 @@ prepare_stages() {
 		fi
 	done
 
-	echo "Stages templates prepared in: ${work_path}"
+	echo_color ${color_turquoise} "Stages templates prepared in: ${work_path}"
 	echo ""
 }
 
@@ -571,7 +581,7 @@ build_stages() {
 
 		# If stage doesn't have parent built or already existing as .tar.xz, download it's
 		if [[ -n ${source_url} ]] && [[ ! -f ${source_path} ]]; then
-			echo "Downloading seed for: ${platform}/${release}/${stage}"
+			echo_color ${color_turquoise} "Downloading seed for: ${platform}/${release}/${stage}"
 			echo ""
 			wget ${source_url} -O ${source_path} || exit 1
 		fi
@@ -583,7 +593,7 @@ build_stages() {
 			local local_path_for_remote=$(echo ${repo} | awk -F '|' '{if (NF>1) print $2; else print ""}')
 			if [[ -n ${local_path_for_remote} ]] && [[ ! -d ${local_path_for_remote} ]]; then
 				local repo_url=$(echo ${repo} | cut -d '|' -f 1)
-				echo "Clone overlay repo ${repo_url}"
+				echo_color ${color_turquoise} "Clonning overlay repo ${repo_url}"
 				mkdir -p ${local_path_for_remote}
 				git clone ${repo_url} ${local_path_for_remote}
 			fi
