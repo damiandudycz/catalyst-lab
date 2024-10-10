@@ -553,7 +553,7 @@ prepare_stages() {
 		update_spec_variable ${stage_spec_work_path} TREEISH ${treeish}
                 update_spec_variable ${stage_spec_work_path} BASE_ARCH ${arch_basearch}
                 update_spec_variable ${stage_spec_work_path} SUB_ARCH ${arch_subarch}
-		update_spec_variable ${stage_spec_work_path} PKGCACHE_PATH ${pkgcache_base_path}
+		update_spec_variable ${stage_spec_work_path} PKGCACHE_BASE_PATH ${pkgcache_base_path}
 
 		# Create links to spec files and optionally to catalyst_conf if using custom.
 		spec_link=$(echo ${work_path}/spec_files/$(printf "%03d\n" $((i + 1))).${platform}-${release}-${target}-${version_stamp} | sed "s/@TIMESTAMP@/${timestamp}/")
