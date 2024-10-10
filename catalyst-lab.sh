@@ -612,3 +612,4 @@ build_stages
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
 # TODO: If possible - add toml config management.
 # TODO: Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs
+# TODO: Verify if qemu is installed with user-static use flag
