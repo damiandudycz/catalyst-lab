@@ -40,6 +40,11 @@ source /etc/catalyst-lab/catalyst-lab.conf
 readonly work_path=${tmp_path}/${timestamp}
 readonly catalyst_builds_path=${catalyst_path}/builds
 
+# Create required folders if don't exists
+if [[ ! -d ${catalyst_builds_path} ]]; then
+	mkdir -p ${catalyst_builds_path}
+fi
+
 # Script arguments:
 
 declare -a selected_stages_templates
@@ -452,6 +457,7 @@ prepare_stages() {
 			stages[${i},interpreter]=${arch_interpreter}
 			if [[ ! -f ${arch_interpreter} ]]; then
 				echo "Required interpreter: ${arch_interpreter} is not found"
+				exit 1
 			fi
 		fi
 
