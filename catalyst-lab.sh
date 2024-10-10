@@ -49,7 +49,6 @@ if [[ ! -d ${catalyst_builds_path} ]]; then
 fi
 
 # Script arguments:
-
 declare -a selected_stages_templates
 while [ $# -gt 0 ]; do case ${1} in
 	--update-snapshot) FETCH_FRESH_SNAPSHOT=true;;
@@ -57,7 +56,7 @@ while [ $# -gt 0 ]; do case ${1} in
 	--clean) CLEAN_BUILD=true;; # Perform clean build - don't use any existing sources even if available (Except for downloaded seeds).
 	--*) echo "Unknown option ${1}"; exit;;
 	-*) echo "Unknown option ${1}"; exit;;
-	*) selected_stages_templates+=("${1}")
+	*) selected_stages_templates+=("${1}");;
 esac; shift; done
 
 # Functions:
@@ -320,12 +319,31 @@ load_stages() {
 			stages[${i},rebuild]=true
 		done
 	else
+		set -f
 		local required_seeds=() # List of stages that are needed to be build, as stage for another required stages
 		# If specified list of stages - build only if listed or if it's needed by another stage and has no local build available.
 		local i; for (( i=(( ${stages_count} - 1 )); i>=0; i-- )); do # Go in reverse order, to find required parent seeds too
 			use_stage ${i}
 			local stage_subpath=${platform}/${release}/${stage}
-			if contains_string selected_stages_templates[@] ${stage_subpath}; then
+			for pattern in ${selected_stages_templates[@]}; do
+				IFS='/' read -r exp_platform exp_release exp_stage <<< ${pattern}
+				unset fits_stage; unset fits_release; unset fits_platform
+				if [[ -z ${exp_stage} ]] || [[ ${stage} == ${exp_stage} ]]; then
+					local fits_stage=true
+				fi
+				if ( [[ -z ${exp_stage} ]] && [[ -z ${exp_release} ]] ) || [[ ${release} == ${exp_release} ]]; then
+					local fits_release=true
+				fi
+				if ( [[ -z ${exp_stage} ]] && [[ -z ${exp_release} ]] && [[ -z ${exp_platform} ]] ) || [[ ${platform} == ${exp_platform} ]]; then
+					local fits_platform=true
+				fi
+				local should_include=$([[ ${fits_platform} == true && ${fits_release} == true && ${fits_stage} == true ]] && echo true || echo false)
+				if [[ ${should_include} = true ]]; then
+					local include=true
+					break
+				fi
+			done
+			if [[ ${include} = true ]]; then
 				stages[${i},rebuild]=true
 				required_seeds+=(${parent}) # Remember that current stage source need's to exist or be build.
 			else
@@ -340,6 +358,7 @@ load_stages() {
 				fi
 			fi
 		done
+		set +f
 	fi
 
 	# List stages to build
@@ -617,7 +636,9 @@ build_stages() {
 		# Define custom toml file for customized archirecture.
 		if [[ -n ${arch_toml} ]]; then
 			arch_toml_file=${catalyst_usr_path}/arch/catalyst-lab.${arch_basearch}.${arch_subarch}.toml
-			echo "${arch_toml}" > ${arch_toml_file}
+			echo "# This file was added as a temporary file by catalyst-lab." > ${arch_toml_file}
+			echo "# It should be deleted automatically when catalyst-lab finishes building stages." >> ${arch_toml_file}
+			echo "${arch_toml}" >> ${arch_toml_file}
 		fi
 
 		echo_color ${color_turquoise} "Building stage: ${platform}/${release}/${stage}"
