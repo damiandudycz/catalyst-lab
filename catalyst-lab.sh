@@ -563,13 +563,13 @@ prepare_stages() {
 		fi
 	done
 
-	echo_color ${color_turquoise} "Stages templates prepared in: ${work_path}"
+	echo_color ${color_green} "Stages templates prepared in: ${work_path}"
 	echo ""
 }
 
 # Build stages.
 build_stages() {
-	echo_color ${color_turquoise} "[ Building stages ]"
+	echo_color ${color_turquoise_bold} "[ Building stages ]"
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		use_stage ${i}
 		if [[ ${rebuild} = false ]]; then
@@ -596,16 +596,18 @@ build_stages() {
 				echo_color ${color_turquoise} "Clonning overlay repo ${repo_url}"
 				mkdir -p ${local_path_for_remote}
 				git clone ${repo_url} ${local_path_for_remote}
+				echo ""
 			fi
 		done
 
-		echo_color ${color_turquoise_bold} "Building stage: ${platform}/${release}/${stage}"
+		echo_color ${color_turquoise} "Building stage: ${platform}/${release}/${stage}"
 		echo ""
 		local args="-af ${stage_spec_work_path}"
 		if [[ -n ${catalyst_conf} ]]; then
 			args="${args} -c ${catalyst_conf}"
 		fi
 		catalyst $args || exit 1
+		echo_color ${color_green} "Stage build completed: ${platform}/${release}/${stage}"
 		echo ""
 	done
 }
@@ -622,4 +624,3 @@ build_stages
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
 # TODO: If possible - add toml config management.
 # TODO: Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs
-# TODO: Verify if qemu is installed with user-static use flag
