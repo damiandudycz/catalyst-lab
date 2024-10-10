@@ -31,6 +31,7 @@ seeds_url=https://gentoo.osuosl.org/releases/@ARCH_FAMILY@/autobuilds
 templates_path=/etc/catalyst-lab/templates
 releng_path=/opt/releng
 catalyst_path=/var/tmp/catalyst
+catalyst_usr_path=/usr/share/catalyst
 pkgcache_base_path=/var/cache/catalyst-binpkgs
 tmp_path=/tmp/catalyst-lab
 EOF
@@ -60,6 +61,18 @@ while [ $# -gt 0 ]; do case ${1} in
 esac; shift; done
 
 # Functions:
+
+# Clean tmp files if exited with error.
+cleanup() {
+	if [[ $? -ne 0 ]]; then
+		# Cleanup build directory.
+		# rm -rf ${work_path} # Leave for future analysis.
+		# Cleanup temporary toml file.
+		if [[ -n ${arch_toml_file} ]] && [[ -f ${arch_toml_file} ]]; then
+			rm -f ${arch_toml_file}
+		fi
+	fi
+}
 
 echo_color() { # Usage: echo_color COLOR MESSAGE
     echo -e "${1}${2}${color_nc}"
@@ -121,7 +134,7 @@ use_stage() {
 
 		# Platform config
 		# If some properties are not set in config - unset them while loading new config
-		unset repos; unset arch_family; unset arch_basearch; unset arch_subarch; unset arch_interpreter
+		unset repos; unset arch_family; unset arch_basearch; unset arch_subarch; unset arch_interpreter; unset arch_toml
 		local platform_conf_path=${templates_path}/${platform}/platform.conf
 		source ${platform_conf_path}
 	fi
@@ -218,7 +231,7 @@ load_stages() {
 	for platform in ${RL_VAL_PLATFORMS[@]}; do
 		local platform_path=${templates_path}/${platform}
 		# Load platform config
-		unset repos; unset arch_family; unset arch_basearch; unset arch_subarch; unset arch_interpreter
+		unset repos; unset arch_family; unset arch_basearch; unset arch_subarch; unset arch_interpreter; unset arch_toml
 		local platform_conf_path=${platform_path}/platform.conf
       		source ${platform_conf_path}
 		# Find list of releases. (23.0-default, 23.0-llvm, etc).
@@ -514,6 +527,7 @@ prepare_stages() {
 
 		# Replace spec templates with real data
 		echo "" >> ${stage_spec_work_path} # Add new line, to separate new entries
+		echo "# Added by catalyst-lab" >> ${stage_spec_work_path}
 		set_spec_variable_if_missing ${stage_spec_work_path} rel_type ${platform}/${release}
 		set_spec_variable_if_missing ${stage_spec_work_path} subarch ${arch_subarch}
 		set_spec_variable_if_missing ${stage_spec_work_path} portage_confdir ${portage_path}
@@ -600,6 +614,12 @@ build_stages() {
 			fi
 		done
 
+		# Define custom toml file for customized archirecture.
+		if [[ -n ${arch_toml} ]]; then
+			arch_toml_file=${catalyst_usr_path}/arch/catalyst-lab.${arch_basearch}.${arch_subarch}.toml
+			echo "${arch_toml}" > ${arch_toml_file}
+		fi
+
 		echo_color ${color_turquoise} "Building stage: ${platform}/${release}/${stage}"
 		echo ""
 		local args="-af ${stage_spec_work_path}"
@@ -607,12 +627,23 @@ build_stages() {
 			args="${args} -c ${catalyst_conf}"
 		fi
 		catalyst $args || exit 1
+
+		# Clean temp toml file.
+		if [[ -n ${arch_toml_file} ]] && [[ -f ${arch_toml_file} ]]; then
+			rm -f ${arch_toml_file}
+		fi
+		unset arch_toml_file
+
 		echo_color ${color_green} "Stage build completed: ${platform}/${release}/${stage}"
 		echo ""
 	done
 }
 
 # Main program:
+
+# Register cleanup for script exit.
+trap cleanup EXIT
+trap cleanup SIGINT SIGTERM
 
 load_stages
 prepare_portage_snapshot
@@ -622,5 +653,4 @@ build_stages
 
 # TODO: Add lock file preventing multiple runs at once.
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
-# TODO: If possible - add toml config management.
 # TODO: Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs
