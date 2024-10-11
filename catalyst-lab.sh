@@ -34,6 +34,8 @@ catalyst_path=/var/tmp/catalyst
 catalyst_usr_path=/usr/share/catalyst
 pkgcache_base_path=/var/cache/catalyst-binpkgs
 tmp_path=/tmp/catalyst-lab
+jobs=$(nproc)
+load_average=$(nproc).0
 EOF
 	echo "Default config file created: /etc/catalyst-lab/catalyst-lab.conf"
 	echo ""
@@ -53,6 +55,7 @@ declare -a selected_stages_templates
 while [ $# -gt 0 ]; do case ${1} in
 	--update-snapshot) FETCH_FRESH_SNAPSHOT=true;;
 	--update-releng) FETCH_FRESH_RELENG=true;;
+	--update-repos) FETCH_FRESH_REPOS=true;;
 	--clean) CLEAN_BUILD=true;; # Perform clean build - don't use any existing sources even if available (Except for downloaded seeds).
 	--*) echo "Unknown option ${1}"; exit;;
 	-*) echo "Unknown option ${1}"; exit;;
@@ -67,8 +70,8 @@ cleanup() {
 		# Cleanup build directory.
 		# rm -rf ${work_path} # Leave for future analysis.
 		# Cleanup temporary toml file.
-		if [[ -n ${arch_toml_file} ]] && [[ -f ${arch_toml_file} ]]; then
-			rm -f ${arch_toml_file}
+		if [[ -n ${toml_file} ]] && [[ -f ${toml_file} ]]; then
+			rm -f ${toml_file}
 		fi
 	fi
 }
@@ -133,7 +136,7 @@ use_stage() {
 
 		# Platform config
 		# If some properties are not set in config - unset them while loading new config
-		unset repos; unset arch_family; unset arch_basearch; unset arch_subarch; unset arch_interpreter; unset arch_toml
+		unset repos; unset arch_family; unset arch_basearch; unset arch_subarch; unset arch_interpreter; unset common_flags; unset chost; unset toml
 		local platform_conf_path=${templates_path}/${platform}/platform.conf
 		source ${platform_conf_path}
 	fi
@@ -230,7 +233,7 @@ load_stages() {
 	for platform in ${RL_VAL_PLATFORMS[@]}; do
 		local platform_path=${templates_path}/${platform}
 		# Load platform config
-		unset repos; unset arch_family; unset arch_basearch; unset arch_subarch; unset arch_interpreter; unset arch_toml
+		unset repos; unset arch_family; unset arch_basearch; unset arch_subarch; unset arch_interpreter; unset common_flags; unset chost; unset toml
 		local platform_conf_path=${platform_path}/platform.conf
       		source ${platform_conf_path}
 		# Find list of releases. (23.0-default, 23.0-llvm, etc).
@@ -534,6 +537,11 @@ prepare_stages() {
 		elif [[ -f ${release_catalyst_conf} ]]; then cp -n ${release_catalyst_conf} ${release_work_catalyst_conf}; catalyst_conf=${release_work_catalyst_conf};
 		elif [[ -f ${platform_catalyst_conf} ]]; then cp -n ${platform_catalyst_conf} ${platform_work_catalyst_conf}; catalyst_conf=${platform_work_catalyst_conf};
 		fi
+		if [[ -n ${catalyst_conf} ]]; then
+			# Update NPROC value in used catalyst_conf.
+			sed -i "s|@JOBS@|${jobs}|g" ${catalyst_conf}
+			sed -i "s|@LOAD_AVERAGE@|${load_average}|g" ${catalyst_conf}
+		fi
 		stages[${i},catalyst_conf]=${catalyst_conf}
 
 		# Setup spec entries.
@@ -564,6 +572,12 @@ prepare_stages() {
 		fi
 		if [[ -n ${interpreter} ]]; then
 			set_spec_variable_if_missing ${stage_spec_work_path} interpreter ${interpreter}
+		fi
+		if [[ -n ${common_flags} ]]; then
+			set_spec_variable_if_missing ${stage_spec_work_path} common_flags "${common_flags}"
+		fi
+		if [[ -n ${chost} ]]; then
+			set_spec_variable_if_missing ${stage_spec_work_path} chost ${chost}
 		fi
 		if [[ -n ${overlays} ]]; then
 			# Convert remote repos to local pathes, and use , to separate repos
@@ -596,7 +610,7 @@ prepare_stages() {
 		fi
 	done
 
-	echo_color ${color_green} "Stages templates prepared in: ${work_path}"
+	echo_color ${color_green} "Stage templates prepared in: ${work_path}"
 	echo ""
 }
 
@@ -624,21 +638,26 @@ build_stages() {
 		IFS=',' read -ra repos_list <<< ${overlays}
 		for repo in ${repos_list[@]}; do
 			local local_path_for_remote=$(echo ${repo} | awk -F '|' '{if (NF>1) print $2; else print ""}')
-			if [[ -n ${local_path_for_remote} ]] && [[ ! -d ${local_path_for_remote} ]]; then
+			if [[ -n ${local_path_for_remote} ]]; then
 				local repo_url=$(echo ${repo} | cut -d '|' -f 1)
-				echo_color ${color_turquoise} "Clonning overlay repo ${repo_url}"
-				mkdir -p ${local_path_for_remote}
-				git clone ${repo_url} ${local_path_for_remote}
+				if [[ ! -d ${local_path_for_remote} ]]; then
+					echo_color ${color_turquoise} "Clonning overlay repo ${repo_url}"
+					mkdir -p ${local_path_for_remote}
+					git clone ${repo_url} ${local_path_for_remote}
+				elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
+					echo_color ${color_turquoise} "Updating overlay repo ${repo_url}"
+					git -C ${local_path_for_remote} pul
+				fi
 				echo ""
 			fi
 		done
 
 		# Define custom toml file for customized archirecture.
-		if [[ -n ${arch_toml} ]]; then
-			arch_toml_file=${catalyst_usr_path}/arch/catalyst-lab.${arch_basearch}.${arch_subarch}.toml
-			echo "# This file was added as a temporary file by catalyst-lab." > ${arch_toml_file}
-			echo "# It should be deleted automatically when catalyst-lab finishes building stages." >> ${arch_toml_file}
-			echo "${arch_toml}" >> ${arch_toml_file}
+		if [[ -n ${toml} ]]; then
+			toml_file=${catalyst_usr_path}/arch/catalyst-lab.${arch_basearch}.${arch_subarch}.toml
+			echo "# This file was added as a temporary file by catalyst-lab." > ${toml_file}
+			echo "# It should be deleted automatically when catalyst-lab finishes building stages." >> ${toml_file}
+			echo "${toml}" >> ${toml_file}
 		fi
 
 		echo_color ${color_turquoise} "Building stage: ${platform}/${release}/${stage}"
@@ -650,10 +669,10 @@ build_stages() {
 		catalyst $args || exit 1
 
 		# Clean temp toml file.
-		if [[ -n ${arch_toml_file} ]] && [[ -f ${arch_toml_file} ]]; then
-			rm -f ${arch_toml_file}
+		if [[ -n ${toml_file} ]] && [[ -f ${toml_file} ]]; then
+			rm -f ${toml_file}
 		fi
-		unset arch_toml_file
+		unset toml_file
 
 		echo_color ${color_green} "Stage build completed: ${platform}/${release}/${stage}"
 		echo ""

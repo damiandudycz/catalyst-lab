@@ -8,7 +8,6 @@ livecd/use:
  	ps3
 	compile-locales
 	fbcon
-	livecd
 	socks5
 	unicode
 	xml
