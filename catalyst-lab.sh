@@ -329,6 +329,7 @@ load_stages() {
 		local i; for (( i=(( ${stages_count} - 1 )); i>=0; i-- )); do # Go in reverse order, to find required parent seeds too
 			use_stage ${i}
 			local stage_subpath=${platform}/${release}/${stage}
+			unset include
 			for pattern in ${selected_stages_templates[@]}; do
 				IFS='/' read -r exp_platform exp_release exp_stage <<< ${pattern}
 				unset fits_stage; unset fits_release; unset fits_platform
