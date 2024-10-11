@@ -12,7 +12,8 @@ declare -A ARCH_MAPPINGS=([aarch64]=arm64) # Map from arch command to release ar
 readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
 readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
 readonly qemu_has_static_user=$(grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE && echo true || echo false)
-readonly qemu_binfmt_is_running=$(grep -q '^enabled$' /proc/sys/fs/binfmt_misc/status && echo true || echo false)
+readonly qemu_binfmt_is_running=$( { [ -x /etc/init.d/qemu-binfmt ] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
+
 
 readonly color_red='\033[0;31m'
 readonly color_green='\033[0;32m'
