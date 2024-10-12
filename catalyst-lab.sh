@@ -7,7 +7,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 declare -A TARGET_MAPPINGS=([livecd-stage1]=livecd [livecd-stage2]=livecd)
-declare -A ARCH_MAPPINGS=([aarch64]=arm64) # Map from arch command to release arch. TODO: Add more mappings if needed.
+declare -A ARCH_MAPPINGS=([aarch64]=arm64 [x86_64]=amd64) # Map from arch command to release arch. TODO: Add more mappings if needed.
 
 readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
 readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
