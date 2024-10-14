@@ -5,3 +5,4 @@ source_subpath: @BASE_ARCH@/stage3-ppc64-openrc-@TIMESTAMP@
 compression_mode: pixz
 update_seed: yes
 update_seed_command: --update --deep --newuse --usepkg --buildpkg @system @world
+releng_base: stages

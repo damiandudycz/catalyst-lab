@@ -7,6 +7,7 @@ profile: default/linux/@BASE_ARCH@/23.0
 livecd/fstype: squashfs
 livecd/gk_mainargs: --all-ramdisk-modules
 livecd/type: gentoo-release-minimal
+releng_base: isos
 
 boot/kernel: PS3
 boot/kernel/PS3/distkernel: yes

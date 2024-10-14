@@ -256,6 +256,7 @@ load_stages() {
 					local version_stamp=$(read_spec_variable ${stage_spec_path} version_stamp) # eq.: base-openrc-@TIMESTAMP@
 					local source_subpath=$(read_spec_variable ${stage_spec_path} source_subpath)
 					local spec_repos=$(read_spec_variable ${stage_spec_path} repos)
+					local releng_base=$(read_spec_variable ${stage_spec_path} releng_base)
 
 					# If subarch is not set in spec, update it with value from platform config.
 					if [[ -z ${subarch} ]]; then
@@ -277,6 +278,7 @@ load_stages() {
 					stages[${stages_count},version_stamp]=$(sanitize_spec_variable ${platform} ${release} ${stage} ${arch_family} ${arch_basearch} ${subarch} ${version_stamp})
 					stages[${stages_count},source_subpath]=$(sanitize_spec_variable ${platform} ${release} ${stage} ${arch_family} ${arch_basearch} ${subarch} ${source_subpath})
 					stages[${stages_count},overlays]=${spec_repos:-${repos}}
+					stages[${stages_count},releng_base]=${releng_base}
 					stages[${stages_count},available_build]=${stage_available_build}
 
 					stages_count=$((stages_count + 1))
@@ -516,17 +518,12 @@ prepare_stages() {
 
 		# Prepare portage enviroment - Combine base portage files from releng with stage template portage files.
 		local portage_path=${stage_work_path}/portage
-		local releng_base_file=${portage_path}/releng_base
-		if [[ -f ${releng_base_file} ]]; then
+		uses_releng=false
+		if [[ -n ${releng_base} ]]; then
 			uses_releng=true
-			releng_base=$(cat ${releng_base_file})
 			releng_base_dir=${releng_path}/releases/portage/${releng_base}${interpreter_portage_postfix}
 			cp -ru ${releng_base_dir}/* ${portage_path}/
-			rm ${releng_base_file}
-		else
-			uses_releng=false
 		fi
-		stage[${i},uses_releng]=${uses_releng}
 
 		# Find custom catalyst.conf if any
 		local platform_catalyst_conf=${platform_path}/catalyst.conf
@@ -597,6 +594,7 @@ prepare_stages() {
 		fi
 		if [[ ${uses_releng} = true ]]; then
 			set_spec_variable_if_missing ${stage_spec_work_path} portage_prefix releng
+			sed -i '/^releng_base:/d' ${stage_spec_work_path}
 		fi
 		update_spec_variable ${stage_spec_work_path} TIMESTAMP ${timestamp}
 		update_spec_variable ${stage_spec_work_path} PLATFORM ${platform}
