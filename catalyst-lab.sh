@@ -608,7 +608,7 @@ draw_stages_tree() {
 		if [[ ${selected} = true ]]; then
 			stage_name="\033[1m${stage_name}\033[0m"
 		fi
-		new_prefix="${prefix}|---"
+		new_prefix="${prefix}|── "
 		if [[ -n ${children} ]]; then
 			new_prefix="${prefix}|   "
 		fi
@@ -616,7 +616,7 @@ draw_stages_tree() {
 			new_prefix="${prefix}    "
 			echo -e "${prefix}└── ${stage_name}"
 		else
-			echo -e "${prefix}|-- ${stage_name}"
+			echo -e "${prefix}|── ${stage_name}"
 		fi
 		draw_stages_tree ${child} "${new_prefix}"
 	done
