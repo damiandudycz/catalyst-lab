@@ -462,11 +462,12 @@ prepare_stages() {
 		local source_build_path=${catalyst_builds_path}/${source_subpath}.tar.xz
 
 		# Determine if stage's parent will also be rebuild, to know if it should use available_source_subpath or new parent build.
-		if [[ -n "${parent_index}" ]] && [[ "${parent_rebuild}" = false ]] && [[ -n ${parent_available_build} ]]; then
+		if [[ -n ${parent_index} ]] && [[ ${parent_rebuild} = false ]] && [[ -n ${parent_available_build} ]]; then
 			echo_color ${color_turquoise} "Using existing source ${parent_available_build} for ${platform}/${release}/${stage}"
-			stages[${i},source_subpath]=${parent_available_build%.tar.xz}
-			use_stage ${i} # Reload data
+			source_subpath=${parent_available_build%.tar.xz}
+			stages[${i},source_subpath]=${source_subpath}
 		fi
+
 		# Check if should download seed and download if needed.
 		local use_remote_build=false
 		if [[ -z ${parent} ]]; then
@@ -474,10 +475,6 @@ prepare_stages() {
 				use_remote_build=true
 			fi
 		fi
-
-		# Prepare stage catalyst parent build dir
-		local source_build_dir=$(dirname ${source_build_path})
-		mkdir -p ${source_build_dir}
 
 		# Get seed URL if needed.
 		if [[ ${use_remote_build} = true ]]; then
@@ -488,7 +485,8 @@ prepare_stages() {
 			local source_available_build=$(printf "%s\n" "${matching_source_builds[@]}" | sort -r | head -n 1)
 			if [[ ${#selected_stages_templates[@]} -ne 0 ]] && [[ -n ${source_available_build} ]] && [[ ! ${CLEAN_BUILD} = true ]]; then
 				echo_color ${color_turquoise} "Using existing source ${source_available_build} for ${platform}/${release}/${stage}"
-				stages[${i},source_subpath]=${source_available_build%.tar.xz}
+				source_subpath=${source_available_build%.tar.xz}
+				stages[${i},source_subpath]=${source_subpath}
 			else
 				# Download seed for ${source_subpath} to file ${source_filename}
 				echo_color ${color_turquoise} "Getting seed info: ${platform}/${release}/${stage}"
@@ -499,16 +497,16 @@ prepare_stages() {
 				local url_seed_tarball=${seeds_arch_url}/${latest_seed}
 				# Extract available timestamp from available seed name and update @TIMESTAMP@ in source_subpath with it.
 				local latest_seed_timestamp=$(echo ${latest_seed} | sed -n 's/.*\([0-9]\{8\}T[0-9]\{6\}Z\).*/\1/p')
-				stages[${i},source_url]=${url_seed_tarball} # Store URL of source, to download right before build
-				stages[${i},source_subpath]=$(echo ${source_subpath} | sed "s/@TIMESTAMP@/${latest_seed_timestamp}/")
+				source_url=${url_seed_tarball}
+				source_subpath=$(echo ${source_subpath} | sed "s/@TIMESTAMP@/${latest_seed_timestamp}/")
+				stages[${i},source_url]=${source_url} # Store URL of source, to download right before build
+				stages[${i},source_subpath]=${source_subpath}
 				# If getting parent url fails, stop script with erro
 				if [[ -z ${latest_seed} ]]; then
 					echo "Failed to get seed URL for ${source_subpath}"
 					exit 1
 				fi
 			fi
-			# Reload variables, because after downloading details, they could have been changed
-			use_stage ${i}
 		fi
 
 		# Prepare repos information
@@ -535,7 +533,7 @@ prepare_stages() {
 		if [[ ${host_arch} != ${arch_basearch} ]]; then
 			interpreter_portage_postfix='-qemu'
 			interpreter="${arch_interpreter}"
-			stages[${i},interpreter]="${arch_interpreter}"
+			stages[${i},interpreter]="${interpreter}"
 			for interp in ${arch_interpreter}; do
 				if [[ ! -f ${interp} ]]; then
 					echo "Required interpreter: ${interp} is not found."
@@ -676,6 +674,10 @@ build_stages() {
 		if [[ -n ${source_url} ]] && [[ ! -f ${source_path} ]]; then
 			echo_color ${color_turquoise} "Downloading seed for: ${platform}/${release}/${stage}"
 			echo ""
+			# Prepare stage catalyst parent build dir
+			local source_build_dir=$(dirname ${source_path})
+			mkdir -p ${source_build_dir}
+			# Download
 			wget ${source_url} -O ${source_path} || exit 1
 		fi
 
@@ -732,6 +734,7 @@ trap cleanup EXIT
 trap cleanup SIGINT SIGTERM
 
 load_stages
+exit
 prepare_portage_snapshot
 prepare_releng
 prepare_stages
