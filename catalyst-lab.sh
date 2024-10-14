@@ -76,6 +76,8 @@ while [ $# -gt 0 ]; do case ${1} in
 	--update-releng) FETCH_FRESH_RELENG=true;;
 	--update-repos) FETCH_FRESH_REPOS=true;;
 	--clean) CLEAN_BUILD=true;; # Perform clean build - don't use any existing sources even if available (Except for downloaded seeds).
+	--build) BUILD=true; PREPARE=true;; # Prepare is implicit when using --build.
+	--prepare) PREPARE=true;;
 	--*) echo "Unknown option ${1}"; exit;;
 	-*) echo "Unknown option ${1}"; exit;;
 	*) selected_stages_templates+=("${1}");;
@@ -433,6 +435,10 @@ load_stages() {
 		fi
 	done
 	echo "" # New line
+
+	# Draw dependency tree
+	draw_stages_tree
+	echo ""
 }
 
 # Prepare array that describes the order of stages based on inheritance.
@@ -815,13 +821,17 @@ trap cleanup EXIT
 trap cleanup SIGINT SIGTERM
 
 load_stages
-draw_stages_tree && echo ""
-
-prepare_portage_snapshot
-prepare_releng
-configure_stages
-write_stages
-build_stages
+if [[ ${PREPARE} = true ]]; then
+	prepare_portage_snapshot
+	prepare_releng
+	configure_stages
+	write_stages
+fi
+if [[ ${BUILD} = true ]]; then
+	build_stages
+else
+	echo "To build selected stages use --build flag."
+fi
 
 # TODO: Add lock file preventing multiple runs at once.
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
