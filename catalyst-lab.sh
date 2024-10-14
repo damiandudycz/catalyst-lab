@@ -363,6 +363,7 @@ load_stages() {
 		# If no specific builds were selected, it means that all should be rebuild.
 		local i; for (( i=0; i<${stages_count}; i++ )); do
 			stages[${i},rebuild]=true
+			stages[${i},selected]=true
 		done
 	else
 		set -f
@@ -392,6 +393,7 @@ load_stages() {
 			done
 			if [[ ${include} = true ]]; then
 				stages[${i},rebuild]=true
+				stages[${i},selected]=true
 				required_seeds+=(${parent}) # Remember that current stage source need's to exist or be build.
 			else
 				# Check if this stage is required as a source for another stage.
@@ -582,37 +584,42 @@ configure_stages() {
 }
 
 draw_stages_tree() {
-	local depth=${1:-'0'}
-	local index=${2}
-	# If index is empty, find and print all elements without children.
-	# If they have children, call this function recursevely.
+	local index=${1}
+	local prefix=${2}
 
 	if [[ -z ${index} ]]; then
-		# First call, without index specified
-		local i; for (( i=0; i<${stages_count}; i++ )); do
+		# Get indexes of root elements.
+		local child_array=()
+		local i; for (( i=0; i < ${stages_count}; i++ )); do
 			use_stage ${i}
-			if [[ ${rebuild} = false ]]; then
-				continue
-			fi
-			if [[ -z ${parent_index} ]]; then
-				printf "%*s%s\n" ${depth} '' "${platform}/${release}/${stage}"
-				if [[ -n ${children} ]]; then
-					for child in ${children}; do
-						draw_stages_tree $((depth + 2)) ${child}
-					done
-				fi
+			if [[ ${rebuild} = true ]] && [[ -z ${parent_index} ]]; then
+				child_array+=(${i})
 			fi
 		done
 	else
-		# Children of given stage
 		use_stage ${index}
-		printf "%*s%s\n" ${depth} '' "${platform}/${release}/${stage}"
-		if [[ -n ${children} ]]; then
-			for child in ${children}; do
-				draw_stages_tree $((depth + 2)) ${child}
-			done
-		fi
+		local child_array=(${children[@]}) # Map to array if starting from string
 	fi
+
+	local i=0; for child in ${child_array[@]}; do
+		((i++))
+		use_stage ${child}
+		local stage_name=${platform}/${release}/${stage}
+		if [[ ${selected} = true ]]; then
+			stage_name="\033[1m${stage_name}\033[0m"
+		fi
+		new_prefix="${prefix}|---"
+		if [[ -n ${children} ]]; then
+			new_prefix="${prefix}|   "
+		fi
+		if [[ ${i} == ${#child_array[@]} ]]; then
+			new_prefix="${prefix}    "
+			echo -e "${prefix}└── ${stage_name}"
+		else
+			echo -e "${prefix}|-- ${stage_name}"
+		fi
+		draw_stages_tree ${child} "${new_prefix}"
+	done
 }
 
 # Save and update templates in work directory
@@ -808,13 +815,13 @@ trap cleanup EXIT
 trap cleanup SIGINT SIGTERM
 
 load_stages
-draw_stages_tree
+draw_stages_tree && echo ""
 
 prepare_portage_snapshot
 prepare_releng
 configure_stages
-#write_stages
-#build_stages
+write_stages
+build_stages
 
 # TODO: Add lock file preventing multiple runs at once.
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
