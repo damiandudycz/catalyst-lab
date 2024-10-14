@@ -439,11 +439,8 @@ insert_stage_with_inheritance() { # arg - index, required_by_id
 }
 
 # Setup templates of stages.
-prepare_stages() {
+configure_stages() {
 	echo_color ${color_turquoise_bold} "[ Preparing stages ]"
-
-	mkdir -p ${work_path}
-	mkdir -p ${work_path}/spec_files
 
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		use_stage ${i}
@@ -488,7 +485,7 @@ prepare_stages() {
 				source_subpath=${source_available_build%.tar.xz}
 				stages[${i},source_subpath]=${source_subpath}
 			else
-				# Download seed for ${source_subpath} to file ${source_filename}
+				# Download seed info for ${source_subpath}
 				echo_color ${color_turquoise} "Getting seed info: ${platform}/${release}/${stage}"
 				local seeds_arch_url=$(echo ${seeds_url} | sed "s/@ARCH_FAMILY@/${arch_family}/")
 				local metadata_url=${seeds_arch_url}/latest-${source_target_stripped}.txt
@@ -550,6 +547,48 @@ prepare_stages() {
 			fi
 		fi
 
+		# Find custom catalyst.conf if any
+		local platform_catalyst_conf=${platform_path}/catalyst.conf
+		local release_catalyst_conf=${release_path}/catalyst.conf
+		local stage_catalyst_conf=${stage_path}/catalyst.conf
+		local platform_work_catalyst_conf=${platform_work_path}/catalyst.conf
+		local release_work_catalyst_conf=${release_work_path}/catalyst.conf
+		local stage_work_catalyst_conf=${stage_work_path}/catalyst.conf
+		unset catalyst_conf catalyst_conf_src
+		if
+		     [[ -f ${stage_catalyst_conf} ]]; then catalyst_conf_src=${stage_catalyst_conf}; catalyst_conf=${stage_work_catalyst_conf};
+		elif [[ -f ${release_catalyst_conf} ]]; then catalyst_conf_src=${release_catalyst_conf}; catalyst_conf=${release_work_catalyst_conf};
+		elif [[ -f ${platform_catalyst_conf} ]]; then catalyst_conf_src=${platform_catalyst_conf}; catalyst_conf=${platform_work_catalyst_conf};
+		fi
+		stages[${i},catalyst_conf_src]=${catalyst_conf_src}
+		stages[${i},catalyst_conf]=${catalyst_conf}
+	done
+
+	echo_color ${color_green} "Stage templates prepared"
+	echo ""
+}
+
+# Save and update templates in work directory
+write_stages() {
+	echo_color ${color_turquoise_bold} "[ Writing stages ]"
+
+	mkdir -p ${work_path}
+	mkdir -p ${work_path}/spec_files
+
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		use_stage ${i}
+		if [[ ${rebuild} = false ]]; then
+			continue
+		fi
+
+		local platform_path=${templates_path}/${platform}
+		local release_path=${platform_path}/${release}
+		local stage_path=${release_path}/${stage}
+
+		local platform_work_path=${work_path}/${platform}
+		local release_work_path=${platform_work_path}/${release}
+		local stage_work_path=${release_work_path}/${stage}
+
 		# Copy stage template workfiles to work_path.
 		mkdir -p ${stage_work_path}
 		cp -rf ${stage_path}/* ${stage_work_path}/
@@ -567,24 +606,12 @@ prepare_stages() {
 		fi
 
 		# Find custom catalyst.conf if any
-		local platform_catalyst_conf=${platform_path}/catalyst.conf
-		local release_catalyst_conf=${release_path}/catalyst.conf
-		local stage_catalyst_conf=${stage_path}/catalyst.conf
-		local platform_work_catalyst_conf=${platform_work_path}/catalyst.conf
-		local release_work_catalyst_conf=${release_work_path}/catalyst.conf
-		local stage_work_catalyst_conf=${stage_work_path}/catalyst.conf
-		local catalyst_conf=""
-		if
-		     [[ -f ${stage_catalyst_conf} ]]; then cp -n ${stage_catalyst_conf} ${stage_work_catalyst_conf}; catalyst_conf=${stage_work_catalyst_conf};
-		elif [[ -f ${release_catalyst_conf} ]]; then cp -n ${release_catalyst_conf} ${release_work_catalyst_conf}; catalyst_conf=${release_work_catalyst_conf};
-		elif [[ -f ${platform_catalyst_conf} ]]; then cp -n ${platform_catalyst_conf} ${platform_work_catalyst_conf}; catalyst_conf=${platform_work_catalyst_conf};
-		fi
 		if [[ -n ${catalyst_conf} ]]; then
+			cp -n ${catalyst_conf_src} ${catalyst_conf}
 			# Update NPROC value in used catalyst_conf.
 			sed -i "s|@JOBS@|${jobs}|g" ${catalyst_conf}
 			sed -i "s|@LOAD_AVERAGE@|${load_average}|g" ${catalyst_conf}
 		fi
-		stages[${i},catalyst_conf]=${catalyst_conf}
 
 		# Setup spec entries.
 		local stage_overlay_path=${stage_work_path}/overlay
@@ -654,7 +681,7 @@ prepare_stages() {
 		fi
 	done
 
-	echo_color ${color_green} "Stage templates prepared in: ${work_path}"
+	echo_color ${color_green} "Stage templates saved in: ${work_path}"
 	echo ""
 }
 
@@ -734,10 +761,10 @@ trap cleanup EXIT
 trap cleanup SIGINT SIGTERM
 
 load_stages
-exit
 prepare_portage_snapshot
 prepare_releng
-prepare_stages
+configure_stages
+write_stages
 build_stages
 
 # TODO: Add lock file preventing multiple runs at once.
