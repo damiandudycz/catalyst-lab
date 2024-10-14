@@ -14,7 +14,6 @@ readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
 readonly qemu_has_static_user=$(grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE && echo true || echo false)
 readonly qemu_binfmt_is_running=$( { [ -x /etc/init.d/qemu-binfmt ] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
 
-
 readonly color_red='\033[0;31m'
 readonly color_green='\033[0;32m'
 readonly color_turquoise='\033[0;36m'
@@ -137,7 +136,7 @@ use_stage() {
 
 		# Platform config
 		# If some properties are not set in config - unset them while loading new config
-		unset repos; unset arch_family; unset arch_basearch; unset arch_subarch; unset arch_interpreter; unset common_flags; unset chost; unset toml
+		unset repos arch_family arch_basearch arch_subarch arch_interpreter common_flags chost toml
 		local platform_conf_path=${templates_path}/${platform}/platform.conf
 		source ${platform_conf_path}
 	fi
@@ -235,7 +234,7 @@ load_stages() {
 	for platform in ${RL_VAL_PLATFORMS[@]}; do
 		local platform_path=${templates_path}/${platform}
 		# Load platform config
-		unset repos; unset arch_family; unset arch_basearch; unset arch_subarch; unset arch_interpreter; unset common_flags; unset chost; unset toml
+		unset repos arch_family arch_basearch arch_subarch arch_interpreter common_flags chost toml
 		local platform_conf_path=${platform_path}/platform.conf
       		source ${platform_conf_path}
 		# Find list of releases. (23.0-default, 23.0-llvm, etc).
@@ -493,12 +492,14 @@ prepare_stages() {
 		unset interpreter_portage_postfix
 		if [[ ${host_arch} != ${arch_basearch} ]]; then
 			interpreter_portage_postfix='-qemu'
-			interpreter=${arch_interpreter}
-			stages[${i},interpreter]=${arch_interpreter}
-			if [[ ! -f ${arch_interpreter} ]]; then
-				echo "Required interpreter: ${arch_interpreter} is not found."
-				exit 1
-			fi
+			interpreter="${arch_interpreter}"
+			stages[${i},interpreter]="${arch_interpreter}"
+			for interp in ${arch_interpreter}; do
+				if [[ ! -f ${interp} ]]; then
+					echo "Required interpreter: ${interp} is not found."
+					exit 1
+				fi
+			done
 			if [[ ${qemu_has_static_user} = false ]]; then
 				echo "Qemu needs to be installed with static_user USE flag."
 				exit 1
@@ -574,7 +575,7 @@ prepare_stages() {
 		        set_spec_variable_if_missing ${stage_spec_work_path} ${target_mapping}/fsscript ${stage_fsscript_path}
 		fi
 		if [[ -n ${interpreter} ]]; then
-			set_spec_variable_if_missing ${stage_spec_work_path} interpreter ${interpreter}
+			set_spec_variable_if_missing ${stage_spec_work_path} interpreter "${interpreter}"
 		fi
 		if [[ -n ${common_flags} ]]; then
 			set_spec_variable_if_missing ${stage_spec_work_path} common_flags "${common_flags}"
