@@ -6,8 +6,27 @@ if [[ $EUID -ne 0 ]]; then
 	exit 1
 fi
 
-declare -A TARGET_MAPPINGS=([livecd-stage1]=livecd [livecd-stage2]=livecd)
-declare -A ARCH_MAPPINGS=([aarch64]=arm64 [x86_64]=amd64) # Map from arch command to release arch. TODO: Add more mappings if needed.
+declare -A TARGET_MAPPINGS=(
+	# Used to fill spec fsscript and similar with correct key.
+	[livecd-stage1]=livecd
+	[livecd-stage2]=livecd
+)
+declare -A ARCH_MAPPINGS=(
+	# Map from arch command to base arch. TODO: Add more mappings if needed.
+	[aarch64]=arm64
+	[x86_64]=amd64
+)
+declare -A ARCH_FAMILIES=(
+	# Map from base arch to arch family. Add only if different than base arch.
+	[ppc64]=ppc
+)
+declare -A ARCH_INTERPRETERS=(
+	# Add custom interpreters if needed.
+	# By default script will try to find interpreter by matching with basename->raw_basename (ie x86_64).
+	# This can also be used if multiple interpreters are needed.
+	# Keys should correspond to baseraw, for example x86_64, aarch64, ppc64
+	[x86_64]="/usr/bin/qemu-x86_64 /usr/bin/qemu-i386"
+)
 
 readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
 readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
@@ -106,6 +125,17 @@ get_directories() {
 	echo ${directories[@]}
 }
 
+basearch_to_baseraw() {
+	local basearch=${1}
+	for key in ${!ARCH_MAPPINGS[@]}; do
+		if [[ ${ARCH_MAPPINGS[${key}]} == ${basearch} ]]; then
+			echo ${key}
+			return
+		fi
+	done
+	echo ${basearch}
+}
+
 # Read variables of stage at index. Use this in functions that sould work with given stage, instead of loading all variables manually.
 # Use prefix if need to compare with other stage variables.
 # This function also loads platform config file related to selected stage.
@@ -136,9 +166,14 @@ use_stage() {
 
 		# Platform config
 		# If some properties are not set in config - unset them while loading new config
-		unset repos arch_family arch_basearch arch_subarch arch_interpreter common_flags chost toml
+		unset repos common_flags chost toml
 		local platform_conf_path=${templates_path}/${platform}/platform.conf
 		source ${platform_conf_path}
+		arch_basearch=${arch%%/*}
+		arch_baseraw=$(basearch_to_baseraw ${arch_basearch})
+		arch_subarch=${arch#*/}; arch_subarch=${arch_subarch:-$arch_basearch}
+		arch_family=${ARCH_FAMILIES[${arch_basearch}]:-${arch_basearch}}
+		arch_interpreter=${ARCH_INTERPRETERS[${arch_baseraw}]:-"/usr/bin/qemu-${arch_baseraw}"} # Find correct arch_interpreter
 	fi
 }
 
@@ -234,9 +269,14 @@ load_stages() {
 	for platform in ${RL_VAL_PLATFORMS[@]}; do
 		local platform_path=${templates_path}/${platform}
 		# Load platform config
-		unset repos arch_family arch_basearch arch_subarch arch_interpreter common_flags chost toml
-		local platform_conf_path=${platform_path}/platform.conf
-      		source ${platform_conf_path}
+		unset repos common_flags chost toml
+		local platform_conf_path=${templates_path}/${platform}/platform.conf
+		source ${platform_conf_path}
+		local arch_basearch=${arch%%/*}
+		local arch_baseraw=$(basearch_to_baseraw ${arch_basearch})
+		local arch_subarch=${arch#*/}; arch_subarch=${arch_subarch:-$arch_basearch}
+		local arch_family=${ARCH_FAMILIES[${arch_basearch}]:-${arch_basearch}}
+		local arch_interpreter=${ARCH_INTERPRETERS[${arch_baseraw}]:-"/usr/bin/qemu-${arch_baseraw}"} # Find correct arch_interpreter
 		# Find list of releases. (23.0-default, 23.0-llvm, etc).
 		RL_VAL_RELEASES=$(get_directories ${platform_path})
 		# Collect information about stages in releases.
@@ -522,6 +562,9 @@ prepare_stages() {
 		if [[ -n ${releng_base} ]]; then
 			uses_releng=true
 			releng_base_dir=${releng_path}/releases/portage/${releng_base}${interpreter_portage_postfix}
+			if [[ ! -d ${portage_path} ]]; then
+				mkdir ${portage_path}
+			fi
 			cp -ru ${releng_base_dir}/* ${portage_path}/
 		fi
 
