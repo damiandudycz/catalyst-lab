@@ -96,26 +96,26 @@ cleanup() {
 }
 
 echo_color() { # Usage: echo_color COLOR MESSAGE
-    echo -e "${1}${2}${color_nc}"
+	echo -e "${1}${2}${color_nc}"
 }
 
 contains_string() {
-    local array=("${!1}")
-    local search_string="$2"
-    local found=0
+	local array=("${!1}")
+	local search_string="$2"
+	local found=0
 
-    for element in "${array[@]}"; do
-        if [[ "$element" == "$search_string" ]]; then
-            found=1
-            break
-        fi
-    done
+	for element in "${array[@]}"; do
+		if [[ "$element" == "$search_string" ]]; then
+			found=1
+			break
+		fi
+	done
 
-    if [[ $found -eq 1 ]]; then
-        return 0  # true
-    else
-        return 1  # false
-    fi
+	if [[ $found -eq 1 ]]; then
+		return 0  # true
+	else
+		return 1  # false
+	fi
 }
 
 # Get list of directories in given directory.
@@ -159,9 +159,9 @@ use_stage() {
 			fi
 		done
 		if [[ -z ${parent_index} ]]; then # If parent not found, clean it's data
-		        for variable in ${keys[@]}; do
-		                unset parent_${variable}
-		        done
+			for variable in ${keys[@]}; do
+				unset parent_${variable}
+			done
 		fi
 
 		# Platform config
@@ -201,12 +201,12 @@ set_spec_variable() {
 # Set variable in spec only if it's not specified yet.
 # Use this for example for treeish - you can sepcify selected one or leave it out to get automatic value.
 set_spec_variable_if_missing() {
-        local spec_path=${1}
-        local key=${2}
-        local new_value="${3}"
-        if ! grep -q "^$key:" "${spec_path}"; then
+	local spec_path=${1}
+	local key=${2}
+	local new_value="${3}"
+	if ! grep -q "^$key:" "${spec_path}"; then
 		echo "$key: $new_value" >> "${spec_path}"
-        fi
+	fi
 }
 
 # Fill tmp data in spec (@TIMESTAMP@, etc)
@@ -631,13 +631,13 @@ write_stages() {
 		set_spec_variable_if_missing ${stage_spec_work_path} pkgcache_path ${stage_default_pkgcache_path}
 		set_spec_variable ${stage_spec_work_path} source_subpath ${source_subpath} # source_subpath shoud always be replaced with calculated value, to take into consideration existing old builds usage.
 		if [[ -d ${stage_overlay_path} ]]; then
-		        set_spec_variable_if_missing ${stage_spec_work_path} ${target_mapping}/overlay ${stage_overlay_path}
+			set_spec_variable_if_missing ${stage_spec_work_path} ${target_mapping}/overlay ${stage_overlay_path}
 		fi
 		if [[ -d ${stage_root_overlay_path} ]]; then
-		        set_spec_variable_if_missing ${stage_spec_work_path} ${target_mapping}/root_overlay ${stage_root_overlay_path}
+			set_spec_variable_if_missing ${stage_spec_work_path} ${target_mapping}/root_overlay ${stage_root_overlay_path}
 		fi
 		if [[ -f ${stage_fsscript_path} ]]; then
-		        set_spec_variable_if_missing ${stage_spec_work_path} ${target_mapping}/fsscript ${stage_fsscript_path}
+			set_spec_variable_if_missing ${stage_spec_work_path} ${target_mapping}/fsscript ${stage_fsscript_path}
 		fi
 		if [[ -n ${interpreter} ]]; then
 			set_spec_variable_if_missing ${stage_spec_work_path} interpreter "${interpreter}"
@@ -668,9 +668,9 @@ write_stages() {
 		update_spec_variable ${stage_spec_work_path} PLATFORM ${platform}
 		update_spec_variable ${stage_spec_work_path} REL_TYPE ${release}
 		update_spec_variable ${stage_spec_work_path} TREEISH ${treeish}
-                update_spec_variable ${stage_spec_work_path} FAMILY_ARCH ${arch_family}
-                update_spec_variable ${stage_spec_work_path} BASE_ARCH ${arch_basearch}
-                update_spec_variable ${stage_spec_work_path} SUB_ARCH ${arch_subarch}
+		update_spec_variable ${stage_spec_work_path} FAMILY_ARCH ${arch_family}
+		update_spec_variable ${stage_spec_work_path} BASE_ARCH ${arch_basearch}
+		update_spec_variable ${stage_spec_work_path} SUB_ARCH ${arch_subarch}
 		update_spec_variable ${stage_spec_work_path} PKGCACHE_BASE_PATH ${pkgcache_base_path}
 
 		# Create links to spec files and optionally to catalyst_conf if using custom.
@@ -692,7 +692,7 @@ build_stages() {
 		use_stage ${i}
 		if [[ ${rebuild} = false ]]; then
 			continue
-                fi
+		fi
 		local stage_work_path=${work_path}/${platform}/${release}/${stage}
 		local stage_spec_work_path=${stage_work_path}/stage.spec
 		local source_path=${catalyst_builds_path}/${source_subpath}.tar.xz
@@ -764,8 +764,8 @@ load_stages
 prepare_portage_snapshot
 prepare_releng
 configure_stages
-write_stages
-build_stages
+#write_stages
+#build_stages
 
 # TODO: Add lock file preventing multiple runs at once.
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
