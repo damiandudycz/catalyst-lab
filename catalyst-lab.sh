@@ -473,6 +473,11 @@ configure_stages() {
 			fi
 		fi
 
+		# Store child in parent's childs, to build a dependency tree.
+		if [[ -n ${parent_index} ]]; then
+			stages[${parent_index},children]="${stages[${parent_index},children]} ${i}"
+		fi
+
 		# Get seed URL if needed.
 		if [[ ${use_remote_build} = true ]]; then
 			local source_target_stripped=$(echo ${source_subpath} | awk -F '/' '{print $NF}' | sed 's/-@TIMESTAMP@//')
@@ -566,6 +571,36 @@ configure_stages() {
 
 	echo_color ${color_green} "Stage templates prepared"
 	echo ""
+}
+
+draw_stages_tree() {
+	local depth=${1:-'0'}
+	local index=${2}
+	# If index is empty, find and print all elements without children.
+	# If they have children, call this function recursevely.
+
+	if [[ -a ${index} ]]; then
+		# First call, without index specified
+		local i; for (( i=0; i<${stages_count}; i++ )); do
+			use_stage ${i}
+			if [[ ${rebuild} = false ]]; then
+				continue
+			fi
+			if [[ -z ${parent_index} ]]; then
+				printf "%*s%s\n" ${depth} '' "| ${platform}/${release}/${stage}"
+				for child in "${children}"; do
+					draw_stages_tree $((depth + 1)) ${child}
+				done
+			fi
+		done
+	else
+		# Children of given stage
+		use_stage ${i}
+		printf "%*s%s\n" ${depth} '' "| ${platform}/${release}/${stage}"
+		for child in "${children}"; do
+			draw_stages_tree $((depth + 1)) ${child}
+		done
+	fi
 }
 
 # Save and update templates in work directory
@@ -764,8 +799,9 @@ load_stages
 prepare_portage_snapshot
 prepare_releng
 configure_stages
-#write_stages
-#build_stages
+#draw_stages_tree
+write_stages
+build_stages
 
 # TODO: Add lock file preventing multiple runs at once.
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
