@@ -607,7 +607,7 @@ draw_stages_tree() {
 		local child_array=()
 		local i; for (( i=0; i < ${stages_count}; i++ )); do
 			use_stage ${i}
-			if [[ ${rebuild} = true ]] && [[ -z ${parent_index} ]]; then
+			if [[ ${rebuild} = true ]] && ([[ -z ${parent_index} ]] || [[ ${parent_rebuild} = false ]]); then
 				child_array+=(${i})
 			fi
 		done
