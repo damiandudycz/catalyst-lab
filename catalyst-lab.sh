@@ -408,6 +408,19 @@ load_stages() {
 		set +f
 	fi
 
+	# Build stages tree (determine children property)
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		use_stage ${i}
+		if [[ ${rebuild} = false ]]; then
+			continue
+		fi
+
+		# Store child in parent's childs, to build a dependency tree.
+		if [[ -n ${parent_index} ]]; then
+			stages[${parent_index},children]="${stages[${parent_index},children]} ${i}"
+		fi
+	done
+
 	# List stages to build
 	echo_color ${color_turquoise_bold} "[ Stages to rebuild ]"
 	local i; local j=1; for (( i=0; i<${stages_count}; i++ )); do
@@ -471,11 +484,6 @@ configure_stages() {
 			if [[ ! -f ${source_build_path} ]]; then
 				use_remote_build=true
 			fi
-		fi
-
-		# Store child in parent's childs, to build a dependency tree.
-		if [[ -n ${parent_index} ]]; then
-			stages[${parent_index},children]="${stages[${parent_index},children]} ${i}"
 		fi
 
 		# Get seed URL if needed.
@@ -544,7 +552,7 @@ configure_stages() {
 			done
 			if [[ ${qemu_has_static_user} = false ]]; then
 				echo "Qemu needs to be installed with static_user USE flag."
-				exit 1
+         				exit 1
 			fi
 			if [[ ${qemu_binfmt_is_running} = false ]]; then
 				echo "qemu-binfmt service is not running."
@@ -579,7 +587,7 @@ draw_stages_tree() {
 	# If index is empty, find and print all elements without children.
 	# If they have children, call this function recursevely.
 
-	if [[ -a ${index} ]]; then
+	if [[ -z ${index} ]]; then
 		# First call, without index specified
 		local i; for (( i=0; i<${stages_count}; i++ )); do
 			use_stage ${i}
@@ -587,19 +595,23 @@ draw_stages_tree() {
 				continue
 			fi
 			if [[ -z ${parent_index} ]]; then
-				printf "%*s%s\n" ${depth} '' "| ${platform}/${release}/${stage}"
-				for child in "${children}"; do
-					draw_stages_tree $((depth + 1)) ${child}
-				done
+				printf "%*s%s\n" ${depth} '' "${platform}/${release}/${stage}"
+				if [[ -n ${children} ]]; then
+					for child in ${children}; do
+						draw_stages_tree $((depth + 2)) ${child}
+					done
+				fi
 			fi
 		done
 	else
 		# Children of given stage
-		use_stage ${i}
-		printf "%*s%s\n" ${depth} '' "| ${platform}/${release}/${stage}"
-		for child in "${children}"; do
-			draw_stages_tree $((depth + 1)) ${child}
-		done
+		use_stage ${index}
+		printf "%*s%s\n" ${depth} '' "${platform}/${release}/${stage}"
+		if [[ -n ${children} ]]; then
+			for child in ${children}; do
+				draw_stages_tree $((depth + 2)) ${child}
+			done
+		fi
 	fi
 }
 
@@ -796,12 +808,13 @@ trap cleanup EXIT
 trap cleanup SIGINT SIGTERM
 
 load_stages
+draw_stages_tree
+
 prepare_portage_snapshot
 prepare_releng
 configure_stages
-#draw_stages_tree
-write_stages
-build_stages
+#write_stages
+#build_stages
 
 # TODO: Add lock file preventing multiple runs at once.
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
