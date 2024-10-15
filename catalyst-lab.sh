@@ -845,3 +845,5 @@ fi
 # TODO: Add lock file preventing multiple runs at once.
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
 # TODO: Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs
+# TODO: Detecting circular dependencies
+# TODO: Make it possible to work with hubs
