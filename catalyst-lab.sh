@@ -445,12 +445,23 @@ load_stages() {
 # This is function uses requrency to process all required parents before selected stage is processed.
 insert_stage_with_inheritance() { # arg - index, required_by_id
 	local index=${1}
+	local dependency_stack=${2:-'|'}
 	use_stage ${index}
 	if ! contains_string stages_order[@] ${index}; then
 		# If you can find a parent that produces target = this.source, add this parent first. After that add this stage.
 		if [[ -n ${parent_index} ]]; then
+			if [[ ${dependency_stack} == *"|${parent_index}|"* ]]; then
+				echo "Circular dependency detected for ${parent_platform}/${parent_release}/${parent_stage}. Verify your templates."
+				IFS='|' read -r -a dependency_indexes <<< "${dependency_stack#|}"
+				echo "Stack:"
+				for index in ${dependency_indexes[@]}; do
+					echo ${stages[${index},platform]}/${stages[${index},release]}/${stages[${index},stage]}
+				done
+				exit 1
+			fi
 			stages[${index},parent]=${parent_platform}/${parent_release}/${parent_stage}
-			insert_stage_with_inheritance ${parent_index}
+			local next_dependency_stack="${dependency_stack}${index}|"
+			insert_stage_with_inheritance ${parent_index} "${next_dependency_stack}"
 		else
 			stages[${index},parent]=""
 		fi
@@ -835,5 +846,4 @@ fi
 # TODO: Add lock file preventing multiple runs at once.
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
 # TODO: Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs
-# TODO: Detecting circular dependencies
 # TODO: Make it possible to work with hubs
