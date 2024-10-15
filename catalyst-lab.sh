@@ -6,6 +6,9 @@ if [[ $EUID -ne 0 ]]; then
 	exit 1
 fi
 
+# Possible variables stored in stages array in this script.
+declare STAGE_KEYS=(available_build children overlays parent platform rebuild release releng_base selected source_subpath stage subarch target version_stamp)
+
 declare -A TARGET_MAPPINGS=(
 	# Used to fill spec fsscript and similar with correct key.
 	[livecd-stage1]=livecd
@@ -145,8 +148,8 @@ basearch_to_baseraw() {
 use_stage() {
 	local prefix=${2}
 	# Automatically determine all possible keys stored in stages, and load them to variables.
-	local keys=($(printf "%s\n" "${!stages[@]}" | sed 's/.*,//' | sort -u))
-	for variable in ${keys[@]}; do
+	#local keys=($(printf "%s\n" "${!stages[@]}" | sed 's/.*,//' | sort -u))
+	for variable in ${STAGE_KEYS[@]}; do
 		local value=${stages[${1},${variable}]}
 		eval "${prefix}${variable}='${value}'"
 	done
