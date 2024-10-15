@@ -468,8 +468,6 @@ insert_stage_with_inheritance() { # arg - index, required_by_id
 			stages[${index},parent]=${parent_platform}/${parent_release}/${parent_stage}
 			local next_dependency_stack="${dependency_stack}${index}|"
 			insert_stage_with_inheritance ${parent_index} "${next_dependency_stack}"
-		else
-			stages[${index},parent]=""
 		fi
 		stages_order+=(${index})
 	fi
@@ -849,7 +847,7 @@ else
 	echo "To build selected stages use --build flag."
 fi
 
-# TODO: Add lock file preventing multiple runs at once.
+# TODO: Add lock file preventing multiple runs at once, but only if the same builds are involved (maybe).
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
-# TODO: Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs
-# TODO: Make it possible to work with hubs
+# TODO: Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs.
+# TODO: Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
