@@ -33,6 +33,7 @@ readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
 readonly qemu_has_static_user=$(grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE && echo true || echo false)
 readonly qemu_binfmt_is_running=$( { [ -x /etc/init.d/qemu-binfmt ] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
 
+readonly color_gray='\033[0;90m'
 readonly color_red='\033[0;31m'
 readonly color_green='\033[0;32m'
 readonly color_turquoise='\033[0;36m'
@@ -615,9 +616,9 @@ draw_stages_tree() {
 	local i=0; for child in ${child_array[@]}; do
 		((i++))
 		use_stage ${child}
-		local stage_name=${platform}/${release}/${stage}
+		local stage_name="${color_gray}${platform}/${release}/${color_turquoise}${stage}${color_nc}"
 		if [[ ${selected} = true ]]; then
-			stage_name="\033[1m${stage_name}\033[0m"
+			stage_name="${color_gray}${platform}/${release}/${color_turquoise_bold}${stage}${color_nc}"
 		fi
 		new_prefix="${prefix}├── "
 		if [[ -n ${children} ]]; then
