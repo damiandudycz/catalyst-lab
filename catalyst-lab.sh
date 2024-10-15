@@ -7,7 +7,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Possible variables stored in stages array in this script.
-declare STAGE_KEYS=(available_build children overlays parent platform rebuild release releng_base selected source_subpath stage subarch target version_stamp)
+declare STAGE_KEYS=(available_build catalyst_conf catalyst_conf_src children overlays parent platform rebuild release releng_base selected source_subpath stage subarch target version_stamp)
 
 declare -A TARGET_MAPPINGS=(
 	# Used to fill spec fsscript and similar with correct key.
