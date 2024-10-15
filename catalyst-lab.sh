@@ -171,6 +171,11 @@ use_stage() {
 		unset repos common_flags chost toml
 		local platform_conf_path=${templates_path}/${platform}/platform.conf
 		source ${platform_conf_path}
+		local release_conf_path=${templates_path}/${platform}/${release}/release.conf
+		if [[ -f ${release_conf_path} ]]; then
+			# Variables in release.conf can overwrite platform defaults.
+			source ${release_conf_path}
+		fi
 		arch_basearch=${arch%%/*}
 		arch_baseraw=$(basearch_to_baseraw ${arch_basearch})
 		arch_subarch=${arch#*/}; arch_subarch=${arch_subarch:-$arch_basearch}
