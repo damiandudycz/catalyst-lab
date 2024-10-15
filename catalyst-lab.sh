@@ -790,7 +790,7 @@ build_stages() {
 					git clone ${repo_url} ${local_path_for_remote}
 				elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
 					echo_color ${color_turquoise} "Updating overlay repo ${repo_url}"
-					git -C ${local_path_for_remote} pul
+					git -C ${local_path_for_remote} pull
 				fi
 				echo ""
 			fi
