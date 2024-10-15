@@ -436,16 +436,6 @@ load_stages() {
 
 	# List stages to build
 	echo_color ${color_turquoise_bold} "[ Stages to rebuild ]"
-	local i; local j=1; for (( i=0; i<${stages_count}; i++ )); do
-		local rebuild=${stages[${i},rebuild]}
-		if [[ ${rebuild} = true ]]; then
-			echo "$((j)): ${stages[${i},'platform']}/${stages[${i},'release']}/${stages[${i},'stage']}"
-			((j++))
-		fi
-	done
-	echo "" # New line
-
-	# Draw dependency tree
 	draw_stages_tree
 	echo ""
 }
