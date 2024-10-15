@@ -451,11 +451,17 @@ insert_stage_with_inheritance() { # arg - index, required_by_id
 		# If you can find a parent that produces target = this.source, add this parent first. After that add this stage.
 		if [[ -n ${parent_index} ]]; then
 			if [[ ${dependency_stack} == *"|${parent_index}|"* ]]; then
+				dependency_stack="${dependency_stack}${index}|"
 				echo "Circular dependency detected for ${parent_platform}/${parent_release}/${parent_stage}. Verify your templates."
 				IFS='|' read -r -a dependency_indexes <<< "${dependency_stack#|}"
 				echo "Stack:"
-				for index in ${dependency_indexes[@]}; do
-					echo ${stages[${index},platform]}/${stages[${index},release]}/${stages[${index},stage]}
+				local found_parent=false
+				for i in ${dependency_indexes[@]}; do
+					if [[ ${found_parent} = false ]] && [[ ${parent_index} != ${i} ]]; then
+						continue
+					fi
+					found_parent=true
+					echo ${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}
 				done
 				exit 1
 			fi
