@@ -624,9 +624,9 @@ draw_stages_tree() {
 	local i=0; for child in ${child_array[@]}; do
 		((i++))
 		use_stage ${child}
-		local stage_name="${color_gray}${platform}/${release}/${color_turquoise}${stage}${color_nc}"
+		local stage_name=${platform}/${release}/${color_turquoise}${stage}${color_nc}
 		if [[ ${selected} = true ]]; then
-			stage_name="${color_gray}${platform}/${release}/${color_turquoise_bold}${stage}${color_nc}"
+			stage_name=${platform}/${release}/${color_turquoise_bold}${stage}${color_nc}
 		fi
 		new_prefix="${prefix}├── "
 		if [[ -n ${children} ]]; then
