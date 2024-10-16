@@ -719,7 +719,7 @@ write_stages() {
 		if [[ -n ${common_flags} ]]; then
 			set_spec_variable_if_missing ${stage_spec_work_path} common_flags "${common_flags}"
 		fi
-		if [[ -n ${chost} ]]; then
+		if [[ -n ${chost} ]] && [[ ${target} = stage1 ]]; then # Only allow setting chost in stage1 targets.
 			set_spec_variable_if_missing ${stage_spec_work_path} chost ${chost}
 		fi
 		if [[ -n ${overlays} ]]; then
