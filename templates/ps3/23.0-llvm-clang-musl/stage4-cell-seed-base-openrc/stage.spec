@@ -5,7 +5,7 @@
 target: stage4
 version_stamp: seed-base-openrc-@TIMESTAMP@
 profile: default/linux/@BASE_ARCH@/23.0/musl
-source_subpath: @BASE_ARCH@/stage3-@BASE_ARCH@-openrc-@TIMESTAMP@
+source_subpath: @BASE_ARCH@/stage3-@BASE_ARCH@-musl-hardened-openrc-@TIMESTAMP@
 compression_mode: pixz
 binrepo_path: @PLATFORM@/@REL_TYPE@
 releng_base: stages
