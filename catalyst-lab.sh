@@ -851,3 +851,4 @@ fi
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
 # TODO: Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs.
 # TODO: Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
+# TODO: Check if settings common_flags is also only allowed in stage1
