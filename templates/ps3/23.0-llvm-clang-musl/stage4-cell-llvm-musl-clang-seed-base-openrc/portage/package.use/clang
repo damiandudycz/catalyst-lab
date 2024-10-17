@@ -1,0 +1,4 @@
+# Note: This is a workaround for issue:
+# https://bugs.gentoo.org/928936
+# Should be removed when this issue is fixed upstream.
+sys-devel/clang-runtime -sanitize
