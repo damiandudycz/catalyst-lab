@@ -854,3 +854,4 @@ fi
 # TODO: Check if settings common_flags is also only allowed in stage1
 # TODO: Working with distcc (including local)
 # TODO: Using remote binhosts
+# TODO: Make possible setting different build sublocation (for building modified seeds)
