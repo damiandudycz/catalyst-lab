@@ -468,6 +468,8 @@ insert_stage_with_inheritance() { # arg - index, required_by_id
 			stages[${index},parent]=${parent_platform}/${parent_release}/${parent_stage}
 			local next_dependency_stack="${dependency_stack}${index}|"
 			insert_stage_with_inheritance ${parent_index} "${next_dependency_stack}"
+		else
+			stages[${index},parent]=""
 		fi
 		stages_order+=(${index})
 	fi
