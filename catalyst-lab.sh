@@ -158,6 +158,7 @@ use_stage() {
 		parent_index=""
 		local i; for (( i=0; i<${stages_count}; i++ )); do
 			use_stage ${i} parent_
+# TODO: Take into consideration customized rel_type in parent spec
 			local parent_product=${parent_platform}/${parent_release}/${parent_target}-${parent_subarch}-${parent_version_stamp}
 			if [[ ${source_subpath} == ${parent_product} ]]; then
 				parent_index=${i}
@@ -857,3 +858,4 @@ fi
 # TODO: Working with distcc (including local)
 # TODO: Using remote binhosts
 # TODO: Make possible setting different build sublocation (for building modified seeds)
+# TODO: Correct dependencies detection when rel_type is definied in source spec
