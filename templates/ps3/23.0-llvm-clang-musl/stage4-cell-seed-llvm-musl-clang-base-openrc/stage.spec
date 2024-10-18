@@ -11,7 +11,7 @@ releng_base: stages
 pkgcache_path: @PKGCACHE_BASE_PATH@/@PLATFORM@/@REL_TYPE@-seed
 
 # Keep this seed outside of release directory.
-rel_type: @PLATFORM@
+#rel_type: @PLATFORM@
 
 stage4/use:
 	ps3
