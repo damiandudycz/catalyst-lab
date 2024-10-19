@@ -7,7 +7,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Possible variables stored in stages array in this script.
-declare STAGE_KEYS=(available_build catalyst_conf catalyst_conf_src cpu_flags children overlays parent platform rebuild release releng_base selected source_subpath stage subarch target version_stamp)
+declare STAGE_KEYS=(available_build catalyst_conf catalyst_conf_src cpu_flags children overlays parent platform rebuild release releng_base selected source_subpath source_url stage subarch target version_stamp)
 declare -A TARGET_MAPPINGS=(
 	# Used to fill spec fsscript and similar with correct key.
 	[livecd-stage1]=livecd
@@ -287,7 +287,7 @@ prepare_releng() {
 load_stages() {
 	declare -gA stages # Some details of stages retreived from scanning. (release,stage,target,source,has_parent).
 	available_builds=$(find ${catalyst_builds_path} -type f -name "*.tar.xz" -printf '%P\n')
-	stages_count=0 # Number of stages to build. Script will determine this value automatically.
+	stages_count=0 # Number of all stages. Script will determine this value automatically.
 
 	readonly RL_VAL_PLATFORMS=$(get_directories ${templates_path})
 	for platform in ${RL_VAL_PLATFORMS[@]}; do
