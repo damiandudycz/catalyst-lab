@@ -310,6 +310,11 @@ load_stages() {
 					local spec_repos=$(read_spec_variable ${stage_spec_path} repos)
 					local releng_base=$(read_spec_variable ${stage_spec_path} releng_base)
 
+					# Extract target from stage name if it was not specified in spec file.
+					if [[ -z ${target}]]; then
+						target=$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')
+					fi
+
 					# If subarch is not set in spec, update it with value from platform config.
 					if [[ -z ${subarch} ]]; then
 						subarch=${arch_subarch}
@@ -716,6 +721,7 @@ write_stages() {
 		# Replace spec templates with real data
 		echo "" >> ${stage_spec_work_path} # Add new line, to separate new entries
 		echo "# Added by catalyst-lab" >> ${stage_spec_work_path}
+		set_spec_variable_if_missing ${stage_spec_work_path} target ${target}
 		set_spec_variable_if_missing ${stage_spec_work_path} rel_type ${platform}/${release}
 		set_spec_variable_if_missing ${stage_spec_work_path} subarch ${arch_subarch}
 		set_spec_variable_if_missing ${stage_spec_work_path} portage_confdir ${portage_path}
@@ -874,4 +880,4 @@ fi
 # TODO: Using remote binhosts
 # TODO: Make possible setting different build sublocation (for building modified seeds)
 # TODO: Correct dependencies detection when rel_type is definied in source spec
-# TODO: Make things like target and timestamp infered automatically from folder name (names will have to be kept in specific format after that change)
+# TODO: Make things like target and version_stamp infered automatically from folder name (names will have to be kept in specific format after that change)
