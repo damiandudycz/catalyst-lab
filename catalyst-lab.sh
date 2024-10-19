@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Initial config
+
 # Check for root privilages.
 if [[ $EUID -ne 0 ]]; then
 	echo "This script must be run as root"
@@ -99,159 +101,8 @@ while [ $# -gt 0 ]; do case ${1} in
 	*) selected_stages_templates+=("${1}");;
 esac; shift; done
 
+# ------------------------------------------------------------------------------
 # Functions:
-
-# Clean tmp files if exited with error.
-cleanup() {
-	if [[ $? -ne 0 ]]; then
-		# Cleanup build directory.
-		# rm -rf ${work_path} # Leave for future analysis.
-		# Cleanup temporary toml file.
-		if [[ -n ${toml_file} ]] && [[ -f ${toml_file} ]]; then
-			rm -f ${toml_file}
-		fi
-	fi
-}
-
-echo_color() { # Usage: echo_color COLOR MESSAGE
-	echo -e "${1}${2}${color_nc}"
-}
-
-contains_string() {
-	local array=("${!1}")
-	local search_string="$2"
-	local found=0
-
-	for element in "${array[@]}"; do
-		if [[ "$element" == "$search_string" ]]; then
-			found=1
-			break
-		fi
-	done
-
-	if [[ $found -eq 1 ]]; then
-		return 0  # true
-	else
-		return 1  # false
-	fi
-}
-
-# Get list of directories in given directory.
-get_directories() {
-	local path=${1}
-	local directories=($(find ${path}/ -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort))
-	echo ${directories[@]}
-}
-
-basearch_to_baseraw() {
-	local basearch=${1}
-	for key in ${!ARCH_MAPPINGS[@]}; do
-		if [[ ${ARCH_MAPPINGS[${key}]} == ${basearch} ]]; then
-			echo ${key}
-			return
-		fi
-	done
-	echo ${basearch}
-}
-
-# Read variables of stage at index. Use this in functions that sould work with given stage, instead of loading all variables manually.
-# Use prefix if need to compare with other stage variables.
-# This function also loads platform config file related to selected stage.
-use_stage() {
-	local prefix=${2}
-	# Automatically determine all possible keys stored in stages, and load them to variables.
-	#local keys=($(printf "%s\n" "${!stages[@]}" | sed 's/.*,//' | sort -u))
-	for variable in ${STAGE_KEYS[@]}; do
-		local value=${stages[${1},${variable}]}
-		eval "${prefix}${variable}='${value}'"
-	done
-	# Load parent info and platform config
-	if [[ -z ${prefix} ]]; then
-		parent_index=""
-		local i; for (( i=0; i<${stages_count}; i++ )); do
-			use_stage ${i} parent_
-# TODO: Take into consideration customized rel_type in parent spec
-			local parent_product=${parent_platform}/${parent_release}/${parent_target}-${parent_subarch}-${parent_version_stamp}
-			if [[ ${source_subpath} == ${parent_product} ]]; then
-				parent_index=${i}
-				break
-			fi
-		done
-		if [[ -z ${parent_index} ]]; then # If parent not found, clean it's data
-			for variable in ${keys[@]}; do
-				unset parent_${variable}
-			done
-		fi
-
-		# Platform config
-		# If some properties are not set in config - unset them while loading new config
-		unset repos common_flags chost toml cpu_flags compression_mode
-		local platform_conf_path=${templates_path}/${platform}/platform.conf
-		source ${platform_conf_path}
-		local release_conf_path=${templates_path}/${platform}/${release}/release.conf
-		if [[ -f ${release_conf_path} ]]; then
-			# Variables in release.conf can overwrite platform defaults.
-			source ${release_conf_path}
-		fi
-		arch_basearch=${arch%%/*}
-		arch_baseraw=$(basearch_to_baseraw ${arch_basearch})
-		arch_subarch=${arch#*/}; arch_subarch=${arch_subarch:-$arch_basearch}
-		arch_family=${ARCH_FAMILIES[${arch_basearch}]:-${arch_basearch}}
-		arch_interpreter=${ARCH_INTERPRETERS[${arch_baseraw}]:-"/usr/bin/qemu-${arch_baseraw}"} # Find correct arch_interpreter
-	fi
-}
-
-# Return value of given property from given spec file.
-read_spec_variable() {
-	local spec_path=${1}
-	local variable_name=${2}
-	# get variable from spec file and trim whitespaces.
-	local value=$(cat ${spec_path} | sed -n "/^${variable_name}:/s/^${variable_name}:\(.*\)/\1/p" | tr -d '[:space:]')
-	echo ${value}
-}
-
-# Update value in given spec or add if it's not present there
-set_spec_variable() {
-	local spec_path=${1}
-	local key=${2}
-	local new_value="${3}"
-	if grep -q "^$key:" ${spec_path}; then
-		sed -i "s|^$key: .*|$key: $new_value|" ${spec_path}
-	else
-		echo "$key: $new_value" >> ${spec_path}
-	fi
-}
-
-# Set variable in spec only if it's not specified yet.
-# Use this for example for treeish - you can sepcify selected one or leave it out to get automatic value.
-set_spec_variable_if_missing() {
-	local spec_path=${1}
-	local key=${2}
-	local new_value="${3}"
-	if ! grep -q "^$key:" "${spec_path}"; then
-		echo "$key: $new_value" >> "${spec_path}"
-	fi
-}
-
-# Fill tmp data in spec (@TIMESTAMP@, etc)
-update_spec_variable() {
-	local spec_path=${1}
-	local key=${2}
-	local new_value="${3}"
-	sed -i "s|@${key}@|${new_value}|g" ${spec_path}
-}
-
-# Replace variables in given stage variable, by replacing some strings with calculated end results - timestamp, PLATFORM, STAGE.
-sanitize_spec_variable() {
-	local platform="$1"
-	local release="$2"
-	local stage="$3"
-	local family="$4"
-	local base_arch="$5"
-	local sub_arch="$6"
-	local value="$7"
-	echo "${value}" | sed "s/@REL_TYPE@/${release}/g" | sed "s/@PLATFORM@/${platform}/g" | sed "s/@STAGE@/${stage}/g" | sed "s/@BASE_ARCH@/${base_arch}/g" | sed "s/@SUB_ARCH@/${sub_arch}/g" | sed "s/@FAMILY_ARCH@/${family}/g"
-}
 
 #  Get portage snapshot version and download new if needed.
 prepare_portage_snapshot() {
@@ -473,41 +324,6 @@ load_stages() {
 	echo ""
 }
 
-# Prepare array that describes the order of stages based on inheritance.
-# Store information if stage has local parents.
-# This is function uses requrency to process all required parents before selected stage is processed.
-insert_stage_with_inheritance() { # arg - index, required_by_id
-	local index=${1}
-	local dependency_stack=${2:-'|'}
-	use_stage ${index}
-	if ! contains_string stages_order[@] ${index}; then
-		# If you can find a parent that produces target = this.source, add this parent first. After that add this stage.
-		if [[ -n ${parent_index} ]]; then
-			if [[ ${dependency_stack} == *"|${parent_index}|"* ]]; then
-				dependency_stack="${dependency_stack}${index}|"
-				echo "Circular dependency detected for ${parent_platform}/${parent_release}/${parent_stage}. Verify your templates."
-				IFS='|' read -r -a dependency_indexes <<< "${dependency_stack#|}"
-				echo "Stack:"
-				local found_parent=false
-				for i in ${dependency_indexes[@]}; do
-					if [[ ${found_parent} = false ]] && [[ ${parent_index} != ${i} ]]; then
-						continue
-					fi
-					found_parent=true
-					echo ${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}
-				done
-				exit 1
-			fi
-			stages[${index},parent]=${parent_platform}/${parent_release}/${parent_stage}
-			local next_dependency_stack="${dependency_stack}${index}|"
-			insert_stage_with_inheritance ${parent_index} "${next_dependency_stack}"
-		else
-			stages[${index},parent]=""
-		fi
-		stages_order+=(${index})
-	fi
-}
-
 # Setup templates of stages.
 configure_stages() {
 	echo_color ${color_turquoise_bold} "[ Preparing stages ]"
@@ -641,45 +457,6 @@ configure_stages() {
 
 	echo_color ${color_green} "Stage templates prepared"
 	echo ""
-}
-
-draw_stages_tree() {
-	local index=${1}
-	local prefix=${2}
-
-	if [[ -z ${index} ]]; then
-		# Get indexes of root elements.
-		local child_array=()
-		local i; for (( i=0; i < ${stages_count}; i++ )); do
-			use_stage ${i}
-			if [[ ${rebuild} = true ]] && ([[ -z ${parent_index} ]] || [[ ${parent_rebuild} = false ]]); then
-				child_array+=(${i})
-			fi
-		done
-	else
-		use_stage ${index}
-		local child_array=(${children[@]}) # Map to array if starting from string
-	fi
-
-	local i=0; for child in ${child_array[@]}; do
-		((i++))
-		use_stage ${child}
-		local stage_name=${platform}/${release}/${color_turquoise}${stage}${color_nc}
-		if [[ ${selected} = true ]]; then
-			stage_name=${platform}/${release}/${color_turquoise_bold}${stage}${color_nc}
-		fi
-		new_prefix="${prefix}├── "
-		if [[ -n ${children} ]]; then
-			new_prefix="${prefix}│   "
-		fi
-		if [[ ${i} == ${#child_array[@]} ]]; then
-			new_prefix="${prefix}    "
-			echo -e "${prefix}└── ${stage_name}"
-		else
-			echo -e "${prefix}├── ${stage_name}"
-		fi
-		draw_stages_tree ${child} "${new_prefix}"
-	done
 }
 
 # Save and update templates in work directory
@@ -906,6 +683,236 @@ build_stages() {
 	done
 }
 
+# ------------------------------------------------------------------------------
+# Helper functions:
+
+# Clean tmp files if exited with error.
+cleanup() {
+	if [[ $? -ne 0 ]]; then
+		# Cleanup build directory.
+		# rm -rf ${work_path} # Leave for future analysis.
+		# Cleanup temporary toml file.
+		if [[ -n ${toml_file} ]] && [[ -f ${toml_file} ]]; then
+			rm -f ${toml_file}
+		fi
+	fi
+}
+
+echo_color() { # Usage: echo_color COLOR MESSAGE
+	echo -e "${1}${2}${color_nc}"
+}
+
+contains_string() {
+	local array=("${!1}")
+	local search_string="$2"
+	local found=0
+
+	for element in "${array[@]}"; do
+		if [[ "$element" == "$search_string" ]]; then
+			found=1
+			break
+		fi
+	done
+
+	if [[ $found -eq 1 ]]; then
+		return 0  # true
+	else
+		return 1  # false
+	fi
+}
+
+# Get list of directories in given directory.
+get_directories() {
+	local path=${1}
+	local directories=($(find ${path}/ -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort))
+	echo ${directories[@]}
+}
+
+basearch_to_baseraw() {
+	local basearch=${1}
+	for key in ${!ARCH_MAPPINGS[@]}; do
+		if [[ ${ARCH_MAPPINGS[${key}]} == ${basearch} ]]; then
+			echo ${key}
+			return
+		fi
+	done
+	echo ${basearch}
+}
+
+# Read variables of stage at index. Use this in functions that sould work with given stage, instead of loading all variables manually.
+# Use prefix if need to compare with other stage variables.
+# This function also loads platform config file related to selected stage.
+use_stage() {
+	local prefix=${2}
+	# Automatically determine all possible keys stored in stages, and load them to variables.
+	#local keys=($(printf "%s\n" "${!stages[@]}" | sed 's/.*,//' | sort -u))
+	for variable in ${STAGE_KEYS[@]}; do
+		local value=${stages[${1},${variable}]}
+		eval "${prefix}${variable}='${value}'"
+	done
+	# Load parent info and platform config
+	if [[ -z ${prefix} ]]; then
+		parent_index=""
+		local i; for (( i=0; i<${stages_count}; i++ )); do
+			use_stage ${i} parent_
+# TODO: Take into consideration customized rel_type in parent spec
+			local parent_product=${parent_platform}/${parent_release}/${parent_target}-${parent_subarch}-${parent_version_stamp}
+			if [[ ${source_subpath} == ${parent_product} ]]; then
+				parent_index=${i}
+				break
+			fi
+		done
+		if [[ -z ${parent_index} ]]; then # If parent not found, clean it's data
+			for variable in ${keys[@]}; do
+				unset parent_${variable}
+			done
+		fi
+
+		# Platform config
+		# If some properties are not set in config - unset them while loading new config
+		unset repos common_flags chost toml cpu_flags compression_mode
+		local platform_conf_path=${templates_path}/${platform}/platform.conf
+		source ${platform_conf_path}
+		local release_conf_path=${templates_path}/${platform}/${release}/release.conf
+		if [[ -f ${release_conf_path} ]]; then
+			# Variables in release.conf can overwrite platform defaults.
+			source ${release_conf_path}
+		fi
+		arch_basearch=${arch%%/*}
+		arch_baseraw=$(basearch_to_baseraw ${arch_basearch})
+		arch_subarch=${arch#*/}; arch_subarch=${arch_subarch:-$arch_basearch}
+		arch_family=${ARCH_FAMILIES[${arch_basearch}]:-${arch_basearch}}
+		arch_interpreter=${ARCH_INTERPRETERS[${arch_baseraw}]:-"/usr/bin/qemu-${arch_baseraw}"} # Find correct arch_interpreter
+	fi
+}
+
+# Return value of given property from given spec file.
+read_spec_variable() {
+	local spec_path=${1}
+	local variable_name=${2}
+	# get variable from spec file and trim whitespaces.
+	local value=$(cat ${spec_path} | sed -n "/^${variable_name}:/s/^${variable_name}:\(.*\)/\1/p" | tr -d '[:space:]')
+	echo ${value}
+}
+
+# Update value in given spec or add if it's not present there
+set_spec_variable() {
+	local spec_path=${1}
+	local key=${2}
+	local new_value="${3}"
+	if grep -q "^$key:" ${spec_path}; then
+		sed -i "s|^$key: .*|$key: $new_value|" ${spec_path}
+	else
+		echo "$key: $new_value" >> ${spec_path}
+	fi
+}
+
+# Set variable in spec only if it's not specified yet.
+# Use this for example for treeish - you can sepcify selected one or leave it out to get automatic value.
+set_spec_variable_if_missing() {
+	local spec_path=${1}
+	local key=${2}
+	local new_value="${3}"
+	if ! grep -q "^$key:" "${spec_path}"; then
+		echo "$key: $new_value" >> "${spec_path}"
+	fi
+}
+
+# Fill tmp data in spec (@TIMESTAMP@, etc)
+update_spec_variable() {
+	local spec_path=${1}
+	local key=${2}
+	local new_value="${3}"
+	sed -i "s|@${key}@|${new_value}|g" ${spec_path}
+}
+
+# Replace variables in given stage variable, by replacing some strings with calculated end results - timestamp, PLATFORM, STAGE.
+sanitize_spec_variable() {
+	local platform="$1"
+	local release="$2"
+	local stage="$3"
+	local family="$4"
+	local base_arch="$5"
+	local sub_arch="$6"
+	local value="$7"
+	echo "${value}" | sed "s/@REL_TYPE@/${release}/g" | sed "s/@PLATFORM@/${platform}/g" | sed "s/@STAGE@/${stage}/g" | sed "s/@BASE_ARCH@/${base_arch}/g" | sed "s/@SUB_ARCH@/${sub_arch}/g" | sed "s/@FAMILY_ARCH@/${family}/g"
+}
+
+# Prepare array that describes the order of stages based on inheritance.
+# Store information if stage has local parents.
+# This is function uses requrency to process all required parents before selected stage is processed.
+insert_stage_with_inheritance() { # arg - index, required_by_id
+	local index=${1}
+	local dependency_stack=${2:-'|'}
+	use_stage ${index}
+	if ! contains_string stages_order[@] ${index}; then
+		# If you can find a parent that produces target = this.source, add this parent first. After that add this stage.
+		if [[ -n ${parent_index} ]]; then
+			if [[ ${dependency_stack} == *"|${parent_index}|"* ]]; then
+				dependency_stack="${dependency_stack}${index}|"
+				echo "Circular dependency detected for ${parent_platform}/${parent_release}/${parent_stage}. Verify your templates."
+				IFS='|' read -r -a dependency_indexes <<< "${dependency_stack#|}"
+				echo "Stack:"
+				local found_parent=false
+				for i in ${dependency_indexes[@]}; do
+					if [[ ${found_parent} = false ]] && [[ ${parent_index} != ${i} ]]; then
+						continue
+					fi
+					found_parent=true
+					echo ${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}
+				done
+				exit 1
+			fi
+			stages[${index},parent]=${parent_platform}/${parent_release}/${parent_stage}
+			local next_dependency_stack="${dependency_stack}${index}|"
+			insert_stage_with_inheritance ${parent_index} "${next_dependency_stack}"
+		else
+			stages[${index},parent]=""
+		fi
+		stages_order+=(${index})
+	fi
+}
+
+draw_stages_tree() {
+	local index=${1}
+	local prefix=${2}
+
+	if [[ -z ${index} ]]; then
+		# Get indexes of root elements.
+		local child_array=()
+		local i; for (( i=0; i < ${stages_count}; i++ )); do
+			use_stage ${i}
+			if [[ ${rebuild} = true ]] && ([[ -z ${parent_index} ]] || [[ ${parent_rebuild} = false ]]); then
+				child_array+=(${i})
+			fi
+		done
+	else
+		use_stage ${index}
+		local child_array=(${children[@]}) # Map to array if starting from string
+	fi
+
+	local i=0; for child in ${child_array[@]}; do
+		((i++))
+		use_stage ${child}
+		local stage_name=${platform}/${release}/${color_turquoise}${stage}${color_nc}
+		if [[ ${selected} = true ]]; then
+			stage_name=${platform}/${release}/${color_turquoise_bold}${stage}${color_nc}
+		fi
+		new_prefix="${prefix}├── "
+		if [[ -n ${children} ]]; then
+			new_prefix="${prefix}│   "
+		fi
+		if [[ ${i} == ${#child_array[@]} ]]; then
+			new_prefix="${prefix}    "
+			echo -e "${prefix}└── ${stage_name}"
+		else
+			echo -e "${prefix}├── ${stage_name}"
+		fi
+		draw_stages_tree ${child} "${new_prefix}"
+	done
+}
+
+# ------------------------------------------------------------------------------
 # Main program:
 
 # Register cleanup for script exit.
