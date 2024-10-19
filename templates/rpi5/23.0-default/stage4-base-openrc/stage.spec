@@ -27,6 +27,7 @@ rcadd:
 	sysklogd|default
 	ntpd|default
 	ntp-client|default
+	sshd|default
 
 empty: /var/cache/distfiles
 rm: /root/.bash_history

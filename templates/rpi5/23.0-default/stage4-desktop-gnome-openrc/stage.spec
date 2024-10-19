@@ -4,6 +4,8 @@ profile: default/linux/@BASE_ARCH@/23.0/desktop/gnome
 use:
 	networkmanager
         pulseaudio
+	-qt5
+	-qt6
 
 packages: gnome-base/gnome
 empty: /var/cache/distfiles

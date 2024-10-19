@@ -4,7 +4,6 @@ profile: default/linux/@BASE_ARCH@/23.0/desktop
 use:
 	ps3
 	dist-kernel
-	X
 
 packages:
 	x11-base/xorg-server
