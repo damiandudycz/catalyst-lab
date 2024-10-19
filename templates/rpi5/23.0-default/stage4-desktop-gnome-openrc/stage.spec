@@ -1,4 +1,3 @@
-version_stamp: desktop-mate-openrc-@TIMESTAMP@
 source_subpath: @PLATFORM@/@REL_TYPE@/stage4-@SUB_ARCH@-desktop-openrc-@TIMESTAMP@
 profile: default/linux/@BASE_ARCH@/23.0/desktop/gnome
 compression_mode: pixz

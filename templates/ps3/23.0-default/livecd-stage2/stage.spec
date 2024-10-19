@@ -1,4 +1,3 @@
-version_stamp: @TIMESTAMP@
 source_subpath: @PLATFORM@/@REL_TYPE@/livecd-stage1-@SUB_ARCH@-@TIMESTAMP@
 livecd/iso: install-@SUB_ARCH@-minimal-@TIMESTAMP@.iso
 livecd/volid: Gentoo_PS3

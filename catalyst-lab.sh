@@ -315,10 +315,15 @@ load_stages() {
 						target=$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')
 					fi
 
-# Extract version_stamp from stage name if it was not set.
-#stamp=$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\2/')
-#echo $stamp
-#exit
+					# Extract version_stamp from stage name if not specified in spec file.
+					if [[ -z ${version_stamp} ]]; then
+						version_stamp=$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1/; t; s/.*//')
+						if [[ -n ${version_stamp} ]]; then
+							version_stamp="${version_stamp}-@TIMESTAMP@"
+						else
+							version_stamp="@TIMESTAMP@"
+						fi
+					fi
 
 					# If subarch is not set in spec, update it with value from platform config.
 					if [[ -z ${subarch} ]]; then
@@ -729,6 +734,7 @@ write_stages() {
 		set_spec_variable_if_missing ${stage_spec_work_path} target ${target}
 		set_spec_variable_if_missing ${stage_spec_work_path} rel_type ${platform}/${release}
 		set_spec_variable_if_missing ${stage_spec_work_path} subarch ${arch_subarch}
+		set_spec_variable_if_missing ${stage_spec_work_path} version_stamp ${version_stamp}
 		set_spec_variable_if_missing ${stage_spec_work_path} portage_confdir ${portage_path}
 		set_spec_variable_if_missing ${stage_spec_work_path} snapshot_treeish ${treeish}
 		set_spec_variable_if_missing ${stage_spec_work_path} pkgcache_path ${stage_default_pkgcache_path}
