@@ -30,6 +30,17 @@ declare -A ARCH_INTERPRETERS=(
 	# Keys should correspond to baseraw, for example x86_64, aarch64, ppc64
 	[x86_64]="/usr/bin/qemu-x86_64 /usr/bin/qemu-i386"
 )
+declare -A RELENG_BASES=(
+	# Definies base releng folder for current stage.
+	# This is used to prepare portage_confdir correctly for every stage,
+	# while the name of releng portage subfolder is filled automatically.
+	[stage1]=stages
+	[stage2]=stages
+	[stage3]=stages
+	[stage4]=stages
+	[livecd-stage1]=isos
+	[livecd-stage2]=isos
+)
 
 readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
 readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
@@ -323,6 +334,11 @@ load_stages() {
 						else
 							version_stamp="@TIMESTAMP@"
 						fi
+					fi
+
+					# Extract releng_base from stage target if not specified in spec file.
+					if [[ -z ${releng_base} ]]; then
+						releng_base=${RELENG_BASES[${target}]}
 					fi
 
 					# If subarch is not set in spec, update it with value from platform config.
