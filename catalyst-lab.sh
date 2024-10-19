@@ -1,136 +1,7 @@
 #!/bin/bash
 
-# Initial config
-
-# Check for root privilages.
-if [[ $EUID -ne 0 ]]; then
-	echo "This script must be run as root"
-	exit 1
-fi
-
-# Possible variables stored in stages array in this script.
-declare STAGE_KEYS=(available_build catalyst_conf catalyst_conf_src cpu_flags children overlays parent platform rebuild release releng_base selected source_subpath source_url stage subarch target version_stamp)
-declare -A TARGET_MAPPINGS=(
-	# Used to fill spec fsscript and similar with correct key.
-	[livecd-stage1]=livecd
-	[livecd-stage2]=livecd
-)
-declare -A ARCH_MAPPINGS=(
-	# Map from arch command to base arch. TODO: Add more mappings if needed.
-	[aarch64]=arm64
-	[x86_64]=amd64
-)
-declare -A ARCH_FAMILIES=(
-	# Map from base arch to arch family. Add only if different than base arch.
-	[ppc64]=ppc
-)
-declare -A ARCH_INTERPRETERS=(
-	# Add custom interpreters if needed.
-	# By default script will try to find interpreter by matching with basename->raw_basename (ie x86_64).
-	# This can also be used if multiple interpreters are needed.
-	# Keys should correspond to baseraw, for example x86_64, aarch64, ppc64
-	[x86_64]="/usr/bin/qemu-x86_64 /usr/bin/qemu-i386"
-)
-declare -A RELENG_BASES=(
-	# Definies base releng folder for current stage.
-	# This is used to prepare portage_confdir correctly for every stage,
-	# while the name of releng portage subfolder is filled automatically.
-	[stage1]=stages
-	[stage2]=stages
-	[stage3]=stages
-	[stage4]=stages
-	[livecd-stage1]=isos
-	[livecd-stage2]=isos
-)
-# List of targets that are compressed after build. This allows adding compression_mode property automatically to stages.
-declare COMPRESSABLE_TARGETS=(stage1 stage2 stage3 stage4 livecd-stage1 livecd-stage2)
-
-readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
-readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
-readonly qemu_has_static_user=$(grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE && echo true || echo false)
-readonly qemu_binfmt_is_running=$( { [ -x /etc/init.d/qemu-binfmt ] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
-
-readonly color_gray='\033[0;90m'
-readonly color_red='\033[0;31m'
-readonly color_green='\033[0;32m'
-readonly color_turquoise='\033[0;36m'
-readonly color_turquoise_bold='\033[1;36m'
-readonly color_nc='\033[0m' # No Color
-
-# Load/create config.
-if [[ ! -f /etc/catalyst-lab/catalyst-lab.conf ]]; then
-	# Create default config if not available
-	mkdir -p /etc/catalyst-lab
-	mkdir -p /etc/catalyst-lab/templates
-	cat <<EOF | tee /etc/catalyst-lab/catalyst-lab.conf > /dev/null || exit 1
-# Main configuration for catalyst-lab.
-seeds_url=https://gentoo.osuosl.org/releases/@ARCH_FAMILY@/autobuilds
-templates_path=/etc/catalyst-lab/templates
-releng_path=/opt/releng
-catalyst_path=/var/tmp/catalyst
-catalyst_usr_path=/usr/share/catalyst
-pkgcache_base_path=/var/cache/catalyst-binpkgs
-tmp_path=/tmp/catalyst-lab
-jobs=$(nproc)
-load_average=$(nproc).0
-EOF
-	echo "Default config file created: /etc/catalyst-lab/catalyst-lab.conf"
-	echo ""
-fi
-source /etc/catalyst-lab/catalyst-lab.conf
-
-readonly work_path=${tmp_path}/${timestamp}
-readonly catalyst_builds_path=${catalyst_path}/builds
-
-# Create required folders if don't exists
-if [[ ! -d ${catalyst_builds_path} ]]; then
-	mkdir -p ${catalyst_builds_path}
-fi
-
-# Script arguments:
-declare -a selected_stages_templates
-while [ $# -gt 0 ]; do case ${1} in
-	--update-snapshot) FETCH_FRESH_SNAPSHOT=true;;
-	--update-releng) FETCH_FRESH_RELENG=true;;
-	--update-repos) FETCH_FRESH_REPOS=true;;
-	--clean) CLEAN_BUILD=true;; # Perform clean build - don't use any existing sources even if available (Except for downloaded seeds).
-	--build) BUILD=true; PREPARE=true;; # Prepare is implicit when using --build.
-	--prepare) PREPARE=true;;
-	--*) echo "Unknown option ${1}"; exit;;
-	-*) echo "Unknown option ${1}"; exit;;
-	*) selected_stages_templates+=("${1}");;
-esac; shift; done
-
 # ------------------------------------------------------------------------------
-# Functions:
-
-#  Get portage snapshot version and download new if needed.
-prepare_portage_snapshot() {
-	if [[ -d ${catalyst_path}/snapshots && $(find ${catalyst_path}/snapshots -type f -name "*.sqfs" | wc -l) -gt 0 ]]; then
-		treeish=$(find ${catalyst_path}/snapshots -type f -name "*.sqfs" -exec ls -t {} + | head -n 1 | xargs -n 1 basename -s .sqfs | cut -d '-' -f 2)
-	fi
-	if [[ -z ${treeish} ]] || [[ ${FETCH_FRESH_SNAPSHOT} = true ]]; then
-		echo_color ${color_turquoise_bold} "[ Refreshing portage snapshot ]"
-		catalyst -s stable
-		treeish=$(find ${catalyst_path}/snapshots -type f -name "*.sqfs" -exec ls -t {} + | head -n 1 | xargs -n 1 basename -s .sqfs | cut -d '-' -f 2)
-		echo "" # New line
-	fi
-}
-
-# Get latest releng release if needed.
-prepare_releng() {
-	# If releng directory doesn't exists - download new version
-	# If it exists and FETCH_FRESH_RELENG is set, pull changes.
-	if [[ ! -d ${releng_path} ]]; then
-		echo_color ${color_turquoise_bold} "[ Downloading releng ]"
-		git clone https://github.com/gentoo/releng.git ${releng_path} || exit 1
-		echo ""
-	elif [[ ${FETCH_FRESH_RELENG} = true ]]; then
-		echo_color ${color_turquoise_bold} "[ Updating releng ]"
-		git -C ${releng_path} pull || exit 1
-		echo ""
-	fi
-}
+# Main functions:
 
 # Load list of stages to build for every platform and release.
 # Prepare variables of every stage, including changes from sanitization process.
@@ -322,6 +193,35 @@ load_stages() {
 	echo_color ${color_turquoise_bold} "[ Stages to rebuild ]"
 	draw_stages_tree
 	echo ""
+}
+
+
+#  Get portage snapshot version and download new if needed.
+prepare_portage_snapshot() {
+	if [[ -d ${catalyst_path}/snapshots && $(find ${catalyst_path}/snapshots -type f -name "*.sqfs" | wc -l) -gt 0 ]]; then
+		treeish=$(find ${catalyst_path}/snapshots -type f -name "*.sqfs" -exec ls -t {} + | head -n 1 | xargs -n 1 basename -s .sqfs | cut -d '-' -f 2)
+	fi
+	if [[ -z ${treeish} ]] || [[ ${FETCH_FRESH_SNAPSHOT} = true ]]; then
+		echo_color ${color_turquoise_bold} "[ Refreshing portage snapshot ]"
+		catalyst -s stable
+		treeish=$(find ${catalyst_path}/snapshots -type f -name "*.sqfs" -exec ls -t {} + | head -n 1 | xargs -n 1 basename -s .sqfs | cut -d '-' -f 2)
+		echo "" # New line
+	fi
+}
+
+# Get latest releng release if needed.
+prepare_releng() {
+	# If releng directory doesn't exists - download new version
+	# If it exists and FETCH_FRESH_RELENG is set, pull changes.
+	if [[ ! -d ${releng_path} ]]; then
+		echo_color ${color_turquoise_bold} "[ Downloading releng ]"
+		git clone https://github.com/gentoo/releng.git ${releng_path} || exit 1
+		echo ""
+	elif [[ ${FETCH_FRESH_RELENG} = true ]]; then
+		echo_color ${color_turquoise_bold} "[ Updating releng ]"
+		git -C ${releng_path} pull || exit 1
+		echo ""
+	fi
 }
 
 # Setup templates of stages.
@@ -911,6 +811,110 @@ draw_stages_tree() {
 		draw_stages_tree ${child} "${new_prefix}"
 	done
 }
+
+# ------------------------------------------------------------------------------
+# START:
+
+# Initial config
+
+# Check for root privilages.
+if [[ $EUID -ne 0 ]]; then
+	echo "This script must be run as root"
+	exit 1
+fi
+
+# Possible variables stored in stages array in this script.
+declare STAGE_KEYS=(available_build catalyst_conf catalyst_conf_src cpu_flags children overlays parent platform rebuild release releng_base selected source_subpath source_url stage subarch target version_stamp)
+declare -A TARGET_MAPPINGS=(
+	# Used to fill spec fsscript and similar with correct key.
+	[livecd-stage1]=livecd
+	[livecd-stage2]=livecd
+)
+declare -A ARCH_MAPPINGS=(
+	# Map from arch command to base arch. TODO: Add more mappings if needed.
+	[aarch64]=arm64
+	[x86_64]=amd64
+)
+declare -A ARCH_FAMILIES=(
+	# Map from base arch to arch family. Add only if different than base arch.
+	[ppc64]=ppc
+)
+declare -A ARCH_INTERPRETERS=(
+	# Add custom interpreters if needed.
+	# By default script will try to find interpreter by matching with basename->raw_basename (ie x86_64).
+	# This can also be used if multiple interpreters are needed.
+	# Keys should correspond to baseraw, for example x86_64, aarch64, ppc64
+	[x86_64]="/usr/bin/qemu-x86_64 /usr/bin/qemu-i386"
+)
+declare -A RELENG_BASES=(
+	# Definies base releng folder for current stage.
+	# This is used to prepare portage_confdir correctly for every stage,
+	# while the name of releng portage subfolder is filled automatically.
+	[stage1]=stages
+	[stage2]=stages
+	[stage3]=stages
+	[stage4]=stages
+	[livecd-stage1]=isos
+	[livecd-stage2]=isos
+)
+# List of targets that are compressed after build. This allows adding compression_mode property automatically to stages.
+declare COMPRESSABLE_TARGETS=(stage1 stage2 stage3 stage4 livecd-stage1 livecd-stage2)
+
+readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
+readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
+readonly qemu_has_static_user=$(grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE && echo true || echo false)
+readonly qemu_binfmt_is_running=$( { [ -x /etc/init.d/qemu-binfmt ] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
+
+readonly color_gray='\033[0;90m'
+readonly color_red='\033[0;31m'
+readonly color_green='\033[0;32m'
+readonly color_turquoise='\033[0;36m'
+readonly color_turquoise_bold='\033[1;36m'
+readonly color_nc='\033[0m' # No Color
+
+# Load/create config.
+if [[ ! -f /etc/catalyst-lab/catalyst-lab.conf ]]; then
+	# Create default config if not available
+	mkdir -p /etc/catalyst-lab
+	mkdir -p /etc/catalyst-lab/templates
+	cat <<EOF | tee /etc/catalyst-lab/catalyst-lab.conf > /dev/null || exit 1
+# Main configuration for catalyst-lab.
+seeds_url=https://gentoo.osuosl.org/releases/@ARCH_FAMILY@/autobuilds
+templates_path=/etc/catalyst-lab/templates
+releng_path=/opt/releng
+catalyst_path=/var/tmp/catalyst
+catalyst_usr_path=/usr/share/catalyst
+pkgcache_base_path=/var/cache/catalyst-binpkgs
+tmp_path=/tmp/catalyst-lab
+jobs=$(nproc)
+load_average=$(nproc).0
+EOF
+	echo "Default config file created: /etc/catalyst-lab/catalyst-lab.conf"
+	echo ""
+fi
+source /etc/catalyst-lab/catalyst-lab.conf
+
+readonly work_path=${tmp_path}/${timestamp}
+readonly catalyst_builds_path=${catalyst_path}/builds
+
+# Create required folders if don't exists
+if [[ ! -d ${catalyst_builds_path} ]]; then
+	mkdir -p ${catalyst_builds_path}
+fi
+
+# Script arguments:
+declare -a selected_stages_templates
+while [ $# -gt 0 ]; do case ${1} in
+	--update-snapshot) FETCH_FRESH_SNAPSHOT=true;;
+	--update-releng) FETCH_FRESH_RELENG=true;;
+	--update-repos) FETCH_FRESH_REPOS=true;;
+	--clean) CLEAN_BUILD=true;; # Perform clean build - don't use any existing sources even if available (Except for downloaded seeds).
+	--build) BUILD=true; PREPARE=true;; # Prepare is implicit when using --build.
+	--prepare) PREPARE=true;;
+	--*) echo "Unknown option ${1}"; exit;;
+	-*) echo "Unknown option ${1}"; exit;;
+	*) selected_stages_templates+=("${1}");;
+esac; shift; done
 
 # ------------------------------------------------------------------------------
 # Main program:
