@@ -9,20 +9,9 @@ releng_base: stages
 pkgcache_path: @PKGCACHE_BASE_PATH@/@PLATFORM@/@REL_TYPE@-seed
 
 # Keep this seed outside of release directory.
-#rel_type: @PLATFORM@
+rel_type: @PLATFORM@
 
-use:
-	ps3
-	dist-kernel
-	lto
-
-packages:
-	llvm
-	clang
-#	musl
-
-empty:
-	/var/cache/distfiles
-
-rm:
-	/root/.bash_history
+use: ps3 dist-kernel lto
+packages: llvm clang
+empty: /var/cache/distfiles
+rm: /root/.bash_history
