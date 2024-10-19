@@ -4,6 +4,7 @@ profile: default/linux/@BASE_ARCH@/23.0/desktop
 use:
 	networkmanager
 	pulseaudio
+	bluetooth
 
 packages:
 	x11-base/xorg-server

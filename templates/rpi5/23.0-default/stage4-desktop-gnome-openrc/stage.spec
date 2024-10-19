@@ -3,7 +3,8 @@ profile: default/linux/@BASE_ARCH@/23.0/desktop/gnome
 
 use:
 	networkmanager
-        pulseaudio
+	pulseaudio
+	bluetooth
 	-qt5
 	-qt6
 

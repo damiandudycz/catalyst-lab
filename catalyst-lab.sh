@@ -934,3 +934,7 @@ fi
 # TODO: Using remote binhosts
 # TODO: Make possible setting different build sublocation (for building modified seeds)
 # TODO: Correct dependencies detection when rel_type is definied in source spec
+# TODO: Add checking for valid config entries in config files
+# TODO: Detect when profile changes in stage4 and if it does, automtically add rebuilds to fsscript file
+# TODO: Introduce stage types. Download (added automatially for downloding missing seeds), Build (standard build stage), Binhost (building additional packages)
+# TODO: Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote if can just specify word remote and automatically find like, it it can specify tarball name or even full URL.

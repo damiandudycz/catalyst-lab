@@ -2,4 +2,5 @@
 # Without this old packages are not updated in stage4, as update_seed doesn't work in this stage.
 
 emerge --changed-use --update --deep --usepkg --buildpkg --quiet @system @world
-emerge --depclean
+emerge  --depclean --with-bdeps=y
+revdep-rebuild

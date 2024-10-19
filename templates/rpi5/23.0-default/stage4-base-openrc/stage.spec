@@ -4,6 +4,7 @@ profile: default/linux/@BASE_ARCH@/23.0
 use:
 	networkmanager
 	pulseaudio
+	bluetooth
 
 packages:
 	app-admin/sudo
@@ -24,6 +25,7 @@ rcadd:
 	zram-init|boot
 	dbus|default
         NetworkManager|default
+	bluetooth|default
 	sysklogd|default
 	ntpd|default
 	ntp-client|default
