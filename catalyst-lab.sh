@@ -318,7 +318,7 @@ load_stages() {
 					local subarch=$(read_spec_variable ${stage_spec_path} subarch) # eq.: cell
 					local target=$(read_spec_variable ${stage_spec_path} target) # eq.: stage3
 					local version_stamp=$(read_spec_variable ${stage_spec_path} version_stamp) # eq.: base-openrc-@TIMESTAMP@
-					local source_subpath=$(read_spec_variable ${stage_spec_path} source_subpath)
+					local source_subpath=$(read_spec_variable ${stage_spec_path} source_subpath) # Note: For builds that uses remote seeds, @TIMESTAMP@ will be later removed in this variable. But only for remotes, in local sources, it still contain @TIMESTAMP@
 					local spec_repos=$(read_spec_variable ${stage_spec_path} repos)
 					local releng_base=$(read_spec_variable ${stage_spec_path} releng_base)
 
@@ -808,6 +808,16 @@ write_stages() {
 		update_spec_variable ${stage_spec_work_path} BASE_ARCH ${arch_basearch}
 		update_spec_variable ${stage_spec_work_path} SUB_ARCH ${arch_subarch}
 		update_spec_variable ${stage_spec_work_path} PKGCACHE_BASE_PATH ${pkgcache_base_path}
+
+		# Special variables for only some stages.
+		if [[ ${target} = stage1 ]]; then
+			set_spec_variable_if_missing ${stage_spec_work_path} update_seed yes
+			set_spec_variable_if_missing ${stage_spec_work_path} update_seed_command "--update --deep --newuse --usepkg --buildpkg @system @world"
+		fi
+		if [[ ${target} = stage4 ]]; then
+			set_spec_variable_if_missing ${stage_spec_work_path} binrepo_path ${platform}/${release}
+		fi
+		# ...
 
 		# Create links to spec files and optionally to catalyst_conf if using custom.
 		spec_link=$(echo ${work_path}/spec_files/$(printf "%03d\n" $((i + 1))).${platform}-${release}-${target}-${version_stamp} | sed "s/@TIMESTAMP@/${timestamp}/")

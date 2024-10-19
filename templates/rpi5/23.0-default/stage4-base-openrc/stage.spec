@@ -1,6 +1,5 @@
 source_subpath: @PLATFORM@/@REL_TYPE@/stage3-@SUB_ARCH@-base-openrc-@TIMESTAMP@
 profile: default/linux/@BASE_ARCH@/23.0
-binrepo_path: @PLATFORM@/@REL_TYPE@
 
 use:
 	networkmanager
