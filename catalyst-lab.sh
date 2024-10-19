@@ -7,7 +7,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Possible variables stored in stages array in this script.
-declare STAGE_KEYS=(available_build catalyst_conf catalyst_conf_src children overlays parent platform rebuild release releng_base selected source_subpath stage subarch target version_stamp)
+declare STAGE_KEYS=(available_build catalyst_conf catalyst_conf_src cpu_flags children overlays parent platform rebuild release releng_base selected source_subpath stage subarch target version_stamp)
 
 declare -A TARGET_MAPPINGS=(
 	# Used to fill spec fsscript and similar with correct key.
@@ -173,7 +173,7 @@ use_stage() {
 
 		# Platform config
 		# If some properties are not set in config - unset them while loading new config
-		unset repos common_flags chost toml
+		unset repos common_flags chost toml cpu_flags
 		local platform_conf_path=${templates_path}/${platform}/platform.conf
 		source ${platform_conf_path}
 		local release_conf_path=${templates_path}/${platform}/${release}/release.conf
@@ -281,7 +281,7 @@ load_stages() {
 	for platform in ${RL_VAL_PLATFORMS[@]}; do
 		local platform_path=${templates_path}/${platform}
 		# Load platform config
-		unset repos common_flags chost toml
+		unset repos common_flags chost toml cpu_flags
 		local platform_conf_path=${templates_path}/${platform}/platform.conf
 		source ${platform_conf_path}
 		local arch_basearch=${arch%%/*}
@@ -585,6 +585,11 @@ configure_stages() {
 			fi
 		fi
 
+		# Remember customized cpu_flags if set.
+		if [[ -n ${cpu_flags} ]] && ( [[ ${target} == stage1 ]] || [[ ${target} == stage3 ]] ); then
+			stages[${i},cpu_flags]="${cpu_flags}"
+		fi
+
 		# Find custom catalyst.conf if any
 		local platform_catalyst_conf=${platform_path}/catalyst.conf
 		local release_catalyst_conf=${release_path}/catalyst.conf
@@ -666,20 +671,30 @@ write_stages() {
 		local release_work_path=${platform_work_path}/${release}
 		local stage_work_path=${release_work_path}/${stage}
 
+		local portage_path=${stage_work_path}/portage
+
 		# Copy stage template workfiles to work_path.
 		mkdir -p ${stage_work_path}
 		cp -rf ${stage_path}/* ${stage_work_path}/
 
+		# Create new portage_path if doesn't exists
+		if [[ ! -d ${portage_path} ]]; then
+			mkdir ${portage_path}
+		fi
+
 		# Prepare portage enviroment - Combine base portage files from releng with stage template portage files.
-		local portage_path=${stage_work_path}/portage
 		uses_releng=false
 		if [[ -n ${releng_base} ]]; then
 			uses_releng=true
 			releng_base_dir=${releng_path}/releases/portage/${releng_base}${interpreter_portage_postfix}
-			if [[ ! -d ${portage_path} ]]; then
-				mkdir ${portage_path}
-			fi
 			cp -ru ${releng_base_dir}/* ${portage_path}/
+		fi
+
+		# Set 00cpu-flags file if used.
+		if [[ -n ${cpu_flags} ]]; then
+			local package_use_path=${portage_path}/package.use
+			mkdir -p ${package_use_path}
+			echo "*/* ${cpu_flags}" > ${package_use_path}/00cpu-flags
 		fi
 
 		# Find custom catalyst.conf if any
@@ -859,5 +874,4 @@ fi
 # TODO: Using remote binhosts
 # TODO: Make possible setting different build sublocation (for building modified seeds)
 # TODO: Correct dependencies detection when rel_type is definied in source spec
-# TODO: Move 00cpu-flags definition to release.conf, and automatically add to required stages
 # TODO: Make things like target and timestamp infered automatically from folder name (names will have to be kept in specific format after that change)
