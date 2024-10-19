@@ -311,9 +311,14 @@ load_stages() {
 					local releng_base=$(read_spec_variable ${stage_spec_path} releng_base)
 
 					# Extract target from stage name if it was not specified in spec file.
-					if [[ -z ${target}]]; then
+					if [[ -z ${target} ]]; then
 						target=$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')
 					fi
+
+# Extract version_stamp from stage name if it was not set.
+#stamp=$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\2/')
+#echo $stamp
+#exit
 
 					# If subarch is not set in spec, update it with value from platform config.
 					if [[ -z ${subarch} ]]; then
