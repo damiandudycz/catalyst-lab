@@ -812,7 +812,7 @@ write_stages() {
 		# Special variables for only some stages.
 		if [[ ${target} = stage1 ]]; then
 			set_spec_variable_if_missing ${stage_spec_work_path} update_seed yes
-			set_spec_variable_if_missing ${stage_spec_work_path} update_seed_command "--update --deep --newuse --usepkg --buildpkg @system @world"
+			set_spec_variable_if_missing ${stage_spec_work_path} update_seed_command "--changed-use --update --deep --usepkg --buildpkg @system @world"
 		fi
 		if [[ ${target} = stage4 ]]; then
 			set_spec_variable_if_missing ${stage_spec_work_path} binrepo_path ${platform}/${release}
