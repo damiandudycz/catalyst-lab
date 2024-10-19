@@ -1,10 +1,6 @@
 source_subpath: @PLATFORM@/@REL_TYPE@/livecd-stage1-@SUB_ARCH@-@TIMESTAMP@
 profile: default/linux/@BASE_ARCH@/23.0
 
-type: gentoo-release-minimal
-volid: Gentoo_@PLATFORM@
-fstype: squashfs
-iso: install-@SUB_ARCH@-minimal-@TIMESTAMP@.iso
 gk_mainargs: --all-ramdisk-modules
 
 boot/kernel: @PLATFORM@

@@ -817,7 +817,13 @@ write_stages() {
 		if [[ ${target} = stage4 ]]; then
 			set_spec_variable_if_missing ${stage_spec_work_path} binrepo_path ${platform}/${release}
 		fi
-		# ...
+		# LiveCD - stage2 specific default values.
+		if [[ ${target} = livecd-stage2 ]]; then
+			set_spec_variable_if_missing ${stage_spec_work_path} type gentoo-release-minimal
+			set_spec_variable_if_missing ${stage_spec_work_path} volid Gentoo_${platform}
+			set_spec_variable_if_missing ${stage_spec_work_path} fstype squashfs
+			set_spec_variable_if_missing ${stage_spec_work_path} iso install-${platform}-${timestamp}.iso
+		fi
 
 		# Create links to spec files and optionally to catalyst_conf if using custom.
 		spec_link=$(echo ${work_path}/spec_files/$(printf "%03d\n" $((i + 1))).${platform}-${release}-${target}-${version_stamp} | sed "s/@TIMESTAMP@/${timestamp}/")
