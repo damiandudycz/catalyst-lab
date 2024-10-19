@@ -8,7 +8,6 @@ fi
 
 # Possible variables stored in stages array in this script.
 declare STAGE_KEYS=(available_build catalyst_conf catalyst_conf_src cpu_flags children overlays parent platform rebuild release releng_base selected source_subpath stage subarch target version_stamp)
-
 declare -A TARGET_MAPPINGS=(
 	# Used to fill spec fsscript and similar with correct key.
 	[livecd-stage1]=livecd
@@ -41,6 +40,8 @@ declare -A RELENG_BASES=(
 	[livecd-stage1]=isos
 	[livecd-stage2]=isos
 )
+# List of targets that are compressed after build. This allows adding compression_mode property automatically to stages.
+declare COMPRESSABLE_TARGETS=(stage1 stage2 stage3 stage4 livecd-stage1 livecd-stage2)
 
 readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
 readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
@@ -184,7 +185,7 @@ use_stage() {
 
 		# Platform config
 		# If some properties are not set in config - unset them while loading new config
-		unset repos common_flags chost toml cpu_flags
+		unset repos common_flags chost toml cpu_flags compression_mode
 		local platform_conf_path=${templates_path}/${platform}/platform.conf
 		source ${platform_conf_path}
 		local release_conf_path=${templates_path}/${platform}/${release}/release.conf
@@ -292,7 +293,7 @@ load_stages() {
 	for platform in ${RL_VAL_PLATFORMS[@]}; do
 		local platform_path=${templates_path}/${platform}
 		# Load platform config
-		unset repos common_flags chost toml cpu_flags
+		unset repos common_flags chost toml cpu_flags compression_mode
 		local platform_conf_path=${templates_path}/${platform}/platform.conf
 		source ${platform_conf_path}
 		local arch_basearch=${arch%%/*}
@@ -779,6 +780,9 @@ write_stages() {
 		fi
 		if [[ -n ${chost} ]] && [[ ${target} = stage1 ]]; then # Only allow setting chost in stage1 targets.
 			set_spec_variable_if_missing ${stage_spec_work_path} chost ${chost}
+		fi
+		if contains_string COMPRESSABLE_TARGETS[@] ${target}; then
+			set_spec_variable_if_missing ${stage_spec_work_path} compression_mode ${compression_mode:-pixz} # If not specified in platform/release, use pixz as default value
 		fi
 		if [[ -n ${overlays} ]]; then
 			# Convert remote repos to local pathes, and use , to separate repos

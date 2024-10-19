@@ -3,7 +3,6 @@
 
 profile: default/linux/@BASE_ARCH@/23.0/musl
 source_subpath: @BASE_ARCH@/stage3-@BASE_ARCH@-musl-hardened-openrc-@TIMESTAMP@
-compression_mode: pixz
 binrepo_path: @PLATFORM@/@REL_TYPE@
 pkgcache_path: @PKGCACHE_BASE_PATH@/@PLATFORM@/@REL_TYPE@-seed
 
