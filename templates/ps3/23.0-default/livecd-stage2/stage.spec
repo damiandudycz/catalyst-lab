@@ -2,16 +2,16 @@ source_subpath: @PLATFORM@/@REL_TYPE@/livecd-stage1-@SUB_ARCH@-@TIMESTAMP@
 profile: default/linux/@BASE_ARCH@/23.0
 
 iso: install-@SUB_ARCH@-minimal-@TIMESTAMP@.iso
-volid: Gentoo_PS3
+volid: Gentoo_@PLATFORM@
 fstype: squashfs
 gk_mainargs: --all-ramdisk-modules
 type: gentoo-release-minimal
 
-boot/kernel: PS3
-boot/kernel/PS3/distkernel: yes
-boot/kernel/PS3/sources: sys-kernel/gentoo-kernel-ps3
-boot/kernel/PS3/dracut_args: --xz --no-hostonly -a dmsquash-live -a mdraid -o btrfs -o crypt -o i18n -o usrmount -o lunmask -o qemu -o qemu-net -o nvdimm -o multipath -o resume
-boot/kernel/PS3/extraversion: PS3
+boot/kernel: @PLATFORM@
+boot/kernel/@PLATFORM@/distkernel: yes
+boot/kernel/@PLATFORM@/sources: sys-kernel/gentoo-kernel-ps3
+boot/kernel/@PLATFORM@/dracut_args: --xz --no-hostonly -a dmsquash-live -a mdraid -o btrfs -o crypt -o i18n -o usrmount -o lunmask -o qemu -o qemu-net -o nvdimm -o multipath -o resume
+boot/kernel/@PLATFORM@/extraversion: @PLATFORM@
 
 rcadd:
 	zram-init|boot
