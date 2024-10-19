@@ -1,10 +1,11 @@
 source_subpath: @PLATFORM@/@REL_TYPE@/livecd-stage1-@SUB_ARCH@-@TIMESTAMP@
-livecd/iso: install-@SUB_ARCH@-minimal-@TIMESTAMP@.iso
-livecd/volid: Gentoo_PS3
 profile: default/linux/@BASE_ARCH@/23.0
-livecd/fstype: squashfs
-livecd/gk_mainargs: --all-ramdisk-modules
-livecd/type: gentoo-release-minimal
+
+iso: install-@SUB_ARCH@-minimal-@TIMESTAMP@.iso
+volid: Gentoo_PS3
+fstype: squashfs
+gk_mainargs: --all-ramdisk-modules
+type: gentoo-release-minimal
 
 boot/kernel: PS3
 boot/kernel/PS3/distkernel: yes
