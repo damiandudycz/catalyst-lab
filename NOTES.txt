@@ -1,4 +1,5 @@
 # Bootstrapping seage1 with crossdev:
+# (WIP)
 
 1. crossdev -t powerpc64-unknown-linux-musl --show-fail-log
 2. ARCH=ppc64 PORTAGE_CONFIGROOT=/usr/powerpc64-unknown-linux-musl eselect profile set default/linux/ppc64/23.0/split-usr/musl

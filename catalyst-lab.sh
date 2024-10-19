@@ -859,3 +859,5 @@ fi
 # TODO: Using remote binhosts
 # TODO: Make possible setting different build sublocation (for building modified seeds)
 # TODO: Correct dependencies detection when rel_type is definied in source spec
+# TODO: Move 00cpu-flags definition to release.conf, and automatically add to required stages
+# TODO: Make things like target and timestamp infered automatically from folder name (names will have to be kept in specific format after that change)
