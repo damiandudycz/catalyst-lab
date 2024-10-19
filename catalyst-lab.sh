@@ -750,7 +750,7 @@ write_stages() {
 		echo "# Added by catalyst-lab" >> ${stage_spec_work_path}
 
 		# Add target prefix to things like use, rcadd, unmerge, etc.
-		local target_keys=(use packages unmerge rcadd rm empty iso volid fstype gk_mainargs type)
+		local target_keys=(use packages unmerge rcadd rcdel rm empty iso volid fstype gk_mainargs type fsscript groups root_overlay ssh_public_keys users linuxrc)
 		for target_key in ${target_keys[@]}; do
 			sed -i "s|^${target_key}:|${target_mapping}/${target_key}:|" ${stage_spec_work_path}
 		done
