@@ -3,7 +3,7 @@ profile: default/linux/@BASE_ARCH@/23.0
 compression_mode: pixz
 releng_base: isos
 
-livecd/use:
+use:
  	ps3
 	compile-locales
 	fbcon
@@ -11,7 +11,7 @@ livecd/use:
 	unicode
 	xml
 
-livecd/packages:
+packages:
 	sys-apps/ps3-gentoo-installer
 	sys-apps/ps3vram-swap
 	sys-block/zram-init

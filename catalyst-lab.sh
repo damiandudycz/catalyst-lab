@@ -728,9 +728,16 @@ write_stages() {
 		local target_mapping=${TARGET_MAPPINGS[${target}]:-${target}}
 		local stage_default_pkgcache_path=${pkgcache_base_path}/${platform}/${release}
 
-		# Replace spec templates with real data
+		# Replace spec templates with real data:
 		echo "" >> ${stage_spec_work_path} # Add new line, to separate new entries
 		echo "# Added by catalyst-lab" >> ${stage_spec_work_path}
+
+		# Add target prefix to things like use, rcadd, unmerge, etc.
+		local target_keys=(use packages unmerge rcadd rm empty)
+		for target_key in ${target_keys[@]}; do
+			sed -i "s|^${target_key}:|${target_mapping}/${target_key}:|" ${stage_spec_work_path}
+		done
+
 		set_spec_variable_if_missing ${stage_spec_work_path} target ${target}
 		set_spec_variable_if_missing ${stage_spec_work_path} rel_type ${platform}/${release}
 		set_spec_variable_if_missing ${stage_spec_work_path} subarch ${arch_subarch}
@@ -891,4 +898,3 @@ fi
 # TODO: Using remote binhosts
 # TODO: Make possible setting different build sublocation (for building modified seeds)
 # TODO: Correct dependencies detection when rel_type is definied in source spec
-# TODO: Make things like target and version_stamp infered automatically from folder name (names will have to be kept in specific format after that change)

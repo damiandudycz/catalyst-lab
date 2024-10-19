@@ -13,14 +13,14 @@ boot/kernel/PS3/sources: sys-kernel/gentoo-kernel-ps3
 boot/kernel/PS3/dracut_args: --xz --no-hostonly -a dmsquash-live -a mdraid -o btrfs -o crypt -o i18n -o usrmount -o lunmask -o qemu -o qemu-net -o nvdimm -o multipath -o resume
 boot/kernel/PS3/extraversion: PS3
 
-livecd/rcadd:
+rcadd:
 	zram-init|boot
 	ps3vram-swap|boot
 	NetworkManager|default
  	ntpd|default
   	ntp-client|default
 
-livecd/unmerge:
+unmerge:
 	app-portage/gentoolkit
 	app-admin/eselect
 	app-admin/eselect-ctags
@@ -65,7 +65,7 @@ livecd/unmerge:
 	sys-kernel/genkernel
 	sys-kernel/linux-headers
 
-livecd/empty:
+empty:
 	/boot
 	/etc/cron.daily
 	/etc/cron.hourly
@@ -131,7 +131,7 @@ livecd/empty:
 	/var/state
 	/var/tmp
 
-livecd/rm:
+rm:
 	/boot/System*
 	/boot/initr*
 	/boot/kernel*

@@ -9,15 +9,15 @@ releng_base: stages
 #	xwayland
 #	X
 
-stage4/packages:
+packages:
 	x11-base/xorg-server
 	gnome-base/gdm
 
-stage4/rcadd:
+rcadd:
 	display-manager|default
 
-stage4/empty:
+empty:
 	/var/cache/distfiles
 
-stage4/rm:
+rm:
 	/root/.bash_history

@@ -11,18 +11,18 @@ pkgcache_path: @PKGCACHE_BASE_PATH@/@PLATFORM@/@REL_TYPE@-seed
 # Keep this seed outside of release directory.
 #rel_type: @PLATFORM@
 
-stage4/use:
+use:
 	ps3
 	dist-kernel
 	lto
 
-stage4/packages:
+packages:
 	llvm
 	clang
 #	musl
 
-stage4/empty:
+empty:
 	/var/cache/distfiles
 
-stage4/rm:
+rm:
 	/root/.bash_history

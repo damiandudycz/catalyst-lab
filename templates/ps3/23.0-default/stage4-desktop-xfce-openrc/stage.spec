@@ -3,16 +3,16 @@ profile: default/linux/@BASE_ARCH@/23.0/desktop
 compression_mode: pixz
 releng_base: stages
 
-stage4/use:
+use:
 	ps3
 	dist-kernel
 	X
 
-stage4/packages:
+packages:
 	xfce-base/xfce4-meta
 
-stage4/empty:
+empty:
 	/var/cache/distfiles
 
-stage4/rm:
+rm:
 	/root/.bash_history

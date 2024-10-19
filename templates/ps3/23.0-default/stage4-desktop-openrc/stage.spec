@@ -3,20 +3,20 @@ profile: default/linux/@BASE_ARCH@/23.0/desktop
 compression_mode: pixz
 releng_base: stages
 
-stage4/use:
+use:
 	ps3
 	dist-kernel
 	X
 
-stage4/packages:
+packages:
 	x11-base/xorg-server
 	x11-misc/lightdm
 
-stage4/rcadd:
+rcadd:
 	display-manager|default
 
-stage4/empty:
+empty:
 	/var/cache/distfiles
 
-stage4/rm:
+rm:
 	/root/.bash_history

@@ -4,11 +4,11 @@ compression_mode: pixz
 binrepo_path: @PLATFORM@/@REL_TYPE@
 releng_base: stages
 
-stage4/use:
+use:
 	ps3
 	dist-kernel
 
-stage4/packages:
+packages:
 	app-admin/sudo
 	app-admin/sysklogd
         app-eselect/eselect-repository
@@ -23,7 +23,7 @@ stage4/packages:
 	sys-kernel/gentoo-kernel-ps3
         sys-kernel/linux-headers
 
-stage4/rcadd:
+rcadd:
 	ps3vram-swap|boot
 	zram-init|boot
 	dbus|default
@@ -32,8 +32,8 @@ stage4/rcadd:
 	ntpd|default
 	ntp-client|default
 
-stage4/empty:
+empty:
 	/var/cache/distfiles
 
-stage4/rm:
+rm:
 	/root/.bash_history

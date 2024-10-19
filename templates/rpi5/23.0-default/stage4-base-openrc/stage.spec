@@ -7,7 +7,7 @@ releng_base: stages
 #stage4/use:
 #	dist-kernel
 
-stage4/packages:
+packages:
 	app-admin/sudo
 	app-admin/sysklogd
         app-eselect/eselect-repository
@@ -22,7 +22,7 @@ stage4/packages:
 	sys-firmware/raspberrypi-wifi-ucode
 	sys-kernel/raspberrypi-image
 
-stage4/rcadd:
+rcadd:
 	zram-init|boot
 	dbus|default
         NetworkManager|default
@@ -30,8 +30,8 @@ stage4/rcadd:
 	ntpd|default
 	ntp-client|default
 
-stage4/empty:
+empty:
 	/var/cache/distfiles
 
-stage4/rm:
+rm:
 	/root/.bash_history

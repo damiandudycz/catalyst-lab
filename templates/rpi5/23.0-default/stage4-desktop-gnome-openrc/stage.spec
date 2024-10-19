@@ -9,11 +9,11 @@ releng_base: stages
 #	xwayland
 #	X
 
-stage4/packages:
+packages:
 	gnome-base/gnome
 
-stage4/empty:
+empty:
 	/var/cache/distfiles
 
-stage4/rm:
+rm:
 	/root/.bash_history
