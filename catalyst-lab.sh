@@ -968,9 +968,17 @@ declare RELEASE_KEYS=( # Variables allowed in release.conf
 )
 declare STAGE_KEYS=( # Variables stored in stages[]
 	kind
+
 	platform
 	release
 	stage
+
+	target
+	product
+	available_build
+	source_subpath
+	parent
+	children
 
 	arch_basearch
 	arch_baseraw
@@ -978,26 +986,21 @@ declare STAGE_KEYS=( # Variables stored in stages[]
 	arch_family
 	arch_interpreter
 
-	common_flags
 	chost
+	common_flags
 	cpu_flags
+
+	treeish
+	overlays
+	catalyst_conf
+	releng_base
+	version_stamp
 	compression_mode
 
-	catalyst_conf
-
-	target
-	product
-	parent
-	children
 	selected		# Is explicitly selected by the user or no selection was made.
 	rebuild			# Will be rebuild in this run.
 	takes_part		# Is in branch where anything get's rebuild - either itself or it's children.
-	available_build
-	cpu_flags
-	overlays
-	releng_base
-	source_subpath
-	version_stamp
+
 	url
 )
 declare -A TARGET_MAPPINGS=(
