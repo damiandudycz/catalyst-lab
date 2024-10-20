@@ -1,0 +1,29 @@
+# Bootstrapping seage1 with crossdev:
+# (WIP)
+
+1. crossdev -t powerpc64-unknown-linux-musl --show-fail-log
+2. ARCH=ppc64 PORTAGE_CONFIGROOT=/usr/powerpc64-unknown-linux-musl eselect profile set default/linux/ppc64/23.0/split-usr/musl
+3. powerpc64-unknown-linux-musl-emerge =gcc-13* # Version 13 is specified, as 14 fails to compile. GCC is used temporarly to build llvm/clang later. It needs to be rebuild to contain OpenMP
+4. powerpc64-unknown-linux-musl-emerge llvm
+
+
+# STAGE VARIABLES
+VARIABLE		SOURCE		EXAMPLE
+---------------------------------------------------------------------------------------------------------------------
+kind			template	local,remote,binhost
+platform		template	rpi5
+release			template	23.0-default
+stage			template	stage1-base-openrc
+target			template	stage1,stage3,livecd-stage1
+subarch			platform	arm64
+version_stamp		template	base-openrc-@TIMESTAMP@
+source_subpath		template	@PLATFORM@/@RELEASE@/stage1-...
+overlays		platform	https://github.com/damiandudycz/ps3-gentoo-overlay
+releng_base		template	stages,isos
+arch_basearch		platform	arm64
+arch_baseraw		platform	aarch64
+arch_subarch		platform	arm64
+arch_family		platform	arm64
+arch_interpreter	platform	/usr/bin/qemu-aarch64
+available_build		code		rpi5/23.0-default/stage1....tar.xz
+

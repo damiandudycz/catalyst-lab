@@ -5,8 +5,8 @@ use:
 	networkmanager
 	pulseaudio
 	bluetooth
-	-qt5
-	-qt6
+#	-qt5
+#	-qt6
 
 packages: gnome-base/gnome
 empty: /var/cache/distfiles

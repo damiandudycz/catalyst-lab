@@ -11,81 +11,114 @@ load_stages() {
 	available_builds=$(find ${catalyst_builds_path} -type f -name "*.tar.xz" -printf '%P\n')
 	stages_count=0 # Number of all stages. Script will determine this value automatically.
 
+	# Load basic details from platform.conf, release.conf and stage.spec files:
+	# Find list of platforms. (ps3, rpi5, amd64, ...).
 	readonly RL_VAL_PLATFORMS=$(get_directories ${templates_path})
 	for platform in ${RL_VAL_PLATFORMS[@]}; do
 		local platform_path=${templates_path}/${platform}
-		# Load platform config
-		unset repos common_flags chost toml cpu_flags compression_mode
-		local platform_conf_path=${templates_path}/${platform}/platform.conf
-		source ${platform_conf_path}
-		local arch_basearch=${arch%%/*}
-		local arch_baseraw=$(basearch_to_baseraw ${arch_basearch})
-		local arch_subarch=${arch#*/}; arch_subarch=${arch_subarch:-$arch_basearch}
-		local arch_family=${ARCH_FAMILIES[${arch_basearch}]:-${arch_basearch}}
-		local arch_interpreter=${ARCH_INTERPRETERS[${arch_baseraw}]:-"/usr/bin/qemu-${arch_baseraw}"} # Find correct arch_interpreter
-		# Find list of releases. (23.0-default, 23.0-llvm, etc).
+
+		# Load platform config. Saved to variables with platform_ prefix.
+		for key in ${PLATFORM_KEYS[@]}; do unset ${key}; done
+		source ${platform_path}/platform.conf
+		for key in ${PLATFORM_KEYS[@]}; do eval "platform_${key}=\${${key}}"; done
+
+		# Set platform_catalyst_conf variable for platform based on file existance.
+		[[ -f ${platform_path}/catalyst.conf ]] && platform_catalyst_conf=${platform_path}/catalyst.conf || unset platform_catalyst_conf
+
+		# Set platform arch variables (determined from platform_arch).
+		local platform_basearch=${platform_arch%%/*}
+		local platform_baseraw=$(basearch_to_baseraw ${platform_basearch})
+		local platform_subarch=${platform_arch#*/}; platform_subarch=${platform_subarch:-${platform_basearch}}
+		local platform_family=${ARCH_FAMILIES[${platform_basearch}]:-${platform_basearch}}
+		local platform_interpreter=${ARCH_INTERPRETERS[${platform_baseraw}]:-"/usr/bin/qemu-${platform_baseraw}"} # Find correct arch_interpreter
+
+		# Find list of releases in current platform. (23.0-default, 23.0-llvm, ...).
 		RL_VAL_RELEASES=$(get_directories ${platform_path})
-		# Collect information about stages in releases.
 		for release in ${RL_VAL_RELEASES[@]}; do
-			# (data/templates/23.0-default)
 			local release_path=${platform_path}/${release}
+
+			local release_keys=(repos common_flags chost cpu_flags compression_mode)
+			for key in ${RELEASE_KEYS[@]}; do unset ${key}; done
+			source ${release_path}/release.conf
+			for key in ${RELEASE_KEYS[@]}; do eval "release_${key}=\${${key}}"; done
+
+			# Set release_catalyst_conf variable for release based on file existance.
+			[[ -f ${release_path}/catalyst.conf ]] && release_catalyst_conf=${release_path}/catalyst.conf || unset release_catalyst_conf
+
 			# Find list of stages in current releass. (stage1-cell-base-openrc stage3-cell-base-openrc, ...)
 			RL_VAL_RELEASE_STAGES=$(get_directories ${release_path})
 			for stage in ${RL_VAL_RELEASE_STAGES[@]}; do
-				# (data/templates/23.0-default/stage1-openrc-cell-base)
 				local stage_path=${templates_path}/${platform}/${release}/${stage}
-				# (data/templates/23.0-default/stage1-openrc-cell-base/stage.spec)
 				local stage_spec_path=${stage_path}/stage.spec
+
+				# Set stage_catalyst_conf variable for stage based on file existance.
+				[[ -f ${stage_path}/catalyst.conf ]] && stage_catalyst_conf=${stage_path}/catalyst.conf || unset stage_catalyst_conf
+
 				if [[ -f ${stage_spec_path} ]]; then
-					local subarch=$(read_spec_variable ${stage_spec_path} subarch) # eq.: cell
-					local target=$(read_spec_variable ${stage_spec_path} target) # eq.: stage3
-					local version_stamp=$(read_spec_variable ${stage_spec_path} version_stamp) # eq.: base-openrc-@TIMESTAMP@
-					local source_subpath=$(read_spec_variable ${stage_spec_path} source_subpath) # Note: For builds that uses remote seeds, @TIMESTAMP@ will be later removed in this variable. But only for remotes, in local sources, it still contain @TIMESTAMP@
-					local spec_repos=$(read_spec_variable ${stage_spec_path} repos)
-					local releng_base=$(read_spec_variable ${stage_spec_path} releng_base)
 
-					# Extract target from stage name if it was not specified in spec file.
-					if [[ -z ${target} ]]; then
-						target=$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')
-					fi
+					# Create local stage entry and load basic data that can be retreived or calculated directly at this step.
 
-					# Extract version_stamp from stage name if not specified in spec file.
-					if [[ -z ${version_stamp} ]]; then
-						version_stamp=$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1/; t; s/.*//')
-						if [[ -n ${version_stamp} ]]; then
-							version_stamp="${version_stamp}-@TIMESTAMP@"
-						else
-							version_stamp="@TIMESTAMP@"
-						fi
-					fi
+					# Prepare static values from spec file:
+					local stage_target=$(read_spec_variable ${stage_spec_path} target) # eq.: stage3
+					local stage_subarch=$(read_spec_variable ${stage_spec_path} subarch) # eq.: cell
+					local stage_version_stamp=$(read_spec_variable ${stage_spec_path} version_stamp) # eq.: base-openrc-@TIMESTAMP@
+					local stage_source_subpath=$(read_spec_variable ${stage_spec_path} source_subpath) # Note: For builds that uses remote seeds, @TIMESTAMP@ will be later removed in this variable. But only for remotes, in local sources, it still contain @TIMESTAMP@
+					local stage_repos=$(read_spec_variable ${stage_spec_path} repos)
+					local stage_releng_base=$(read_spec_variable ${stage_spec_path} releng_base)
+					local stage_chost=$(read_spec_variable ${stage_spec_path} chost)
+					local stage_common_flags=$(read_spec_variable ${stage_spec_path} common_flags)
+					local stage_cpu_flags=$(read_spec_variable ${stage_spec_path} cpu_flags)
+					local stage_compression_mode=$(read_spec_variable ${stage_spec_path} compression_mode)
 
-					# Extract releng_base from stage target if not specified in spec file.
-					if [[ -z ${releng_base} ]]; then
-						releng_base=${RELENG_BASES[${target}]}
-					fi
+					# Determine final values from best possible place or calculate:
+					local _kind=local
+					local _platform=${platform}
+					local _release=${release}
+					local _stage=${stage}
+					local _target=${stage_target:-$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')}
+					local _basearch=${platform_basearch}
+					local _baseraw=${platform_baseraw}
+					local _family=${platform_family}
+					local _interpreter=${platform_interpreter}
+					local _subarch=${stage_subarch:-${platform_subarch}}
+					local _releng_base=${stage_releng_base:-${RELENG_BASES[${_target}]}}
+					local _source_subpath=${stage_source_subpath}
+					local _repos=${stage_repos:-${release_repos:-${platform_repos}}}
+					local _chost=${stage_chost:-${release_chost:-${platform_chost}}}
+					local _cpu_flags=${stage_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}}
+					local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags}}}
+					local _compression_mode=${stage_compression_mode:-${release_compression_mode:-${platform_compression_mode:-'pixz'}}}
+					local _is_selected=$(is_stage_selected ${_platform} ${_release} ${_stage})
+					local _version_stamp=${stage_version_stamp}
+					local _version_stamp=${stage_version_stamp:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1/; t; s/.*//' || echo '')}; _version_stamp="${_version_stamp:+${_version_stamp}-}@TIMESTAMP@"
+					local _product=${_platform}/${_release}/${_target}-${_subarch}-${_version_stamp}
+					local _available_build=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1)
+					local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}}
 
-					# If subarch is not set in spec, update it with value from platform config.
-					if [[ -z ${subarch} ]]; then
-						subarch=${arch_subarch}
-					fi
-
-					# Find best matching local build available.
-					local stage_product=${platform}/${release}/${target}-${subarch}-${version_stamp}
-					local stage_product_regex=$(echo $(sanitize_spec_variable ${platform} ${release} ${stage} ${arch_family} ${arch_basearch} ${subarch} ${stage_product}) | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/')
-					local matching_stage_builds=($(printf "%s\n" "${available_builds[@]}" | grep -E "${stage_product_regex}"))
-					local stage_available_build=$(printf "%s\n" "${matching_stage_builds[@]}" | sort -r | head -n 1)
-
-					# Store variables
-					stages[${stages_count},platform]=${platform}
-					stages[${stages_count},release]=${release}
-					stages[${stages_count},stage]=${stage}
-					stages[${stages_count},subarch]=$(sanitize_spec_variable ${platform} ${release} ${stage} ${arch_family} ${arch_basearch} ${subarch} ${subarch})
-					stages[${stages_count},target]=$(sanitize_spec_variable ${platform} ${release} ${stage} ${arch_family} ${arch_basearch} ${subarch} ${target})
-					stages[${stages_count},version_stamp]=$(sanitize_spec_variable ${platform} ${release} ${stage} ${arch_family} ${arch_basearch} ${subarch} ${version_stamp})
-					stages[${stages_count},source_subpath]=$(sanitize_spec_variable ${platform} ${release} ${stage} ${arch_family} ${arch_basearch} ${subarch} ${source_subpath})
-					stages[${stages_count},overlays]=${spec_repos:-${repos}}
-					stages[${stages_count},releng_base]=${releng_base}
-					stages[${stages_count},available_build]=${stage_available_build}
+					# Store determined variables and sanitize selected:
+					stages[${stages_count},kind]=${_kind}
+					stages[${stages_count},platform]=${_platform}
+					stages[${stages_count},release]=${_release}
+					stages[${stages_count},stage]=${_stage}
+					stages[${stages_count},selected]=${_is_selected}
+					stages[${stages_count},target]=${_target}
+					stages[${stages_count},subarch]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_subarch})
+					stages[${stages_count},version_stamp]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_version_stamp})
+					stages[${stages_count},source_subpath]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_source_subpath})
+					stages[${stages_count},overlays]=${_repos}
+					stages[${stages_count},releng_base]=${_releng_base}
+					stages[${stages_count},arch_basearch]=${_basearch}
+					stages[${stages_count},arch_baseraw]=${_baseraw}
+					stages[${stages_count},arch_subarch]=${_subarch}
+					stages[${stages_count},arch_family]=${_family}
+					stages[${stages_count},arch_interpreter]=${_interpreter}
+					stages[${stages_count},chost]=${_chost}
+					stages[${stages_count},common_flags]=${_common_flags}
+					stages[${stages_count},cpu_flags]=${_cpu_flags}
+					stages[${stages_count},compression_mode]=${_compression_mode}
+					stages[${stages_count},product]=${_product}
+					stages[${stages_count},available_build]=${_available_build}
+					stages[${stages_count},catalyst_conf]=${_catalyst_conf}
 
 					stages_count=$((stages_count + 1))
 
@@ -94,8 +127,38 @@ load_stages() {
 		done
 	done
 
+	# Find initial parents here and use this indexes later to calculate other parameters
+	update_parent_indexes
+
+	# Generate virtual stages to download seeds for stages without local parents.
+	declare -A added_remote_stages=()
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		# Skip for builds other than local and binhost
+		if [[ ${stages[${i},kind]} != local ]] && [[ ${stages[${i},kind]} != binhost ]]; then
+			continue
+		fi
+		# Skip if found local parent stage.
+		if [[ -n ${stages[${i},parent]} ]]; then
+			continue
+		fi
+		local seed_subpath=${stages[${i},source_subpath]}
+		if ! contains_string added_remote_stages[@] ${seed_subpath}; then
+			added_remote_stages[${seed_subpath}]=${stages_count}
+			stages[${stages_count},kind]=remote
+			stages[${stages_count},product]=${seed_subpath}
+			stages[${stages_count},url]="GENERATE URL HERE"
+			stages[${stages_count},selected]=$([[ ${#selected_stages_templates[@]} -eq 0 ]] && echo true || echo false) # TODO: Allow to select somehow specific remote virtual builds too.
+			# Find available build
+			local _available_build=$(echo ${seed_subpath} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1)
+			stages[${stages_count},available_build]=${_available_build}
+			((stages_count++))
+		fi
+		stages[${i},parent]=${added_remote_stages[${seed_subpath}]}
+	done
+	unset added_remote_stages
+
 	# Sort stages array by inheritance:
-	stages_order=() # Order in which stages should be build, for inheritance to work. (1,5,2,0,...).
+	declare stages_order=() # Order in which stages should be build, for inheritance to work. (1,5,2,0,...).
 	# Prepare stages order by inheritance.
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		insert_stage_with_inheritance ${i}
@@ -104,95 +167,64 @@ load_stages() {
 	declare -A stages_temp
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		local index=${stages_order[${i}]}
-		for key in ${!stages[@]}; do
-			if [[ ${key} == ${index},* ]]; then
-				field=${key#*,}
-				stages_temp[${i},${field}]=${stages[${key}]}
-			fi
+		for key in ${STAGE_KEYS[@]}; do
+			stages_temp[${i},${key}]=${stages[${index},${key}]}
 		done
 	done
 	# Write sorted array back to stages array.
 	local i; for (( i=0; i<${stages_count}; i++ )); do
-		for key in ${!stages_temp[@]}; do
-			if [[ ${key} == ${i},* ]]; then
-				field=${key#*,}
-				stages[${i},${field}]=${stages_temp[$key]}
-			fi
+		for key in ${STAGE_KEYS[@]}; do
+			stages[${i},${key}]=${stages_temp[${i},${key}]}
 		done
 	done
 	unset stages_order
 	unset stages_temp
 
-	# Determine if state needs to be rebuilt or can local build be used instead.
-	# Depends on selected stages and local builds availibility.
-	if [[ ${#selected_stages_templates[@]} -eq 0 ]]; then
-		# If no specific builds were selected, it means that all should be rebuild.
-		local i; for (( i=0; i<${stages_count}; i++ )); do
-			stages[${i},rebuild]=true
-			stages[${i},selected]=true
-		done
-	else
-		set -f
-		local required_seeds=() # List of stages that are needed to be build, as stage for another required stages
-		# If specified list of stages - build only if listed or if it's needed by another stage and has no local build available.
-		local i; for (( i=(( ${stages_count} - 1 )); i>=0; i-- )); do # Go in reverse order, to find required parent seeds too
-			use_stage ${i}
-			local stage_subpath=${platform}/${release}/${stage}
-			unset include
-			for pattern in ${selected_stages_templates[@]}; do
-				IFS='/' read -r exp_platform exp_release exp_stage <<< ${pattern}
-				unset fits_stage; unset fits_release; unset fits_platform
-				if [[ -z ${exp_stage} ]] || [[ ${stage} == ${exp_stage} ]]; then
-					local fits_stage=true
-				fi
-				if ( [[ -z ${exp_stage} ]] && [[ -z ${exp_release} ]] ) || [[ ${release} == ${exp_release} ]]; then
-					local fits_release=true
-				fi
-				if ( [[ -z ${exp_stage} ]] && [[ -z ${exp_release} ]] && [[ -z ${exp_platform} ]] ) || [[ ${platform} == ${exp_platform} ]]; then
-					local fits_platform=true
-				fi
-				local should_include=$([[ ${fits_platform} == true && ${fits_release} == true && ${fits_stage} == true ]] && echo true || echo false)
-				if [[ ${should_include} = true ]]; then
-					local include=true
-					break
-				fi
-			done
-			if [[ ${include} = true ]]; then
-				stages[${i},rebuild]=true
-				stages[${i},selected]=true
-				required_seeds+=(${parent}) # Remember that current stage source need's to exist or be build.
-			else
-				# Check if this stage is required as a source for another stage.
-				# In this situation it's marked as required only if local build is also not available or CLEAN_BUILD is set.
-				if contains_string required_seeds[@] ${stage_subpath} && [[ -z ${available_build} || ${CLEAN_BUILD} = true ]]; then
-					stages[${i},rebuild]=true
-					stages[${i},available_build]="" # If rebuilding, forget about available build subpath, as new release will be created anyway.
-					required_seeds+=(${parent}) # Remember that current stage source need's to exist or be build.
-				else
-					stages[${i},rebuild]=false
-				fi
+	# Refresh parent indexes after sorting array.
+	update_parent_indexes
+
+	# Determine stages children array.
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		local j; for (( j=((i+1)); j<${stages_count}; j++ )); do
+			if [[ ${stages[${j},parent]} = ${i} ]]; then
+				stages[${i},children]="${stages[${i},children]} ${j}"
 			fi
 		done
-		set +f
-	fi
+		# Trim white spaces
+		stages[${i},children]="${stages[${i},children]#${stages[${i},children]%%[![:space:]]*}}"
+	done
 
-	# Build stages tree (determine children property)
-	local i; for (( i=0; i<${stages_count}; i++ )); do
-		use_stage ${i}
-		if [[ ${rebuild} = false ]]; then
+	# Determine rebuild property.
+	for ((i=$((stages_count - 1)); i>=0; i--)); do
+		# If selected, then rebuild. Note: || [[ ${stages[${i},rebuild]} = true ]] is intentional, makes sure whole parent's tree get's checked.
+		if [[ ${stages[${i},selected]} = true ]] || [[ ${stages[${i},rebuild]} = true ]]; then
+			stages[${i},rebuild]=true
+			# Also mark parent as rebuild, it there's no available previous build for it.
+			local parent_index=${stages[${i},parent]}
+			if [[ -n ${parent_index} ]] && ( [[ -z ${stages[${parent_index},available_build]} ]] || [[ ${CLEAN_BUILD} = true ]] ); then
+				stages[${parent_index},rebuild]=true
+			fi
 			continue
-		fi
-
-		# Store child in parent's childs, to build a dependency tree.
-		if [[ -n ${parent_index} ]]; then
-			stages[${parent_index},children]="${stages[${parent_index},children]} ${i}"
+		elif [[ ${stages[${i},rebuild]} != true ]]; then
+			stages[${i},rebuild]=false
 		fi
 	done
+
+
+for ((i=0; i<${stages_count}; i++)); do
+	echo "Stage details $i:"
+	for key in ${STAGE_KEYS[@]}; do
+		printf "%-20s%s\n" "${key}:" "${stages[$i,$key]}"
+	done
+	echo ""
+done
 
 	# List stages to build
 	echo_color ${color_turquoise_bold} "[ Stages to rebuild ]"
 	draw_stages_tree
 	echo ""
+
+exit
 }
 
 
@@ -245,7 +277,7 @@ configure_stages() {
 		local source_build_path=${catalyst_builds_path}/${source_subpath}.tar.xz
 
 		# Determine if stage's parent will also be rebuild, to know if it should use available_source_subpath or new parent build.
-		if [[ -n ${parent_index} ]] && [[ ${parent_rebuild} = false ]] && [[ -n ${parent_available_build} ]]; then
+		if [[ -n ${parent} ]] && [[ ${parent_rebuild} = false ]] && [[ -n ${parent_available_build} ]]; then
 			echo_color ${color_turquoise} "Using existing source ${parent_available_build} for ${platform}/${release}/${stage}"
 			source_subpath=${parent_available_build%.tar.xz}
 			stages[${i},source_subpath]=${source_subpath}
@@ -556,14 +588,6 @@ build_stages() {
 			fi
 		done
 
-		# Define custom toml file for customized archirecture.
-		if [[ -n ${toml} ]]; then
-			toml_file=${catalyst_usr_path}/arch/catalyst-lab.${arch_basearch}.${arch_subarch}.toml
-			echo "# This file was added as a temporary file by catalyst-lab." > ${toml_file}
-			echo "# It should be deleted automatically when catalyst-lab finishes building stages." >> ${toml_file}
-			echo "${toml}" >> ${toml_file}
-		fi
-
 		echo_color ${color_turquoise} "Building stage: ${platform}/${release}/${stage}"
 		echo ""
 		local args="-af ${stage_spec_work_path}"
@@ -572,12 +596,6 @@ build_stages() {
 		fi
 		catalyst $args || exit 1
 
-		# Clean temp toml file.
-		if [[ -n ${toml_file} ]] && [[ -f ${toml_file} ]]; then
-			rm -f ${toml_file}
-		fi
-		unset toml_file
-
 		echo_color ${color_green} "Stage build completed: ${platform}/${release}/${stage}"
 		echo ""
 	done
@@ -585,18 +603,6 @@ build_stages() {
 
 # ------------------------------------------------------------------------------
 # Helper functions:
-
-# Clean tmp files if exited with error.
-cleanup() {
-	if [[ $? -ne 0 ]]; then
-		# Cleanup build directory.
-		# rm -rf ${work_path} # Leave for future analysis.
-		# Cleanup temporary toml file.
-		if [[ -n ${toml_file} ]] && [[ -f ${toml_file} ]]; then
-			rm -f ${toml_file}
-		fi
-	fi
-}
 
 echo_color() { # Usage: echo_color COLOR MESSAGE
 	echo -e "${1}${2}${color_nc}"
@@ -643,46 +649,54 @@ basearch_to_baseraw() {
 # Use prefix if need to compare with other stage variables.
 # This function also loads platform config file related to selected stage.
 use_stage() {
+
+	local idx=${1}
 	local prefix=${2}
-	# Automatically determine all possible keys stored in stages, and load them to variables.
-	#local keys=($(printf "%s\n" "${!stages[@]}" | sed 's/.*,//' | sort -u))
+
+	# Reset previous values:
 	for variable in ${STAGE_KEYS[@]}; do
-		local value=${stages[${1},${variable}]}
-		eval "${prefix}${variable}='${value}'"
+		unset ${prefix}${variable}
+		unset parent_${prefix}${variable}
 	done
-	# Load parent info and platform config
-	if [[ -z ${prefix} ]]; then
-		parent_index=""
-		local i; for (( i=0; i<${stages_count}; i++ )); do
-			use_stage ${i} parent_
-# TODO: Take into consideration customized rel_type in parent spec
-			local parent_product=${parent_platform}/${parent_release}/${parent_target}-${parent_subarch}-${parent_version_stamp}
-			if [[ ${source_subpath} == ${parent_product} ]]; then
-				parent_index=${i}
-				break
-			fi
+
+	if [[ ${stages[${idx},kind]} = local ]]; then
+		# Handle loading details of local stage job
+
+		# Automatically determine all possible keys stored in stages, and load them to variables.
+		#local keys=($(printf "%s\n" "${!stages[@]}" | sed 's/.*,//' | sort -u))
+		for variable in ${STAGE_KEYS[@]}; do
+			local value=${stages[${idx},${variable}]}
+			eval "${prefix}${variable}='${value}'"
 		done
-		if [[ -z ${parent_index} ]]; then # If parent not found, clean it's data
-			for variable in ${keys[@]}; do
-				unset parent_${variable}
-			done
+
+		# Load platform config
+		if [[ -z ${prefix} ]]; then
+			# TODO: Store these in stage instead of loading manually
+			# Platform config
+			# If some properties are not set in config - unset them while loading new config
+			unset repos common_flags chost cpu_flags compression_mode
+			local platform_conf_path=${templates_path}/${platform}/platform.conf
+			source ${platform_conf_path}
+			local release_conf_path=${templates_path}/${platform}/${release}/release.conf
+			if [[ -f ${release_conf_path} ]]; then
+				# Variables in release.conf can overwrite platform defaults.
+				source ${release_conf_path}
+			fi
 		fi
 
-		# Platform config
-		# If some properties are not set in config - unset them while loading new config
-		unset repos common_flags chost toml cpu_flags compression_mode
-		local platform_conf_path=${templates_path}/${platform}/platform.conf
-		source ${platform_conf_path}
-		local release_conf_path=${templates_path}/${platform}/${release}/release.conf
-		if [[ -f ${release_conf_path} ]]; then
-			# Variables in release.conf can overwrite platform defaults.
-			source ${release_conf_path}
+        elif [[ ${stages[${idx},kind]} = remote ]]; then
+		# Handle loading of remote task details
+		kind=${stages[${idx},kind]}
+		url=${stages[${idx},url]}
+		rebuild=${stages[${idx},rebuild]}
+		# ...
+	fi
+
+	# Load also parent info for supported targets
+	if [[ -z ${prefix} ]] && ( [[ ${kind} = local ]] || [[ ${kind} = binhost ]] ); then
+		if [[ -n ${parent} ]]; then
+			use_stage ${parent} parent_
 		fi
-		arch_basearch=${arch%%/*}
-		arch_baseraw=$(basearch_to_baseraw ${arch_basearch})
-		arch_subarch=${arch#*/}; arch_subarch=${arch_subarch:-$arch_basearch}
-		arch_family=${ARCH_FAMILIES[${arch_basearch}]:-${arch_basearch}}
-		arch_interpreter=${ARCH_INTERPRETERS[${arch_baseraw}]:-"/usr/bin/qemu-${arch_baseraw}"} # Find correct arch_interpreter
 	fi
 }
 
@@ -738,6 +752,65 @@ sanitize_spec_variable() {
 	echo "${value}" | sed "s/@REL_TYPE@/${release}/g" | sed "s/@PLATFORM@/${platform}/g" | sed "s/@STAGE@/${stage}/g" | sed "s/@BASE_ARCH@/${base_arch}/g" | sed "s/@SUB_ARCH@/${sub_arch}/g" | sed "s/@FAMILY_ARCH@/${family}/g"
 }
 
+# Scans build tree and adds virtual download stages when parent need's to be downloaded first.
+add_remote_stages() {
+echo "Local Stages count: ${stages_count}"
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+                use_stage ${i}
+                if [[ ${rebuild} = false ]]; then
+                        continue
+                fi
+		# Skip download stages here, as these are the starting point
+		if [[ ${kind} = remote ]]; then
+			continue
+		fi
+
+		# Check if needs remote source and if it does create virtual job for it. Even if local build of this source already exists.
+		# Set rebuild of this new virtual stage accorting to availibility and script arguments.
+
+		# Find parent stage if available.
+		local parent_index=""
+		local j; for (( j=0; j<${stages_count}; j++ )); do
+			use_stage ${j} parent_
+# TODO: Take into consideration customized rel_type in parent spec
+			local parent_product=${parent_platform}/${parent_release}/${parent_target}-${parent_subarch}-${parent_version_stamp}
+			if [[ ${source_subpath} == ${parent_product} ]]; then
+				parent_index=${j}
+				break
+			fi
+		done
+		# TODO: Store product of this remote stage somehow and compare it later to detect multiple same stages
+		# If parent stage was not found, create a download task
+		if [[ -z ${parent_index} ]]; then
+echo "Add remote stage for seed of ${platform}/${release}/${stage}"
+#			((stages_count++))
+			stages[${stages_count},kind]=remote
+			stages[${stages_count},rebuild]=true # TODO
+			stages[${stages_count},url]="GET URL OF THIS STAGE HERE USING PARENT"
+			((stages_count++))
+		fi
+	done
+}
+
+# Scans local and binhost targets and updates their parent property in stages array.
+update_parent_indexes() {
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		# Search for parents only for supported stages
+                if [[ ${stages[${i},kind]} != local ]] && [[ ${stages[${i},kind]} != binhost ]]; then
+                        continue
+                fi
+		stages[${i},parent]='' # Reset previously set parent index if any.
+		local j; for (( j=0; j<${stages_count}; j++ )); do
+# TODO: Take into consideration customized rel_type in parent spec
+			if [[ ${stages[${i},source_subpath]} == ${stages[${j},product]} ]]; then
+				# Save found parent index
+				stages[${i},parent]=${j}
+				break
+			fi
+		done
+	done
+}
+
 # Prepare array that describes the order of stages based on inheritance.
 # Store information if stage has local parents.
 # This is function uses requrency to process all required parents before selected stage is processed.
@@ -747,15 +820,17 @@ insert_stage_with_inheritance() { # arg - index, required_by_id
 	use_stage ${index}
 	if ! contains_string stages_order[@] ${index}; then
 		# If you can find a parent that produces target = this.source, add this parent first. After that add this stage.
-		if [[ -n ${parent_index} ]]; then
-			if [[ ${dependency_stack} == *"|${parent_index}|"* ]]; then
+		if [[ -n ${parent} ]]; then
+
+			# Check for cicrular dependencies
+			if [[ ${dependency_stack} == *"|${parent}|"* ]]; then
 				dependency_stack="${dependency_stack}${index}|"
 				echo "Circular dependency detected for ${parent_platform}/${parent_release}/${parent_stage}. Verify your templates."
 				IFS='|' read -r -a dependency_indexes <<< "${dependency_stack#|}"
 				echo "Stack:"
 				local found_parent=false
 				for i in ${dependency_indexes[@]}; do
-					if [[ ${found_parent} = false ]] && [[ ${parent_index} != ${i} ]]; then
+					if [[ ${found_parent} = false ]] && [[ ${parent} != ${i} ]]; then
 						continue
 					fi
 					found_parent=true
@@ -763,11 +838,10 @@ insert_stage_with_inheritance() { # arg - index, required_by_id
 				done
 				exit 1
 			fi
-			stages[${index},parent]=${parent_platform}/${parent_release}/${parent_stage}
+
+			# Insert parent before current index
 			local next_dependency_stack="${dependency_stack}${index}|"
-			insert_stage_with_inheritance ${parent_index} "${next_dependency_stack}"
-		else
-			stages[${index},parent]=""
+			insert_stage_with_inheritance ${parent} "${next_dependency_stack}"
 		fi
 		stages_order+=(${index})
 	fi
@@ -781,25 +855,32 @@ draw_stages_tree() {
 		# Get indexes of root elements.
 		local child_array=()
 		local i; for (( i=0; i < ${stages_count}; i++ )); do
-			use_stage ${i}
-			if [[ ${rebuild} = true ]] && ([[ -z ${parent_index} ]] || [[ ${parent_rebuild} = false ]]); then
+			if [[ ${stages[${i},rebuild]} = true ]] && ([[ -z ${stages[${i},parent]} ]] || [[ ${stages[${stages[${i},parent]},rebuild]} = false ]]); then
 				child_array+=(${i})
 			fi
 		done
 	else
-		use_stage ${index}
-		local child_array=(${children[@]}) # Map to array if starting from string
+		local child_array=(${stages[${index},children]}) # Map to array if starting from string
 	fi
 
 	local i=0; for child in ${child_array[@]}; do
 		((i++))
-		use_stage ${child}
-		local stage_name=${platform}/${release}/${color_turquoise}${stage}${color_nc}
-		if [[ ${selected} = true ]]; then
-			stage_name=${platform}/${release}/${color_turquoise_bold}${stage}${color_nc}
+		local stage_name="?"
+		if [[ ${stages[${child},kind]} = local ]]; then
+			stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_turquoise}${stages[${child},stage]}${color_nc}
+			if [[ ${stages[${child},selected]} = true ]]; then
+				stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_turquoise_bold}${stages[${child},stage]}${color_nc}
+			fi
+		elif [[ ${stages[${child},kind]} = remote ]]; then
+			stage_name="[ remote: ${color_yellow}${stages[${child},product]}${color_nc} ]"
+			if [[ ${stages[${child},selected]} = true ]]; then
+				stage_name="[ remote: ${color_yellow_bold}${stages[${child},product]}${color_nc} ]"
+			fi
+		elif [[ ${stages[${child},kind]} = binhost ]]; then
+			stage_name="[ Binhost update ]" # TODO: Better display of this kind of stages
 		fi
 		new_prefix="${prefix}├── "
-		if [[ -n ${children} ]]; then
+		if [[ -n ${stages[${child},children]} ]]; then
 			new_prefix="${prefix}│   "
 		fi
 		if [[ ${i} == ${#child_array[@]} ]]; then
@@ -810,6 +891,41 @@ draw_stages_tree() {
 		fi
 		draw_stages_tree ${child} "${new_prefix}"
 	done
+}
+
+# Was given stage selected by user arguments (or true if not provided.)
+is_stage_selected() {
+	local platform=${1}
+	local release=${2}
+	local stage=${3}
+	if [[ ${#selected_stages_templates[@]} -eq 0 ]]; then
+		echo true
+		return
+	fi
+
+	set -f
+	for pattern in ${selected_stages_templates[@]}; do
+		IFS='/' read -r exp_platform exp_release exp_stage <<< ${pattern}
+		unset fits_stage; unset fits_release; unset fits_platform
+		if [[ -z ${exp_stage} ]] || [[ ${stage} == ${exp_stage} ]]; then
+			local fits_stage=true
+		fi
+		if ( [[ -z ${exp_stage} ]] && [[ -z ${exp_release} ]] ) || [[ ${release} == ${exp_release} ]]; then
+			local fits_release=true
+		fi
+		if ( [[ -z ${exp_stage} ]] && [[ -z ${exp_release} ]] && [[ -z ${exp_platform} ]] ) || [[ ${platform} == ${exp_platform} ]]; then
+			local fits_platform=true
+		fi
+		local should_include=$([[ ${fits_platform} == true && ${fits_release} == true && ${fits_stage} == true ]] && echo true || echo false)
+		if [[ ${should_include} = true ]]; then
+			echo true
+			set +f
+			return
+		fi
+	done
+	set +f
+
+	echo false
 }
 
 # ------------------------------------------------------------------------------
@@ -823,8 +939,55 @@ if [[ $EUID -ne 0 ]]; then
 	exit 1
 fi
 
-# Possible variables stored in stages array in this script.
-declare STAGE_KEYS=(available_build catalyst_conf catalyst_conf_src cpu_flags children overlays parent platform rebuild release releng_base selected source_subpath source_url stage subarch target version_stamp)
+declare PLATFORM_KEYS=( # Variables allowed in platform.conf
+	arch
+	repos
+	common_flags
+	chost
+	cpu_flags
+	compression_mode
+)
+declare RELEASE_KEYS=( # Variables allowed in release.conf
+	repos
+	common_flags
+	chost
+	cpu_flags
+	compression_mode
+)
+declare STAGE_KEYS=( # Variables stored in stages[]
+	kind
+	platform
+	release
+	stage
+
+	arch_basearch
+	arch_baseraw
+	arch_subarch
+	arch_family
+	arch_interpreter
+
+	common_flags
+	chost
+	cpu_flags
+	compression_mode
+
+	catalyst_conf
+
+	target
+	subarch
+	product
+	parent
+	children
+	selected
+	rebuild
+	available_build
+	cpu_flags
+	overlays
+	releng_base
+	source_subpath
+	version_stamp
+	url
+)
 declare -A TARGET_MAPPINGS=(
 	# Used to fill spec fsscript and similar with correct key.
 	[livecd-stage1]=livecd
@@ -870,6 +1033,8 @@ readonly color_red='\033[0;31m'
 readonly color_green='\033[0;32m'
 readonly color_turquoise='\033[0;36m'
 readonly color_turquoise_bold='\033[1;36m'
+readonly color_yellow='\033[0;33m'
+readonly color_yellow_bold='\033[1;33m'
 readonly color_nc='\033[0m' # No Color
 
 # Load/create config.
@@ -918,10 +1083,6 @@ esac; shift; done
 
 # ------------------------------------------------------------------------------
 # Main program:
-
-# Register cleanup for script exit.
-trap cleanup EXIT
-trap cleanup SIGINT SIGTERM
 
 load_stages
 if [[ ${PREPARE} = true ]]; then
