@@ -151,6 +151,7 @@ load_stages() {
 			stages[${stages_count},product]=${seed_subpath}
 			stages[${stages_count},selected]=$([[ ${#selected_stages_templates[@]} -eq 0 ]] && echo true || echo false) # TODO: Allow to select somehow specific remote virtual builds too.
 			stages[${stages_count},stage]=$(echo ${stages[${stages_count},product]} | awk -F '/' '{print $NF}' | sed 's/-@TIMESTAMP@//') # In virtual remotes, stage is determined this way
+			stages[${stages_count},target]=$(echo ${stages[${stages_count},stage]} | sed -E 's/(.*stage[0-9]+)-.*/\1/')
 			# Find available build
 			local _available_build=$(echo ${seed_subpath} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
 			stages[${stages_count},available_build]=${_available_build}
@@ -874,7 +875,7 @@ draw_stages_tree() {
 				stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_turquoise_bold}${stages[${child},stage]}${color_nc}
 			fi
 		elif [[ ${stages[${child},kind]} = remote ]]; then
-			local display_name=${stages[${child},product]}
+			local display_name=${stages[${child},arch_family]}/${stages[${child},stage]}
 			# If stage is not being rebuild and it has direct children that are being rebuild, display used available_build.
 			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},available_build]} ]]; then
 				for c in ${stages[${child},children]}; do
