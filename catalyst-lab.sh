@@ -97,6 +97,7 @@ load_stages() {
 					local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
 					local _product=${stage_rel_type:-${_platform}/${_release}}/${_target}-${_subarch}-${_version_stamp}
 					local _available_build=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E ${_available_build} | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
+					local _available_build_timestamp=$( [[ -n ${_available_build} ]] && start_pos=$(expr index "${_product}" "@TIMESTAMP@") && echo "${_available_build:$((start_pos - 1)):16}" )
 					local _is_selected=$(is_stage_selected ${_platform} ${_release} ${_stage})
 
 					# Store determined variables and sanitize selected:
@@ -121,6 +122,7 @@ load_stages() {
 					stages[${stages_count},cpu_flags]=${_cpu_flags}
 					stages[${stages_count},compression_mode]=${_compression_mode}
 					stages[${stages_count},available_build]=${_available_build}
+					stages[${stages_count},timestamp_available]=${_available_build_timestamp}
 					stages[${stages_count},catalyst_conf]=${_catalyst_conf}
 
 					stages_count=$((stages_count + 1))
@@ -154,7 +156,9 @@ load_stages() {
 			stages[${stages_count},target]=$(echo ${stages[${stages_count},stage]} | sed -E 's/(.*stage[0-9]+)-.*/\1/')
 			# Find available build
 			local _available_build=$(echo ${seed_subpath} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
+			local _available_build_timestamp=$( [[ -n ${_available_build} ]] && start_pos=$(expr index "${seed_subpath}" "@TIMESTAMP@") && echo "${_available_build:$((start_pos - 1)):16}" )
 			stages[${stages_count},available_build]=${_available_build}
+			stages[${stages_count},timestamp_available]=${_available_build_timestamp}
 			# Save interpreter and basearch as the same as the child that this new seed produces. In theory this could result in 2 or more stages using the same source while haveing different base architecture, but this should not be the case in properly configured templates.
 			stages[${stages_count},arch_interpreter]=${stages[${i},arch_interpreter]}
 			stages[${stages_count},arch_basearch]=${stages[${i},arch_basearch]}
@@ -232,16 +236,14 @@ load_stages() {
 		fi
 	done
 
-	# Debug mode
-	if [[ ${DEBUG} = true ]]; then
-		for ((i=0; i<${stages_count}; i++)); do
-			echo "Stage details at index ${i}:"
-			for key in ${STAGE_KEYS[@]}; do
-				printf "%-20s%s\n" "${key}:" "${stages[$i,$key]}"
-			done
-			echo "--------------------------------------------------------------------------------"
-		done
-	fi
+	# Determine timestamp_generated property - only for local for now.
+	# For remote this is filled after checking available remote build.
+	for ((i=$((stages_count - 1)); i>=0; i--)); do
+		if [[ ${stages[${i},rebuild]} = false ]] || [[ ${stages[${i},kind]} = remote ]]; then
+			continue
+		fi
+		stages[${i},timestamp_generated]=${timestamp}
+	done
 
 	# List stages to build
 	echo_color ${color_turquoise_bold} "[ Stages taking part in this process ]"
@@ -290,6 +292,32 @@ prepare_stages() {
 		if [[ ${stages[${i},rebuild]} = false ]]; then
 			continue
 		fi
+
+		# Prepare remote builds newest timestamp from backend
+		if [[ ${stages[${i},kind]} = remote ]]; then
+			echo -e "${color_turquoise}Getting seed info: ${color_yellow_bold}${stages[${i},arch_family]}/${stages[${i},stage]}"
+			local metadata_content=$(wget -q -O - ${stages[${i},url]} --no-http-keep-alive --no-cache --no-cookies)
+			local stage_regex=${stages[${i},stage]}"-[0-9]{8}T[0-9]{6}Z"
+			local latest_seed=$(echo "${metadata_content}" | grep -E ${stage_regex} | head -n 1 | cut -d ' ' -f 1)
+			local arch_url=$(echo ${seeds_url} | sed "s/@ARCH_FAMILY@/${stages[${i},arch_family]}/")
+			# Replace URL from metadata url to stage download url
+			stages[${i},url]=${arch_url}/${latest_seed}
+			# Extract remote available timestamp and store it in stage timestamp_generated
+			stages[${i},timestamp_generated]=$(echo ${latest_seed} | sed -n -r "s|.*${stage}-([0-9]{8}T[0-9]{6}Z).*|\1|p")
+		fi
+
+
+		# Update treeish property
+		stages[${i},treeish]=${stages[${i},treeish]:-${treeish}}
+
+
+
+
+		continue
+
+		# Update timestamps in stages for: product, source_subpath, version_stamp
+		# In source_subpath, use newest remote available one
+		# For remote update timestamp_generated using latest available on remote (it might be equal to latest build)
 
 		use_stage ${i}
 		if [[ ${rebuild} = false ]]; then
@@ -388,26 +416,6 @@ prepare_stages() {
 			fi
 		fi
 
-		# Remember customized cpu_flags if set.
-		if [[ -n ${cpu_flags} ]] && ( [[ ${target} == stage1 ]] || [[ ${target} == stage3 ]] ); then
-			stages[${i},cpu_flags]="${cpu_flags}"
-		fi
-
-		# Find custom catalyst.conf if any
-		local platform_catalyst_conf=${platform_path}/catalyst.conf
-		local release_catalyst_conf=${release_path}/catalyst.conf
-		local stage_catalyst_conf=${stage_path}/catalyst.conf
-		local platform_work_catalyst_conf=${platform_work_path}/catalyst.conf
-		local release_work_catalyst_conf=${release_work_path}/catalyst.conf
-		local stage_work_catalyst_conf=${stage_work_path}/catalyst.conf
-		unset catalyst_conf catalyst_conf_src
-		if
-		     [[ -f ${stage_catalyst_conf} ]]; then catalyst_conf_src=${stage_catalyst_conf}; catalyst_conf=${stage_work_catalyst_conf};
-		elif [[ -f ${release_catalyst_conf} ]]; then catalyst_conf_src=${release_catalyst_conf}; catalyst_conf=${release_work_catalyst_conf};
-		elif [[ -f ${platform_catalyst_conf} ]]; then catalyst_conf_src=${platform_catalyst_conf}; catalyst_conf=${platform_work_catalyst_conf};
-		fi
-		stages[${i},catalyst_conf_src]=${catalyst_conf_src}
-		stages[${i},catalyst_conf]=${catalyst_conf}
 	done
 
 	echo_color ${color_green} "Stage templates prepared"
@@ -944,6 +952,19 @@ is_stage_selected() {
 	echo false
 }
 
+print_debug_stack() {
+	# Debug mode
+	if [[ ${DEBUG} = true ]]; then
+		for ((i=0; i<${stages_count}; i++)); do
+			echo "Stage details at index ${i}:"
+			for key in ${STAGE_KEYS[@]}; do
+				printf "%-22s%s\n" "${key}:" "${stages[$i,$key]}"
+			done
+			echo "--------------------------------------------------------------------------------"
+		done
+	fi
+}
+
 # Either is rebuild itself or is a part of rebuild process of it's children.
 is_taking_part_in_rebuild() {
 	local index=${1}
@@ -1001,9 +1022,11 @@ declare STAGE_KEYS=( # Variables stored in stages[]
 	stage
 
 	target
+	source_subpath
 	product
 	available_build
-	source_subpath
+	timestamp_available	# Timestamp of available existing previous build
+	timestamp_generated	# Timestamp of build generated by this stage (if rebuild=true)
 	parent
 	children
 
@@ -1126,7 +1149,10 @@ if [[ ${PREPARE} = true ]]; then
 	prepare_portage_snapshot
 	prepare_releng
 	prepare_stages
-	write_stages
+	print_debug_stack
+#	write_stages
+else
+	print_debug_stack
 fi
 if [[ ${BUILD} = true ]]; then
 	build_stages
