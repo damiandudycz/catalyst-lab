@@ -92,7 +92,7 @@ load_stages() {
 					local _version_stamp=${stage_version_stamp}
 					local _version_stamp=${stage_version_stamp:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1/; t; s/.*//' || echo '')}; _version_stamp="${_version_stamp:+${_version_stamp}-}@TIMESTAMP@"
 					local _product=${_platform}/${_release}/${_target}-${_subarch}-${_version_stamp}
-					local _available_build=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1)
+					local _available_build=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
 					local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}}
 
 					# Store determined variables and sanitize selected:
@@ -149,7 +149,7 @@ load_stages() {
 			stages[${stages_count},url]="GENERATE URL HERE"
 			stages[${stages_count},selected]=$([[ ${#selected_stages_templates[@]} -eq 0 ]] && echo true || echo false) # TODO: Allow to select somehow specific remote virtual builds too.
 			# Find available build
-			local _available_build=$(echo ${seed_subpath} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1)
+			local _available_build=$(echo ${seed_subpath} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
 			stages[${stages_count},available_build]=${_available_build}
 			((stages_count++))
 		fi
@@ -207,6 +207,15 @@ load_stages() {
 			continue
 		elif [[ ${stages[${i},rebuild]} != true ]]; then
 			stages[${i},rebuild]=false
+		fi
+	done
+
+	# Determine takes_part property.
+	for ((i=$((stages_count - 1)); i>=0; i--)); do
+		if [[ $(is_taking_part_in_rebuild ${i}) = true ]]; then
+			stages[${i},takes_part]=true
+		else
+			stages[${i},takes_part]=false
 		fi
 	done
 
@@ -855,24 +864,37 @@ draw_stages_tree() {
 		# Get indexes of root elements.
 		local child_array=()
 		local i; for (( i=0; i < ${stages_count}; i++ )); do
-			if [[ ${stages[${i},rebuild]} = true ]] && ([[ -z ${stages[${i},parent]} ]] || [[ ${stages[${stages[${i},parent]},rebuild]} = false ]]); then
+			if [[ ${stages[${i},takes_part]} = true ]] && [[ -z ${stages[${i},parent]} ]]; then
 				child_array+=(${i})
 			fi
 		done
 	else
-		local child_array=(${stages[${index},children]}) # Map to array if starting from string
+		# Only include branches that takes part in the process
+		local child_array_tmp=(${stages[${index},children]}) # Map to array if starting from string
+		local child_array=()
+		for child in ${child_array_tmp[@]}; do
+			if [[ ${stages[${child},takes_part]} = true ]]; then
+				child_array+=(${child})
+			fi
+		done
 	fi
 
 	local i=0; for child in ${child_array[@]}; do
 		((i++))
 		local stage_name="?"
 		if [[ ${stages[${child},kind]} = local ]]; then
-			stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_turquoise}${stages[${child},stage]}${color_nc}
+			stage_name=${color_gray}${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}${color_nc}
+			if [[ ${stages[${child},rebuild]} = true ]]; then
+				stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_turquoise}${stages[${child},stage]}${color_nc}
+			fi
 			if [[ ${stages[${child},selected]} = true ]]; then
 				stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_turquoise_bold}${stages[${child},stage]}${color_nc}
 			fi
 		elif [[ ${stages[${child},kind]} = remote ]]; then
-			stage_name="[ remote: ${color_yellow}${stages[${child},product]}${color_nc} ]"
+			stage_name="${color_gray}[ remote: ${stages[${child},product]}${color_nc} ]"
+			if [[ ${stages[${child},rebuild]} = true ]]; then
+				stage_name="[ remote: ${color_yellow}${stages[${child},product]}${color_nc} ]"
+			fi
 			if [[ ${stages[${child},selected]} = true ]]; then
 				stage_name="[ remote: ${color_yellow_bold}${stages[${child},product]}${color_nc} ]"
 			fi
@@ -928,6 +950,23 @@ is_stage_selected() {
 	echo false
 }
 
+# Either is rebuild itself or is a part of rebuild process of it's children.
+is_taking_part_in_rebuild() {
+	local index=${1}
+	if [[ ${stages[${index},rebuild]} = true ]]; then
+		echo true
+		return
+	elif [[ -n ${stages[${index},children]} ]]; then
+		for child in ${stages[${index},children]}; do
+			if [[ $(is_taking_part_in_rebuild ${child}) = true ]]; then
+				echo true
+				return
+			fi
+		done
+	fi
+	echo false
+}
+
 # ------------------------------------------------------------------------------
 # START:
 
@@ -978,8 +1017,9 @@ declare STAGE_KEYS=( # Variables stored in stages[]
 	product
 	parent
 	children
-	selected
-	rebuild
+	selected		# Is explicitly selected by the user or no selection was made.
+	rebuild			# Will be rebuild in this run.
+	takes_part		# Is in branch where anything get's rebuild - either itself or it's children.
 	available_build
 	cpu_flags
 	overlays
