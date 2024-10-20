@@ -227,17 +227,19 @@ load_stages() {
 		fi
 	done
 
-# Debug mode
-	for ((i=0; i<${stages_count}; i++)); do
-		echo "Stage details $i:"
-		for key in ${STAGE_KEYS[@]}; do
-			printf "%-20s%s\n" "${key}:" "${stages[$i,$key]}"
+	# Debug mode
+	if [[ ${DEBUG} = true ]]; then
+		for ((i=0; i<${stages_count}; i++)); do
+			echo "Stage details at index ${i}:"
+			for key in ${STAGE_KEYS[@]}; do
+				printf "%-20s%s\n" "${key}:" "${stages[$i,$key]}"
+			done
+			echo "--------------------------------------------------------------------------------"
 		done
-		echo ""
-	done
+	fi
 
 	# List stages to build
-	echo_color ${color_turquoise_bold} "[ Stages to rebuild ]"
+	echo_color ${color_turquoise_bold} "[ Stages taking part in this process ]"
 	draw_stages_tree
 	echo ""
 
@@ -854,7 +856,18 @@ draw_stages_tree() {
 		local stage_name="?"
 		if [[ ${stages[${child},kind]} = local ]]; then
 # TODO: Add available_build versions here too if not building new
-			stage_name=${color_gray}${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}${color_nc}
+			local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
+			stage_name=${color_gray}${display_name}${color_nc}
+			# If stage is not being rebuild and it has direct children that are being rebuild, display used available_build.
+			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},available_build]} ]]; then
+				for c in ${stages[${child},children]}; do
+					if [[ ${stages[${c},rebuild]} = true ]]; then
+						display_name="${display_name} (${stages[${child},available_build]})"
+						stage_name=${color_gray}${display_name}${color_nc}
+						break
+					fi
+				done
+			fi
 			if [[ ${stages[${child},rebuild]} = true ]]; then
 				stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_turquoise}${stages[${child},stage]}${color_nc}
 			fi
@@ -863,8 +876,14 @@ draw_stages_tree() {
 			fi
 		elif [[ ${stages[${child},kind]} = remote ]]; then
 			local display_name=${stages[${child},product]}
+			# If stage is not being rebuild and it has direct children that are being rebuild, display used available_build.
 			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},available_build]} ]]; then
-				display_name=${stages[${child},available_build]}
+				for c in ${stages[${child},children]}; do
+					if [[ ${stages[${c},rebuild]} = true ]]; then
+						display_name="${display_name} (${stages[${child},available_build]})"
+						break
+					fi
+				done
 			fi
 			stage_name="${color_gray}remote: ${display_name}${color_nc}"
 			if [[ ${stages[${child},rebuild]} = true ]]; then
@@ -1093,6 +1112,7 @@ while [ $# -gt 0 ]; do case ${1} in
 	--clean) CLEAN_BUILD=true;; # Perform clean build - don't use any existing sources even if available (Except for downloaded seeds).
 	--build) BUILD=true; PREPARE=true;; # Prepare is implicit when using --build.
 	--prepare) PREPARE=true;;
+	--debug) DEBUG=true;;
 	--*) echo "Unknown option ${1}"; exit;;
 	-*) echo "Unknown option ${1}"; exit;;
 	*) selected_stages_templates+=("${1}");;
