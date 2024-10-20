@@ -1,0 +1,1 @@
+/tmp/catalyst-lab/20241020T213616Z/spec_files/6.ps3-23.0-default-stage4-base-openrc.spec

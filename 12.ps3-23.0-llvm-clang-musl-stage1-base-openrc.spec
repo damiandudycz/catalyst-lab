@@ -1,0 +1,1 @@
+/tmp/catalyst-lab/20241020T213616Z/spec_files/12.ps3-23.0-llvm-clang-musl-stage1-base-openrc.spec
