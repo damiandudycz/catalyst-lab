@@ -95,7 +95,7 @@ load_stages() {
 					local _compression_mode=${stage_compression_mode:-${release_compression_mode:-${platform_compression_mode:-pixz}}} # Can be definied in platform, release or stage (spec)
 					local _version_stamp=${stage_version_stamp:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
 					local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
-					local _product=${stage_rel_type:-${_platform}/${_release}}/${_target}-${_subarch}-$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_version_stamp})
+					local _product=${stage_rel_type:-${_platform}/${_release}}/${_target}-${_subarch}-${_version_stamp}
 					local _available_build=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E ${_available_build} | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
 					local _is_selected=$(is_stage_selected ${_platform} ${_release} ${_stage})
 
@@ -108,6 +108,7 @@ load_stages() {
 					stages[${stages_count},target]=${_target}
 					stages[${stages_count},version_stamp]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_version_stamp})
 					stages[${stages_count},source_subpath]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_source_subpath})
+					stages[${stages_count},product]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_product})
 					stages[${stages_count},overlays]=${_repos}
 					stages[${stages_count},releng_base]=${_releng_base}
 					stages[${stages_count},arch_basearch]=${_basearch}
@@ -119,7 +120,6 @@ load_stages() {
 					stages[${stages_count},common_flags]=${_common_flags}
 					stages[${stages_count},cpu_flags]=${_cpu_flags}
 					stages[${stages_count},compression_mode]=${_compression_mode}
-					stages[${stages_count},product]=${_product}
 					stages[${stages_count},available_build]=${_available_build}
 					stages[${stages_count},catalyst_conf]=${_catalyst_conf}
 
@@ -149,8 +149,8 @@ load_stages() {
 			added_remote_stages[${seed_subpath}]=${stages_count}
 			stages[${stages_count},kind]=remote
 			stages[${stages_count},product]=${seed_subpath}
-			stages[${stages_count},url]="GENERATE URL HERE"
 			stages[${stages_count},selected]=$([[ ${#selected_stages_templates[@]} -eq 0 ]] && echo true || echo false) # TODO: Allow to select somehow specific remote virtual builds too.
+			stages[${stages_count},stage]=$(echo ${stages[${stages_count},product]} | awk -F '/' '{print $NF}' | sed 's/-@TIMESTAMP@//') # In virtual remotes, stage is determined this way
 			# Find available build
 			local _available_build=$(echo ${seed_subpath} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
 			stages[${stages_count},available_build]=${_available_build}
@@ -159,6 +159,10 @@ load_stages() {
 			stages[${stages_count},arch_basearch]=${stages[${i},arch_basearch]}
 			stages[${stages_count},arch_baseraw]=${stages[${i},arch_baseraw]}
 			stages[${stages_count},arch_family]=${stages[${i},arch_family]}
+			# Generate seed information download URL
+			local seeds_arch_url=$(echo ${seeds_url} | sed "s/@ARCH_FAMILY@/${stages[${stages_count},arch_family]}/")
+			stages[${stages_count},url]=${seeds_arch_url}/latest-${stages[${stages_count},stage]}.txt
+
 			((stages_count++))
 		fi
 		stages[${i},parent]=${added_remote_stages[${seed_subpath}]}
@@ -242,8 +246,6 @@ load_stages() {
 	echo_color ${color_turquoise_bold} "[ Stages taking part in this process ]"
 	draw_stages_tree
 	echo ""
-
-exit
 }
 
 
@@ -279,10 +281,15 @@ prepare_releng() {
 # Final download URL's.
 # Real seed names, with timestamp replaced.
 # Final paths for remote repositories.
-configure_stages() {
+prepare_stages() {
 	echo_color ${color_turquoise_bold} "[ Preparing stages ]"
 
 	local i; for (( i=0; i<${stages_count}; i++ )); do
+		# Prepare only stages that needs rebuild.
+		if [[ ${stages[${i},rebuild]} = false ]]; then
+			continue
+		fi
+
 		use_stage ${i}
 		if [[ ${rebuild} = false ]]; then
 			continue
@@ -297,13 +304,6 @@ configure_stages() {
 		local stage_work_path=${release_work_path}/${stage}
 
 		local source_build_path=${catalyst_builds_path}/${source_subpath}.tar.xz
-
-		# Determine if stage's parent will also be rebuild, to know if it should use available_source_subpath or new parent build.
-		if [[ -n ${parent} ]] && [[ ${parent_rebuild} = false ]] && [[ -n ${parent_available_build} ]]; then
-			echo_color ${color_turquoise} "Using existing source ${parent_available_build} for ${platform}/${release}/${stage}"
-			source_subpath=${parent_available_build%.tar.xz}
-			stages[${i},source_subpath]=${source_subpath}
-		fi
 
 		# Check if should download seed and download if needed.
 		local use_remote_build=false
@@ -855,7 +855,6 @@ draw_stages_tree() {
 		((i++))
 		local stage_name="?"
 		if [[ ${stages[${child},kind]} = local ]]; then
-# TODO: Add available_build versions here too if not building new
 			local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
 			stage_name=${color_gray}${display_name}${color_nc}
 			# If stage is not being rebuild and it has direct children that are being rebuild, display used available_build.
@@ -1125,7 +1124,7 @@ load_stages
 if [[ ${PREPARE} = true ]]; then
 	prepare_portage_snapshot
 	prepare_releng
-	configure_stages
+	prepare_stages
 	write_stages
 fi
 if [[ ${BUILD} = true ]]; then
