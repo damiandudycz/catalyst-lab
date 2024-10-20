@@ -289,30 +289,40 @@ prepare_stages() {
 
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		# Prepare only stages that needs rebuild.
-		if [[ ${stages[${i},rebuild]} = false ]]; then
-			continue
+		if [[ ${stages[${i},rebuild]} = true ]]; then
+			# Update treeish property
+			stages[${i},treeish]=${stages[${i},treeish]:-${treeish}}
+
+			# Prepare remote builds newest timestamp and url from backend.
+			if [[ ${stages[${i},kind]} = remote ]]; then
+				echo -e "${color_turquoise}Getting seed info: ${color_yellow_bold}${stages[${i},arch_family]}/${stages[${i},stage]}"
+				local metadata_content=$(wget -q -O - ${stages[${i},url]} --no-http-keep-alive --no-cache --no-cookies)
+				local stage_regex=${stages[${i},stage]}"-[0-9]{8}T[0-9]{6}Z"
+				local latest_seed=$(echo "${metadata_content}" | grep -E ${stage_regex} | head -n 1 | cut -d ' ' -f 1)
+				local arch_url=$(echo ${seeds_url} | sed "s/@ARCH_FAMILY@/${stages[${i},arch_family]}/")
+				# Replace URL from metadata url to stage download url
+				stages[${i},url]=${arch_url}/${latest_seed}
+				# Extract remote available timestamp and store it in stage timestamp_generated
+				stages[${i},timestamp_generated]=$(echo ${latest_seed} | sed -n -r "s|.*${stage}-([0-9]{8}T[0-9]{6}Z).*|\1|p")
+			fi
 		fi
 
-		# Prepare remote builds newest timestamp from backend
-		if [[ ${stages[${i},kind]} = remote ]]; then
-			echo -e "${color_turquoise}Getting seed info: ${color_yellow_bold}${stages[${i},arch_family]}/${stages[${i},stage]}"
-			local metadata_content=$(wget -q -O - ${stages[${i},url]} --no-http-keep-alive --no-cache --no-cookies)
-			local stage_regex=${stages[${i},stage]}"-[0-9]{8}T[0-9]{6}Z"
-			local latest_seed=$(echo "${metadata_content}" | grep -E ${stage_regex} | head -n 1 | cut -d ' ' -f 1)
-			local arch_url=$(echo ${seeds_url} | sed "s/@ARCH_FAMILY@/${stages[${i},arch_family]}/")
-			# Replace URL from metadata url to stage download url
-			stages[${i},url]=${arch_url}/${latest_seed}
-			# Extract remote available timestamp and store it in stage timestamp_generated
-			stages[${i},timestamp_generated]=$(echo ${latest_seed} | sed -n -r "s|.*${stage}-([0-9]{8}T[0-9]{6}Z).*|\1|p")
+		# Fill timestamps in stages.
+		local stage_timestamp=${stages[${i},timestamp_generated]:-${stages[${i},timestamp_available]}}
+		if [[ -n ${stage_timestamp} ]]; then
+			# Update stage_timestamp in product and version_stamp of this target
+			stages[${i},product]=$(echo ${stages[${i},product]} | sed "s|@TIMESTAMP@|${stage_timestamp}|")
+			stages[${i},version_stamp]=$(echo ${stages[${i},version_stamp]} | sed "s|@TIMESTAMP@|${stage_timestamp}|")
+			# Update childrent source_subpath timestamp
+			for child in ${stages[${i},children]}; do
+				stages[${child},source_subpath]=$(echo ${stages[${child},source_subpath]} | sed "s|@TIMESTAMP@|${stage_timestamp}|")
+			done
 		fi
 
 
-		# Update treeish property
-		stages[${i},treeish]=${stages[${i},treeish]:-${treeish}}
 
 
-
-
+			
 		continue
 
 		# Update timestamps in stages for: product, source_subpath, version_stamp
@@ -867,10 +877,10 @@ draw_stages_tree() {
 			local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
 			stage_name=${color_gray}${display_name}${color_nc}
 			# If stage is not being rebuild and it has direct children that are being rebuild, display used available_build.
-			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},available_build]} ]]; then
+			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},timestamp_available]} ]]; then
 				for c in ${stages[${child},children]}; do
 					if [[ ${stages[${c},rebuild]} = true ]]; then
-						display_name="${display_name} (${stages[${child},available_build]})"
+						display_name="${display_name} (${stages[${child},timestamp_available]})"
 						stage_name=${color_gray}${display_name}${color_nc}
 						break
 					fi
@@ -885,10 +895,10 @@ draw_stages_tree() {
 		elif [[ ${stages[${child},kind]} = remote ]]; then
 			local display_name=${stages[${child},arch_family]}/${stages[${child},stage]}
 			# If stage is not being rebuild and it has direct children that are being rebuild, display used available_build.
-			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},available_build]} ]]; then
+			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},timestamp_available]} ]]; then
 				for c in ${stages[${child},children]}; do
 					if [[ ${stages[${c},rebuild]} = true ]]; then
-						display_name="${display_name} (${stages[${child},available_build]})"
+						display_name="${display_name} (${stages[${child},timestamp_available]})"
 						break
 					fi
 				done
