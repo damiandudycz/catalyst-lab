@@ -1,1 +1,0 @@
-/tmp/catalyst-lab/20241020T213616Z/spec_files/8.ps3-23.0-default-stage4-desktop-mate-openrc.spec

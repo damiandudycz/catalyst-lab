@@ -1,1 +1,0 @@
-/tmp/catalyst-lab/20241020T213616Z/spec_files/14.rpi5-23.0-default-stage1-base-openrc.spec
