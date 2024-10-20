@@ -71,6 +71,8 @@ load_stages() {
 					local stage_common_flags=$(read_spec_variable ${stage_spec_path} common_flags)
 					local stage_cpu_flags=$(read_spec_variable ${stage_spec_path} cpu_flags)
 					local stage_compression_mode=$(read_spec_variable ${stage_spec_path} compression_mode)
+					local stage_treeish=$(read_spec_variable ${stage_spec_path} treeish)
+					local stage_rel_type=$(read_spec_variable ${stage_spec_path} rel_type)
 
 					# Determine final values from best possible place or calculate:
 					local _kind=local
@@ -85,14 +87,15 @@ load_stages() {
 					local _subarch=${stage_subarch:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
 					local _releng_base=${stage_releng_base:-${RELENG_BASES[${_target}]}} # Can be skipped in spec, will be determined automatically from target
 					local _source_subpath=${stage_source_subpath}
+					local _treeish=${stage_treeish} # Can be skipped in spec, will use newest seed available
 					local _repos=${stage_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
 					local _chost=${stage_chost:-${release_chost:-${platform_chost}}} # Can be definied in platform, release or stage (spec)
 					local _cpu_flags=${stage_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
 					local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags}}} # Can be definied in platform, release or stage (spec)
 					local _compression_mode=${stage_compression_mode:-${release_compression_mode:-${platform_compression_mode:-pixz}}} # Can be definied in platform, release or stage (spec)
-					local _version_stamp=${stage_version_stamp:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1/; t; s/.*//' || echo '')}; _version_stamp=${_version_stamp:+${_version_stamp}-}@TIMESTAMP@ # Can be skipped in spec, will be determined automatically from stage name
+					local _version_stamp=${stage_version_stamp:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
 					local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
-					local _product=${_platform}/${_release}/${_target}-${_subarch}-${_version_stamp}
+					local _product=${stage_rel_type:-${_platform}/${_release}}/${_target}-${_subarch}-$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_version_stamp})
 					local _available_build=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E ${_available_build} | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
 					local _is_selected=$(is_stage_selected ${_platform} ${_release} ${_stage})
 
@@ -778,7 +781,6 @@ update_parent_indexes() {
                 fi
 		stages[${i},parent]='' # Reset previously set parent index if any.
 		local j; for (( j=0; j<${stages_count}; j++ )); do
-# TODO: Take into consideration customized rel_type in parent spec
 			if [[ ${stages[${i},source_subpath]} == ${stages[${j},product]} ]]; then
 				# Save found parent index
 				stages[${i},parent]=${j}
@@ -969,6 +971,12 @@ declare RELEASE_KEYS=( # Variables allowed in release.conf
 declare STAGE_KEYS=( # Variables stored in stages[]
 	kind
 
+	arch_basearch
+	arch_baseraw
+	arch_subarch
+	arch_family
+	arch_interpreter
+
 	platform
 	release
 	stage
@@ -979,12 +987,6 @@ declare STAGE_KEYS=( # Variables stored in stages[]
 	source_subpath
 	parent
 	children
-
-	arch_basearch
-	arch_baseraw
-	arch_subarch
-	arch_family
-	arch_interpreter
 
 	chost
 	common_flags
