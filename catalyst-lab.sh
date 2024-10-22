@@ -39,7 +39,6 @@ load_stages() {
 		for release in ${RL_VAL_RELEASES[@]}; do
 			local release_path=${platform_path}/${release}
 
-			local release_keys=(repos common_flags chost cpu_flags compression_mode)
 			for key in ${RELEASE_KEYS[@]}; do unset ${key}; done
 			source ${release_path}/release.conf
 			for key in ${RELEASE_KEYS[@]}; do eval release_${key}=\${${key}}; done
@@ -151,9 +150,10 @@ load_stages() {
 			stages[${stages_count},kind]=remote
 			stages[${stages_count},product]=${seed_subpath}
 			stages[${stages_count},platform]=${stages[${i},arch_family]} # Use arch family as platform for virtual remote jobs
-			stages[${stages_count},selected]=$([[ ${#selected_stages_templates[@]} -eq 0 ]] && echo true || echo false) # TODO: Allow to select somehow specific remote virtual builds too.
+			stages[${stages_count},release]=gentoo # Use constant name gentoo for virtual remote stages
 			stages[${stages_count},stage]=$(echo ${stages[${stages_count},product]} | awk -F '/' '{print $NF}' | sed 's/-@TIMESTAMP@//') # In virtual remotes, stage is determined this way
 			stages[${stages_count},target]=$(echo ${stages[${stages_count},stage]} | sed -E 's/(.*stage[0-9]+)-.*/\1/')
+			stages[${stages_count},selected]=$([[ ${#selected_stages_templates[@]} -eq 0 ]] && echo true || echo false) # TODO: Allow to select somehow specific remote virtual builds too.
 			# Find available build
 			local _available_build=$(echo ${seed_subpath} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
 			local _available_build_timestamp=$( [[ -n ${_available_build} ]] && start_pos=$(expr index "${seed_subpath}" "@TIMESTAMP@") && echo "${_available_build:$((start_pos - 1)):16}" )
@@ -183,7 +183,7 @@ load_stages() {
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		insert_stage_with_inheritance ${i}
 	done
-	# Sort stages by inheritance order in temp array..
+	# Store stages by inheritance order in temp array.
 	declare -A stages_temp
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		local index=${stages_order[${i}]}
@@ -260,7 +260,7 @@ prepare_portage_snapshot() {
 	fi
 	if [[ -z ${treeish} ]] || [[ ${FETCH_FRESH_SNAPSHOT} = true ]]; then
 		echo_color ${color_turquoise_bold} "[ Refreshing portage snapshot ]"
-		catalyst -s stable
+		catalyst -s stable > /dev/null
 		treeish=$(find ${catalyst_path}/snapshots -type f -name "*.sqfs" -exec ls -t {} + | head -n 1 | xargs -n 1 basename -s .sqfs | cut -d '-' -f 2)
 		echo "" # New line
 	fi
@@ -272,11 +272,11 @@ prepare_releng() {
 	# If it exists and FETCH_FRESH_RELENG is set, pull changes.
 	if [[ ! -d ${releng_path} ]]; then
 		echo_color ${color_turquoise_bold} "[ Downloading releng ]"
-		git clone https://github.com/gentoo/releng.git ${releng_path} || exit 1
+		git clone https://github.com/gentoo/releng.git ${releng_path} > /dev/null || exit 1
 		echo ""
 	elif [[ ${FETCH_FRESH_RELENG} = true ]]; then
 		echo_color ${color_turquoise_bold} "[ Updating releng ]"
-		git -C ${releng_path} pull || exit 1
+		git -C ${releng_path} pull > /dev/null || exit 1
 		echo ""
 	fi
 }
@@ -284,6 +284,7 @@ prepare_releng() {
 # Setup additional information for stages:
 # Final download URL's.
 # Real seed names, with timestamp replaced.
+# Refresh remote repos.
 prepare_stages() {
 	echo_color ${color_turquoise_bold} "[ Preparing stages ]"
 
@@ -295,7 +296,7 @@ prepare_stages() {
 
 			# Prepare remote builds newest timestamp and url from backend.
 			if [[ ${stages[${i},kind]} = remote ]]; then
-				echo -e "${color_turquoise}Getting seed info: ${color_yellow_bold}${stages[${i},arch_family]}/${stages[${i},stage]}"
+				echo -e "${color_turquoise}Getting seed info: ${color_yellow_bold}${stages[${i},arch_family]}/${stages[${i},stage]}${color_nc}"
 				local metadata_content=$(wget -q -O - ${stages[${i},url]} --no-http-keep-alive --no-cache --no-cookies)
 				local stage_regex=${stages[${i},stage]}"-[0-9]{8}T[0-9]{6}Z"
 				local latest_seed=$(echo "${metadata_content}" | grep -E ${stage_regex} | head -n 1 | cut -d ' ' -f 1)
@@ -317,6 +318,42 @@ prepare_stages() {
 			for child in ${stages[${i},children]}; do
 				stages[${child},source_subpath]=$(echo ${stages[${child},source_subpath]} | sed "s|@TIMESTAMP@|${stage_timestamp}|")
 			done
+		fi
+	done
+
+	# Process remote overlay repos.
+	local handled_repos=()
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		if [[ -n ${stages[${i},overlays]} ]]; then
+			# Clone/pull used repositories
+			for repo in ${stages[${i},overlays]}; do
+				if contains_string handled_repos[@] ${repo}; then
+					continue
+				fi
+				handled_repos+=(${repo})
+
+				# Check if is remote repository
+				if [[ ${repo} == http://* || ${repo} == https://* ]]; then
+					local repo_local_path=$(repo_local_path ${repo})
+					if [[ ! -d ${repo_local_path} ]]; then
+						# If location doesn't exists yet - clone repository
+						echo -e "${color_turquoise}Clonning overlay repo: ${color_yellow}${repo}${color_nc}"
+						mkdir -p ${repo_local_path}
+						git clone ${repo} ${repo_local_path} > /dev/null
+					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
+						# If it exists - pull repository
+						echo -e "${color_turquoise}Pulling overlay repo: ${color_yellow}${repo}${color_nc}"
+						git -C ${repo_local_path} pull > /dev/null
+					fi
+				fi
+			done
+			# Map remote repositories to local names
+			local local_repo_urls=()
+			for repo in ${stages[${i},overlays]}; do
+				local_repo_urls+=$(repo_local_path ${repo})
+			done
+			local_repo_urls="${local_repo_urls[@]}" # Map to string
+			stages[${i},overlays]="${local_repo_urls}" # Save local paths in stage details.
 		fi
 	done
 
@@ -357,8 +394,9 @@ write_stages() {
 			local stage_root_overlay_path_work=${stage_path_work}/root_overlay
 			local stage_fsscript_path_work=${stage_path_work}/fsscript.sh
 			local stage_spec_path_work=${stage_path_work}/stage.spec
-			local spec_link_work=$(printf ${work_path}/spec_files/%03d.${stages[${i},platform]}-${stages[${i},release]}-${stages[${i},stage]}\n $((i + 1)))
+			local spec_link_work=$(printf ${work_path}/spec_files/%03d.${stages[${i},platform]}-${stages[${i},release]}-${stages[${i},stage]} $((i + 1)))
 			local target_mapping=${TARGET_MAPPINGS[${stages[${i},target]}]:-${stages[${i},target]}}
+			local stage_default_pkgcache_path=${pkgcache_base_path}/${stages[${i},platform]}/${stages[${i},release]}
 
 			# Copy stage template workfiles to work_path.
 			mkdir -p ${stage_path_work}
@@ -401,6 +439,7 @@ write_stages() {
 			set_spec_variable_if_missing ${stage_spec_path_work} version_stamp ${stages[${i},version_stamp]}
 			set_spec_variable_if_missing ${stage_spec_path_work} snapshot_treeish ${stages[${i},treeish]}
 			set_spec_variable_if_missing ${stage_spec_path_work} portage_confdir ${portage_path_work}
+			set_spec_variable_if_missing ${stage_spec_path_work} pkgcache_path ${stage_default_pkgcache_path}
 
 			update_spec_variable ${stage_spec_path_work} TIMESTAMP ${stages[${i},timestamp_generated]}
 			update_spec_variable ${stage_spec_path_work} PLATFORM ${stages[${i},platform]}
@@ -411,19 +450,32 @@ write_stages() {
 			update_spec_variable ${stage_spec_path_work} SUB_ARCH ${stages[${i},arch_subarch]}
 			update_spec_variable ${stage_spec_path_work} PKGCACHE_BASE_PATH ${pkgcache_base_path}
 
+			# releng portage_prefix.
 			if [[ -n ${stages[${i},releng_base]} ]]; then
 				set_spec_variable_if_missing ${stage_spec_path_work} portage_prefix releng
 				sed -i '/^releng_base:/d' ${stage_spec_path_work}
 			fi
 
-			# Special variables for only some stages.
+			[[ -n ${stages[$${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_spec_path_work} common_flags "${stages[${i},common_flags]}"
+			[[ ${stages[${i},arch_emulation]} = true ]] && set_spec_variable_if_missing ${stage_spec_path_work} interpreter "${stages[${i},arch_interpreter]}"
+			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_spec_path_work} ${target_mapping}/overlay ${stage_overlay_path_work}
+			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_spec_path_work} ${target_mapping}/root_overlay ${stage_root_overlay_path_work}
+			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_spec_path_work} ${target_mapping}/fsscript ${stage_fsscript_path_work}
+			[[ -n ${stages[${i},overlays]} ]] && set_spec_variable_if_missing ${stage_spec_path_work} repos "${stages[${i},overlays]}"
+
+			# Special variables for only some stages:
+
+			# Update seed.
 			if [[ ${stages[${i},target]} = stage1 ]]; then
 				set_spec_variable_if_missing ${stage_spec_path_work} update_seed yes
 				set_spec_variable_if_missing ${stage_spec_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg @system @world"
 			fi
+
+			# Binrepo path.
 			if [[ ${stages[${i},target]} = stage4 ]]; then
 				set_spec_variable_if_missing ${stage_spec_path_work} binrepo_path ${stages[${i},platform]}/${stages[${i},release]}
 			fi
+
 			# LiveCD - stage2 specific default values.
 			if [[ ${stages[${i},target]} = livecd-stage2 ]]; then
 				set_spec_variable_if_missing ${stage_spec_path_work} type gentoo-release-minimal
@@ -432,64 +484,24 @@ write_stages() {
 				set_spec_variable_if_missing ${stage_spec_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp]}.iso
 			fi
 
+			if [[ -n ${stages[${i},chost]} ]] && [[ ${stages[${i},target]} = stage1 ]]; then # Only allow setting chost in stage1 targets.
+				set_spec_variable_if_missing ${stage_spec_path_work} chost ${stages[${i},chost]}
+			fi
+
+			if contains_string COMPRESSABLE_TARGETS[@] ${stages[${i},target]}; then
+				set_spec_variable_if_missing ${stage_spec_path_work} compression_mode ${stages[${i},compression_mode]}
+			fi
+
 			# Add target prefix to things like use, rcadd, unmerge, etc.
 			for target_key in ${TARGET_KEYS[@]}; do
 				sed -i "s|^${target_key}:|${target_mapping}/${target_key}:|" ${stage_spec_path_work}
 			done
-
-
-
-
-
-			# ...
 
 			# Create links to spec files and optionally to catalyst_conf if using custom.
 			ln -s ${stage_spec_path_work} ${spec_link_work}.spec
 			[[ -f ${catalyst_conf_work} ]] && ln -s ${catalyst_conf_work} ${spec_link_work}.catalyst.conf
 
 		fi
-
-
-continue
-
-		# Setup spec entries.
-		local stage_default_pkgcache_path=${pkgcache_base_path}/${platform}/${release}
-
-		set_spec_variable_if_missing ${stage_spec_work_path} pkgcache_path ${stage_default_pkgcache_path}
-		if [[ -d ${stage_overlay_path} ]]; then
-			set_spec_variable_if_missing ${stage_spec_work_path} ${target_mapping}/overlay ${stage_overlay_path}
-		fi
-		if [[ -d ${stage_root_overlay_path} ]]; then
-			set_spec_variable_if_missing ${stage_spec_work_path} ${target_mapping}/root_overlay ${stage_root_overlay_path}
-		fi
-		if [[ -f ${stage_fsscript_path} ]]; then
-			set_spec_variable_if_missing ${stage_spec_work_path} ${target_mapping}/fsscript ${stage_fsscript_path}
-		fi
-		if [[ -n ${interpreter} ]]; then
-			set_spec_variable_if_missing ${stage_spec_work_path} interpreter "${interpreter}"
-		fi
-		if [[ -n ${common_flags} ]]; then
-			set_spec_variable_if_missing ${stage_spec_work_path} common_flags "${common_flags}"
-		fi
-		if [[ -n ${chost} ]] && [[ ${target} = stage1 ]]; then # Only allow setting chost in stage1 targets.
-			set_spec_variable_if_missing ${stage_spec_work_path} chost ${chost}
-		fi
-		if contains_string COMPRESSABLE_TARGETS[@] ${target}; then
-			set_spec_variable_if_missing ${stage_spec_work_path} compression_mode ${compression_mode:-pixz} # If not specified in platform/release, use pixz as default value
-		fi
-		if [[ -n ${overlays} ]]; then
-			# Convert remote repos to local pathes, and use , to separate repos
-			local repos_list
-			IFS=',' read -ra repos_list <<< ${overlays}
-			local repos_local_paths=()
-			for repo in ${repos_list[@]}; do
-				local local_path_for_remote=$(echo ${repo} | awk -F'|' '{if (NF>1) print $2; else print ""}')
-				repos_local_paths+=(${local_path_for_remote:-${repo}})
-			done
-			repos_local_paths=$(echo ${repos_local_paths[@]} | sed 's/ /,/')
-			set_spec_variable_if_missing ${stage_spec_work_path} repos ${repos_local_paths}
-		fi
-
 	done
 
 	echo_color ${color_green} "Stage templates saved in: ${work_path}"
@@ -828,9 +840,9 @@ draw_stages_tree() {
 		fi
 		if [[ ${i} == ${#child_array[@]} ]]; then
 			new_prefix="${prefix}    "
-			echo -e "${prefix}└── ${stage_name}"
+			echo -e "${prefix}└── ${stage_name}${color_nc}"
 		else
-			echo -e "${prefix}├── ${stage_name}"
+			echo -e "${prefix}├── ${stage_name}${color_nc}"
 		fi
 		draw_stages_tree ${child} "${new_prefix}"
 	done
@@ -899,6 +911,18 @@ is_taking_part_in_rebuild() {
 		done
 	fi
 	echo false
+}
+
+# Converts remote repositories into local path to download them to.
+# For local repositories it's just returning the same path.
+repo_local_path() {
+	local repository=${1}
+	if [[ ${repository} == http://* || ${repository} == https://* ]]; then
+		local local_name=$(echo ${repository} | sed 's|http[s]*://||' | sed -e 's/[^A-Za-z0-9._-]/_/g')
+		echo ${tmp_path}/overlays/${local_name}
+	else
+		echo ${repository}
+	fi
 }
 
 # ------------------------------------------------------------------------------
