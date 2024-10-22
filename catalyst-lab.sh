@@ -363,7 +363,7 @@ fetch_repos() {
 				# Check if is remote repository
 				if [[ ${stages[${i},binrepo_kind]} == git ]]; then
 					local repo_local_path=$(binrepo_local_path ${stages[${i},binrepo]})
-					if [[ ! -f ${stages[${i},binrepo_local_path]}/.git ]]; then
+					if [[ ! -d ${stages[${i},binrepo_local_path]}/.git ]]; then
 						# If location doesn't exists yet - clone repository
 						echo -e "${color_turquoise}Clonning binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
 						mkdir -p ${repo_local_path}
@@ -637,7 +637,7 @@ upload_binrepos() {
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		[[ ${stages[${i},binrepo_kind]} = git ]] || continue
 		[[ ${stages[${i},selected]} = true ]] || ( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) || continue # Only upload selected repos or rebild if building now
-		[[ -f ${stages[${i},binrepo_local_path]}/.git ]] || continue # Skip if this repo doesnt yet exists
+		[[ -d ${stages[${i},binrepo_local_path]}/.git ]] || continue # Skip if this repo doesnt yet exists
 		contains_string handled_repos[@] ${stages[${i},binrepo]} && continue
 		handled_repos+=(${stages[${i},binrepo]})
 		echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
