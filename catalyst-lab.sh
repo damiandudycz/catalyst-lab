@@ -906,7 +906,7 @@ repo_local_path() {
 	local repository=${1}
 	if [[ ${repository} == http://* || ${repository} == https://* ]]; then
 		local local_name=$(echo ${repository} | sed 's|http[s]*://||' | sed -e 's/[^A-Za-z0-9._-]/_/g')
-		echo ${tmp_path}/overlays/${local_name}
+		echo ${overlays_cache_path}/${local_name}
 	else
 		echo ${repository}
 	fi
@@ -1065,6 +1065,7 @@ releng_path=/opt/releng
 catalyst_path=/var/tmp/catalyst
 catalyst_usr_path=/usr/share/catalyst
 binpkgs_cache_path=/var/cache/catalyst-lab/binpkgs
+overlays_cache_path=/var/cache/catalyst-lab/overlays
 tmp_path=/tmp/catalyst-lab
 jobs=$(nproc)
 load_average=$(nproc).0
