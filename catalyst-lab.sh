@@ -257,6 +257,35 @@ load_stages() {
 		stages[${i},timestamp_generated]=${timestamp}
 	done
 
+	# Determinel overlays local paths.
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		if [[ -n ${stages[${i},overlays]} ]]; then
+			# Map remote repositories to local names
+			local local_repo_urls=()
+			for repo in ${stages[${i},overlays]}; do
+				local_repo_urls+=$(repo_local_path ${repo})
+			done
+			local_repo_urls="${local_repo_urls[@]}" # Map to string
+			stages[${i},overlays_local_paths]="${local_repo_urls}" # Save local paths in stage details.
+		fi
+	done
+
+
+	# Determine binrepos local paths and types.
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		if [[ -n ${stages[${i},binrepo]} ]]; then
+			if [[ ${stages[${i},binrepo]} == http://* || ${stages[${i},binrepo]} == https://* || ${stages[${i},binrepo]} == git@* ]]; then
+				stages[${i},binrepo_kind]=git
+			else
+				stages[${i},binrepo_kind]=local
+			fi
+			# Map remote repositories to local names
+			stages[${i},binrepo_local_path]=$(binrepo_local_path ${stages[${i},binrepo]})
+		else
+			stages[${i},binrepo_local_path]=${stages[${i},binrepo]}
+		fi
+	done
+
 	# List stages to build
 	echo_color ${color_turquoise_bold} "[ Stages taking part in this process ]"
 	draw_stages_tree
@@ -340,7 +369,6 @@ prepare_stages() {
 			for repo in ${stages[${i},overlays]}; do
 				contains_string handled_repos[@] ${repo} && continue
 				handled_repos+=(${repo})
-
 				# Check if is remote repository
 				if [[ ${repo} == http://* || ${repo} == https://* ]]; then
 					local repo_local_path=$(repo_local_path ${repo})
@@ -356,13 +384,6 @@ prepare_stages() {
 					fi
 				fi
 			done
-			# Map remote repositories to local names
-			local local_repo_urls=()
-			for repo in ${stages[${i},overlays]}; do
-				local_repo_urls+=$(repo_local_path ${repo})
-			done
-			local_repo_urls="${local_repo_urls[@]}" # Map to string
-			stages[${i},overlays]="${local_repo_urls}" # Save local paths in stage details.
 		fi
 	done
 	unset handled_repos
@@ -375,23 +396,20 @@ prepare_stages() {
 			if ! contains_string handled_repos[@] ${stages[${i},binrepo]}; then
 				handled_repos+=(${stages[${i},binrepo]})
 				# Check if is remote repository
-				if [[ ${stages[${i},binrepo]} == http://* || ${stages[${i},binrepo]} == https://* || ${stages[${i},binrepo]} == git@* ]]; then
+				if [[ ${stages[${i},binrepo_kind]} == git ]]; then
 					local repo_local_path=$(binrepo_local_path ${stages[${i},binrepo]})
-					if [[ ! -d ${repo_local_path} ]]; then
+					if [[ ! -d ${stages[${i},binrepo_local_path]} ]]; then
 						# If location doesn't exists yet - clone repository
 						echo -e "${color_turquoise}Clonning binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
 						mkdir -p ${repo_local_path}
-						git clone ${stages[${i},binrepo]} ${repo_local_path}
+						git clone ${stages[${i},binrepo]} ${stages[${i},binrepo_local_path]}
 					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
 						# If it exists - pull repository
 						echo -e "${color_turquoise}Pulling binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
-						git -C ${repo_local_path} pull
+						git -C ${stages[${i},binrepo_local_path]} pull
 					fi
 				fi
 			fi
-
-			# Map remote repositories to local names
-			stages[${i},binrepo]=$(binrepo_local_path ${stages[${i},binrepo]})
 		fi
 	done
 
@@ -437,7 +455,7 @@ write_stages() {
 			local stage_fsscript_path_work=${stage_path_work}/fsscript.sh
 			local stage_spec_path_work=${stage_path_work}/stage.spec
 			local target_mapping=${TARGET_MAPPINGS[${stages[${i},target]}]:-${stages[${i},target]}}
-			local stage_pkgcache_path=${stages[${i},binrepo]}/${stages[${i},binrepo_path]}
+			local stage_pkgcache_path=${stages[${i},binrepo_local_path]}/${stages[${i},binrepo_path]}
 
 			# Create new portage_work_path if doesn't exists.
 			mkdir -p ${portage_path_work}
@@ -498,7 +516,7 @@ write_stages() {
 			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_spec_path_work} ${target_mapping}/overlay ${stage_overlay_path_work}
 			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_spec_path_work} ${target_mapping}/root_overlay ${stage_root_overlay_path_work}
 			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_spec_path_work} ${target_mapping}/fsscript ${stage_fsscript_path_work}
-			[[ -n ${stages[${i},overlays]} ]] && set_spec_variable_if_missing ${stage_spec_path_work} repos "${stages[${i},overlays]}"
+			[[ -n ${stages[${i},overlays_local_paths]} ]] && set_spec_variable_if_missing ${stage_spec_path_work} repos "${stages[${i},overlays_local_paths]}"
 
 			# Special variables for only some stages:
 
@@ -955,8 +973,9 @@ declare STAGE_KEYS=( # Variables stored in stages[]
 
 	chost common_flags cpu_flags
 
-	treeish       overlays    binrepo       binrepo_path
-	catalyst_conf releng_base version_stamp compression_mode
+	treeish      overlays      overlays_local_paths binrepo     binrepo_local_path
+	binrepo_path binrepo_kind  catalyst_conf        releng_base version_stamp
+	compression_mode
 
 	selected rebuild takes_part
 
@@ -1052,6 +1071,7 @@ while [ $# -gt 0 ]; do case ${1} in
 	--update-snapshot) FETCH_FRESH_SNAPSHOT=true;;
 	--update-releng) FETCH_FRESH_RELENG=true;;
 	--update-repos) FETCH_FRESH_REPOS=true;;
+	--upload-binrepos) UPLOAD_BINREPOS=true;; # Try to upload changes in binrepo after build finishes.
 	--clean) CLEAN_BUILD=true;; # Perform clean build - don't use any existing sources even if available (Except for downloaded seeds).
 	--build) BUILD=true; PREPARE=true;; # Prepare is implicit when using --build.
 	--prepare) PREPARE=true;;
