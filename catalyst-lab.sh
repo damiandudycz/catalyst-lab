@@ -153,7 +153,8 @@ load_stages() {
 			stages[${stages_count},release]=gentoo # Use constant name gentoo for virtual remote stages
 			stages[${stages_count},stage]=$(echo ${stages[${stages_count},product]} | awk -F '/' '{print $NF}' | sed 's/-@TIMESTAMP@//') # In virtual remotes, stage is determined this way
 			stages[${stages_count},target]=$(echo ${stages[${stages_count},stage]} | sed -E 's/(.*stage[0-9]+)-.*/\1/')
-			stages[${stages_count},selected]=$([[ ${#selected_stages_templates[@]} -eq 0 ]] && echo true || echo false) # TODO: Allow to select somehow specific remote virtual builds too.
+			local _is_selected=$(is_stage_selected ${stages[${stages_count},platform]} ${stages[${stages_count},release]} ${stages[${stages_count},stage]})
+			stages[${stages_count},selected]=$(is_stage_selected ${stages[${stages_count},platform]} ${stages[${stages_count},release]} ${stages[${stages_count},stage]})
 			# Find available build
 			local _available_build=$(echo ${seed_subpath} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
 			local _available_build_timestamp=$( [[ -n ${_available_build} ]] && start_pos=$(expr index "${seed_subpath}" "@TIMESTAMP@") && echo "${_available_build:$((start_pos - 1)):16}" )
@@ -291,8 +292,8 @@ prepare_stages() {
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		# Prepare only stages that needs rebuild.
 		if [[ ${stages[${i},rebuild]} = true ]]; then
-			# Update treeish property
-			stages[${i},treeish]=${stages[${i},treeish]:-${treeish}}
+			# Update treeish property for local builds only.
+			[[ ${stages[${i},kind]} = local ]] && stages[${i},treeish]=${stages[${i},treeish]:-${treeish}}
 
 			# Prepare remote builds newest timestamp and url from backend.
 			if [[ ${stages[${i},kind]} = remote ]]; then
@@ -940,7 +941,7 @@ declare STAGE_KEYS=( # Variables stored in stages[]
 
 	url
 )
-declare TARGET_KEYS=(
+declare TARGET_KEYS=( # Values in spec files that can be specified as <TARGET>/<VALUE>. This array is used to add <TARGET>/ automatically to these values in templates.
 	use             packages unmerge      rcadd    rcdel
 	rm              empty    iso          volid    fstype
 	gk_mainargs     type     fsscript     groups   root_overlay
@@ -1069,5 +1070,6 @@ fi
 # TODO: Make possible setting different build sublocation (for building modified seeds) ?
 # TODO: Add checking for valid config entries in config files
 # TODO: Detect when profile changes in stage4 and if it does, automtically add rebuilds to fsscript file
-# TODO: Introduce stage types. Download (added automatially for downloding missing seeds), Build (standard build stage), Binhost (building additional packages)
 # TODO: Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote if can just specify word remote and automatically find like, it it can specify tarball name or even full URL.
+# TODO: Add support for binhost type jobs
+# TODO: Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
