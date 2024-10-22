@@ -250,12 +250,10 @@ load_stages() {
 		fi
 	done
 
-	# Determine timestamp_generated property - only for local for now.
-	# For remote this is filled after checking available remote build.
-	for ((i=$((stages_count - 1)); i>=0; i--)); do
-		( [[ ${stages[${i},rebuild]} = false ]] || [[ ${stages[${i},kind]} = remote ]] ) && continue
-		stages[${i},timestamp_generated]=${timestamp}
-	done
+	# List stages to build
+	echo_color ${color_turquoise_bold} "[ Stages taking part in this process ]"
+	draw_stages_tree
+	echo ""
 
 	# Determinel overlays local paths.
 	local i; for (( i=0; i<${stages_count}; i++ )); do
@@ -269,7 +267,6 @@ load_stages() {
 			stages[${i},overlays_local_paths]="${local_repo_urls}" # Save local paths in stage details.
 		fi
 	done
-
 
 	# Determine binrepos local paths and types.
 	local i; for (( i=0; i<${stages_count}; i++ )); do
@@ -286,10 +283,13 @@ load_stages() {
 		fi
 	done
 
-	# List stages to build
-	echo_color ${color_turquoise_bold} "[ Stages taking part in this process ]"
-	draw_stages_tree
-	echo ""
+	# Determine timestamp_generated property - only for local for now.
+	# For remote this is filled after checking available remote build.
+	for ((i=$((stages_count - 1)); i>=0; i--)); do
+		( [[ ${stages[${i},rebuild]} = false ]] || [[ ${stages[${i},kind]} = remote ]] ) && continue
+		stages[${i},timestamp_generated]=${timestamp}
+	done
+
 }
 
 
@@ -319,6 +319,65 @@ prepare_releng() {
 		git -C ${releng_path} pull || exit 1
 		echo ""
 	fi
+}
+
+fetch_repos() {
+	echo_color ${color_turquoise_bold} "[ Preparing remote repositories ]"
+
+	# Process remote overlay repos.
+	local handled_repos=()
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		if [[ -n ${stages[${i},overlays]} ]]; then
+			# Clone/pull used repositories
+			for repo in ${stages[${i},overlays]}; do
+				[[ ${stages[${i},rebuild]} = true ]] || continue # Only fetch for selected repos
+				contains_string handled_repos[@] ${repo} && continue
+				handled_repos+=(${repo})
+				# Check if is remote repository
+				if [[ ${repo} == http://* || ${repo} == https://* ]]; then
+					local repo_local_path=$(repo_local_path ${repo})
+					if [[ ! -d ${repo_local_path} ]]; then
+						# If location doesn't exists yet - clone repository
+						echo -e "${color_turquoise}Clonning overlay repo: ${color_yellow}${repo}${color_nc}"
+						mkdir -p ${repo_local_path}
+						git clone ${repo} ${repo_local_path}
+					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
+						# If it exists - pull repository
+						echo -e "${color_turquoise}Pulling overlay repo: ${color_yellow}${repo}${color_nc}"
+						git -C ${repo_local_path} pull
+					fi
+				fi
+			done
+		fi
+	done
+	unset handled_repos
+
+	# Process remote binrepos.
+	local handled_repos=()
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		if [[ -n ${stages[${i},binrepo]} ]]; then
+			[[ ${stages[${i},rebuild]} = true ]] || continue # Only fetch for building repos
+			# Clone/pull used repositories
+			if ! contains_string handled_repos[@] ${stages[${i},binrepo]}; then
+				handled_repos+=(${stages[${i},binrepo]})
+				# Check if is remote repository
+				if [[ ${stages[${i},binrepo_kind]} == git ]]; then
+					local repo_local_path=$(binrepo_local_path ${stages[${i},binrepo]})
+					if [[ ! -f ${stages[${i},binrepo_local_path]}/.git ]]; then
+						# If location doesn't exists yet - clone repository
+						echo -e "${color_turquoise}Clonning binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+						mkdir -p ${repo_local_path}
+						git clone ${stages[${i},binrepo]} ${stages[${i},binrepo_local_path]}
+					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
+						# If it exists - pull repository
+						echo -e "${color_turquoise}Pulling binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+						git -C ${stages[${i},binrepo_local_path]} pull
+					fi
+				fi
+			fi
+		fi
+	done
+	echo ""
 }
 
 # Setup additional information for stages:
@@ -358,58 +417,6 @@ prepare_stages() {
 			for child in ${stages[${i},children]}; do
 				stages[${child},source_subpath]=$(echo ${stages[${child},source_subpath]} | sed "s|@TIMESTAMP@|${stage_timestamp}|")
 			done
-		fi
-	done
-
-	# Process remote overlay repos.
-	local handled_repos=()
-	local i; for (( i=0; i<${stages_count}; i++ )); do
-		if [[ -n ${stages[${i},overlays]} ]]; then
-			# Clone/pull used repositories
-			for repo in ${stages[${i},overlays]}; do
-				contains_string handled_repos[@] ${repo} && continue
-				handled_repos+=(${repo})
-				# Check if is remote repository
-				if [[ ${repo} == http://* || ${repo} == https://* ]]; then
-					local repo_local_path=$(repo_local_path ${repo})
-					if [[ ! -d ${repo_local_path} ]]; then
-						# If location doesn't exists yet - clone repository
-						echo -e "${color_turquoise}Clonning overlay repo: ${color_yellow}${repo}${color_nc}"
-						mkdir -p ${repo_local_path}
-						git clone ${repo} ${repo_local_path}
-					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
-						# If it exists - pull repository
-						echo -e "${color_turquoise}Pulling overlay repo: ${color_yellow}${repo}${color_nc}"
-						git -C ${repo_local_path} pull
-					fi
-				fi
-			done
-		fi
-	done
-	unset handled_repos
-
-	# Process remote binrepos.
-	local handled_repos=()
-	local i; for (( i=0; i<${stages_count}; i++ )); do
-		if [[ -n ${stages[${i},binrepo]} ]]; then
-			# Clone/pull used repositories
-			if ! contains_string handled_repos[@] ${stages[${i},binrepo]}; then
-				handled_repos+=(${stages[${i},binrepo]})
-				# Check if is remote repository
-				if [[ ${stages[${i},binrepo_kind]} == git ]]; then
-					local repo_local_path=$(binrepo_local_path ${stages[${i},binrepo]})
-					if [[ ! -d ${stages[${i},binrepo_local_path]} ]]; then
-						# If location doesn't exists yet - clone repository
-						echo -e "${color_turquoise}Clonning binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
-						mkdir -p ${repo_local_path}
-						git clone ${stages[${i},binrepo]} ${stages[${i},binrepo_local_path]}
-					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
-						# If it exists - pull repository
-						echo -e "${color_turquoise}Pulling binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
-						git -C ${stages[${i},binrepo_local_path]} pull
-					fi
-				fi
-			fi
 		fi
 	done
 
@@ -621,6 +628,41 @@ build_stages() {
 		fi
 
 	done
+	echo ""
+}
+
+upload_binrepos() {
+	echo_color ${color_turquoise_bold} "[ Uploading binrepos ]"
+	local handled_repos=()
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		[[ ${stages[${i},binrepo_kind]} = git ]] || continue
+		[[ ${stages[${i},selected]} = true ]] || ( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) || continue # Only upload selected repos or rebild if building now
+		[[ -f ${stages[${i},binrepo_local_path]}/.git ]] || continue # Skip if this repo doesnt yet exists
+		contains_string handled_repos[@] ${stages[${i},binrepo]} && continue
+		handled_repos+=(${stages[${i},binrepo]})
+		echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+		# Check if there are changes to commit
+		local changes=false
+		if [[ -n $(git -C ${stages[${i},binrepo_local_path]} status --porcelain) ]]; then
+			git -C ${stages[${i},binrepo_local_path]} add -A
+			git -C ${stages[${i},binrepo_local_path]} commit -m "Automatic update: ${timestamp}"
+			changes=true
+		fi
+		# Check if there are some commits to push
+		if ! git -C "${stages[${i},binrepo_local_path]}" diff --exit-code origin/$(git -C "${stages[${i},binrepo_local_path]}" rev-parse --abbrev-ref HEAD) --quiet; then
+			# Check for write access.
+			if repo_url=$(git -C ${stages[${i},binrepo_local_path]} config --get remote.origin.url) && [[ ! "$repo_url" =~ ^https:// ]] && git -C ${stages[${i},binrepo_local_path]} ls-remote &>/dev/null && git -C ${stages[${i},binrepo_local_path]} push --dry-run &>/dev/null; then
+				git -C ${stages[${i},binrepo_local_path]} push
+			else
+				echo -e "${color_yellow}Warning! No write access to binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+			fi
+			changes=true
+		fi
+		if [[ ${changes} = false ]]; then
+			echo "No local changes detected"
+		fi
+	done
+	echo ""
 }
 
 # ------------------------------------------------------------------------------
@@ -890,15 +932,13 @@ is_stage_selected() {
 
 print_debug_stack() {
 	# Debug mode
-	if [[ ${DEBUG} = true ]]; then
-		for ((i=0; i<${stages_count}; i++)); do
-			echo "Stage details at index ${i}:"
-			for key in ${STAGE_KEYS[@]}; do
-				printf "%-22s%s\n" "${key}:" "${stages[$i,$key]}"
-			done
-			echo "--------------------------------------------------------------------------------"
+	for ((i=0; i<${stages_count}; i++)); do
+		echo "Stage details at index ${i}:"
+		for key in ${STAGE_KEYS[@]}; do
+			printf "%-22s%s\n" "${key}:" "${stages[$i,$key]}"
 		done
-	fi
+		echo "--------------------------------------------------------------------------------"
+	done
 }
 
 # Either is rebuild itself or is a part of rebuild process of it's children.
@@ -973,8 +1013,8 @@ declare STAGE_KEYS=( # Variables stored in stages[]
 
 	chost common_flags cpu_flags
 
-	treeish      overlays      overlays_local_paths binrepo     binrepo_local_path
-	binrepo_path binrepo_kind  catalyst_conf        releng_base version_stamp
+	treeish          overlays     overlays_local_paths binrepo     binrepo_local_path
+	binrepo_path     binrepo_kind catalyst_conf        releng_base version_stamp
 	compression_mode
 
 	selected rebuild takes_part
@@ -1085,17 +1125,34 @@ esac; shift; done
 # Main program:
 
 load_stages
-prepare_portage_snapshot
-prepare_releng
+if [[ ${PREPARE} = true ]]; then
+	prepare_portage_snapshot
+	prepare_releng
+fi
+if [[ ${FETCH_FRESH_REPOS} = true ]] || [[ ${PREPARE} = true ]]; then
+	fetch_repos
+fi
+if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${PREPARE} = true ]]; then
+	upload_binrepos
+fi
 if [[ ${PREPARE} = true ]]; then
 	prepare_stages
 	write_stages
 fi
-print_debug_stack
+if [[ ${DEBUG} = true ]]; then
+	print_debug_stack
+fi
 if [[ ${BUILD} = true ]]; then
 	build_stages
+	if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ${PREPARE} = true ]]; then
+		upload_binrepos
+	fi
 else
+	if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ${PREPARE} = true ]]; then
+		upload_binrepos
+	fi
 	echo "To build selected stages use --build flag."
+	echo ""
 fi
 
 # TODO: Add lock file preventing multiple runs at once, but only if the same builds are involved (maybe).
