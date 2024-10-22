@@ -71,6 +71,8 @@ load_stages() {
 					local stage_cpu_flags=$(read_spec_variable ${stage_spec_path} cpu_flags)
 					local stage_compression_mode=$(read_spec_variable ${stage_spec_path} compression_mode)
 					local stage_treeish=$(read_spec_variable ${stage_spec_path} treeish)
+					local stage_binrepo=$(read_spec_variable ${stage_spec_path} binrepo)
+					local stage_binrepo_path=$(read_spec_variable ${stage_spec_path} binrepo_path)
 					local stage_rel_type=$(read_spec_variable ${stage_spec_path} rel_type)
 
 					# Determine final values from best possible place or calculate:
@@ -89,6 +91,11 @@ load_stages() {
 					local _source_subpath=${stage_source_subpath}
 					local _treeish=${stage_treeish} # Can be skipped in spec, will use newest seed available
 					local _repos=${stage_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
+					local _rel_type=${stage_rel_type:-${platform}/${release}}
+
+					local _binrepo=${stage_binrepo:-${release_binrepo:-${platform_binrepo:-${binpkgs_cache_path}/local}}}
+					local _binrepo_path=${stage_binrepo_path:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
+
 					local _chost=${stage_chost:-${release_chost:-${platform_chost}}} # Can be definied in platform, release or stage (spec)
 					local _cpu_flags=${stage_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
 					local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags}}} # Can be definied in platform, release or stage (spec)
@@ -111,6 +118,9 @@ load_stages() {
 					stages[${stages_count},source_subpath]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_source_subpath})
 					stages[${stages_count},product]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_product})
 					stages[${stages_count},overlays]=${_repos}
+					stages[${stages_count},binrepo]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_binrepo})
+					stages[${stages_count},binrepo_path]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_binrepo_path})
+					stages[${stages_count},rel_type]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_rel_type})
 					stages[${stages_count},releng_base]=${_releng_base}
 					stages[${stages_count},arch_basearch]=${_basearch}
 					stages[${stages_count},arch_baseraw]=${_baseraw}
@@ -328,9 +338,7 @@ prepare_stages() {
 		if [[ -n ${stages[${i},overlays]} ]]; then
 			# Clone/pull used repositories
 			for repo in ${stages[${i},overlays]}; do
-				if contains_string handled_repos[@] ${repo}; then
-					continue
-				fi
+				contains_string handled_repos[@] ${repo} && continue
 				handled_repos+=(${repo})
 
 				# Check if is remote repository
@@ -355,6 +363,35 @@ prepare_stages() {
 			done
 			local_repo_urls="${local_repo_urls[@]}" # Map to string
 			stages[${i},overlays]="${local_repo_urls}" # Save local paths in stage details.
+		fi
+	done
+	unset handled_repos
+
+	# Process remote binrepos.
+	local handled_repos=()
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		if [[ -n ${stages[${i},binrepo]} ]]; then
+			# Clone/pull used repositories
+			if ! contains_string handled_repos[@] ${stages[${i},binrepo]}; then
+				handled_repos+=(${stages[${i},binrepo]})
+				# Check if is remote repository
+				if [[ ${stages[${i},binrepo]} == http://* || ${stages[${i},binrepo]} == https://* || ${stages[${i},binrepo]} == git@* ]]; then
+					local repo_local_path=$(binrepo_local_path ${stages[${i},binrepo]})
+					if [[ ! -d ${repo_local_path} ]]; then
+						# If location doesn't exists yet - clone repository
+						echo -e "${color_turquoise}Clonning binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+						mkdir -p ${repo_local_path}
+						git clone ${stages[${i},binrepo]} ${repo_local_path}
+					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
+						# If it exists - pull repository
+						echo -e "${color_turquoise}Pulling binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+						git -C ${repo_local_path} pull
+					fi
+				fi
+			fi
+
+			# Map remote repositories to local names
+			stages[${i},binrepo]=$(binrepo_local_path ${stages[${i},binrepo]})
 		fi
 	done
 
@@ -400,7 +437,7 @@ write_stages() {
 			local stage_fsscript_path_work=${stage_path_work}/fsscript.sh
 			local stage_spec_path_work=${stage_path_work}/stage.spec
 			local target_mapping=${TARGET_MAPPINGS[${stages[${i},target]}]:-${stages[${i},target]}}
-			local stage_default_pkgcache_path=${pkgcache_base_path}/${stages[${i},platform]}/${stages[${i},release]}
+			local stage_pkgcache_path=${stages[${i},binrepo]}/${stages[${i},binrepo_path]}
 
 			# Create new portage_work_path if doesn't exists.
 			mkdir -p ${portage_path_work}
@@ -434,16 +471,16 @@ write_stages() {
 			set_spec_variable ${stage_spec_path_work} source_subpath ${stages[${i},source_subpath]} # source_subpath shoud always be replaced with calculated value, to take into consideration existing old builds usage.
 
 			set_spec_variable_if_missing ${stage_spec_path_work} target ${stages[${i},target]}
-			set_spec_variable_if_missing ${stage_spec_path_work} rel_type ${stages[${i},platform]}/${stages[${i},release]}
+			set_spec_variable_if_missing ${stage_spec_path_work} rel_type ${stages[${i},rel_type]}
 			set_spec_variable_if_missing ${stage_spec_path_work} subarch ${stages[${i},arch_subarch]}
 			set_spec_variable_if_missing ${stage_spec_path_work} version_stamp ${stages[${i},version_stamp]}
 			set_spec_variable_if_missing ${stage_spec_path_work} snapshot_treeish ${stages[${i},treeish]}
 			set_spec_variable_if_missing ${stage_spec_path_work} portage_confdir ${portage_path_work}
-			set_spec_variable_if_missing ${stage_spec_path_work} pkgcache_path ${stage_default_pkgcache_path}
+			set_spec_variable_if_missing ${stage_spec_path_work} pkgcache_path ${stage_pkgcache_path}
 
 			update_spec_variable ${stage_spec_path_work} TIMESTAMP ${stages[${i},timestamp_generated]}
 			update_spec_variable ${stage_spec_path_work} PLATFORM ${stages[${i},platform]}
-			update_spec_variable ${stage_spec_path_work} REL_TYPE ${stages[${i},release]}
+			update_spec_variable ${stage_spec_path_work} RELEASE ${stages[${i},release]}
 			update_spec_variable ${stage_spec_path_work} TREEISH ${stages[${i},treeish]}
 			update_spec_variable ${stage_spec_path_work} FAMILY_ARCH ${stages[${i},arch_family]}
 			update_spec_variable ${stage_spec_path_work} BASE_ARCH ${stages[${i},arch_basearch]}
@@ -473,7 +510,7 @@ write_stages() {
 
 			# Binrepo path.
 			if [[ ${stages[${i},target]} = stage4 ]]; then
-				set_spec_variable_if_missing ${stage_spec_path_work} binrepo_path ${stages[${i},platform]}/${stages[${i},release]}
+				set_spec_variable_if_missing ${stage_spec_path_work} binrepo_path ${stages[${i},binrepo_path]}
 			fi
 
 			# LiveCD - stage2 specific default values.
@@ -661,7 +698,7 @@ sanitize_spec_variable() {
 	local base_arch="$5"
 	local sub_arch="$6"
 	local value="$7"
-	echo "${value}" | sed "s/@REL_TYPE@/${release}/g" | sed "s/@PLATFORM@/${platform}/g" | sed "s/@STAGE@/${stage}/g" | sed "s/@BASE_ARCH@/${base_arch}/g" | sed "s/@SUB_ARCH@/${sub_arch}/g" | sed "s/@FAMILY_ARCH@/${family}/g"
+	echo "${value}" | sed "s/@RELEASE@/${release}/g" | sed "s/@PLATFORM@/${platform}/g" | sed "s/@STAGE@/${stage}/g" | sed "s/@BASE_ARCH@/${base_arch}/g" | sed "s/@SUB_ARCH@/${sub_arch}/g" | sed "s/@FAMILY_ARCH@/${family}/g"
 }
 
 # Scans local and binhost targets and updates their parent property in stages array.
@@ -875,6 +912,16 @@ repo_local_path() {
 	fi
 }
 
+binrepo_local_path() {
+	local repository=${1}
+	if [[ ${repository} == http://* || ${repository} == https://* || ${repository} == git@* ]]; then
+		local local_name=$(echo ${repository} | sed 's|http[s]*://||' | sed 's|git@||' | sed -e 's/[^A-Za-z0-9._-]/_/g')
+		echo ${binpkgs_cache_path}/remote/${local_name}
+	else
+		echo ${repository}
+	fi
+}
+
 # ------------------------------------------------------------------------------
 # START:
 
@@ -893,6 +940,8 @@ declare PLATFORM_KEYS=( # Variables allowed in platform.conf
 	chost
 	cpu_flags
 	compression_mode
+	binrepo
+	binrepo_path
 )
 declare RELEASE_KEYS=( # Variables allowed in release.conf
 	repos
@@ -900,6 +949,8 @@ declare RELEASE_KEYS=( # Variables allowed in release.conf
 	chost
 	cpu_flags
 	compression_mode
+	binrepo
+	binrepo_path
 )
 declare STAGE_KEYS=( # Variables stored in stages[]
 	kind
@@ -915,6 +966,7 @@ declare STAGE_KEYS=( # Variables stored in stages[]
 	release
 	stage
 
+	rel_type
 	target
 	source_subpath
 	product
@@ -930,6 +982,8 @@ declare STAGE_KEYS=( # Variables stored in stages[]
 
 	treeish
 	overlays
+	binrepo
+	binrepo_path
 	catalyst_conf
 	releng_base
 	version_stamp
@@ -1010,7 +1064,7 @@ templates_path=/etc/catalyst-lab/templates
 releng_path=/opt/releng
 catalyst_path=/var/tmp/catalyst
 catalyst_usr_path=/usr/share/catalyst
-pkgcache_base_path=/var/cache/catalyst-binpkgs
+binpkgs_cache_path=/var/cache/catalyst-lab/binpkgs
 tmp_path=/tmp/catalyst-lab
 jobs=$(nproc)
 load_average=$(nproc).0
