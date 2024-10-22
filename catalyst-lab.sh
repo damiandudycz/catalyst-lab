@@ -260,7 +260,7 @@ prepare_portage_snapshot() {
 	fi
 	if [[ -z ${treeish} ]] || [[ ${FETCH_FRESH_SNAPSHOT} = true ]]; then
 		echo_color ${color_turquoise_bold} "[ Refreshing portage snapshot ]"
-		catalyst -s stable > /dev/null
+		catalyst -s stable
 		treeish=$(find ${catalyst_path}/snapshots -type f -name "*.sqfs" -exec ls -t {} + | head -n 1 | xargs -n 1 basename -s .sqfs | cut -d '-' -f 2)
 		echo "" # New line
 	fi
@@ -272,11 +272,11 @@ prepare_releng() {
 	# If it exists and FETCH_FRESH_RELENG is set, pull changes.
 	if [[ ! -d ${releng_path} ]]; then
 		echo_color ${color_turquoise_bold} "[ Downloading releng ]"
-		git clone https://github.com/gentoo/releng.git ${releng_path} > /dev/null || exit 1
+		git clone https://github.com/gentoo/releng.git ${releng_path} || exit 1
 		echo ""
 	elif [[ ${FETCH_FRESH_RELENG} = true ]]; then
 		echo_color ${color_turquoise_bold} "[ Updating releng ]"
-		git -C ${releng_path} pull > /dev/null || exit 1
+		git -C ${releng_path} pull || exit 1
 		echo ""
 	fi
 }
@@ -296,7 +296,7 @@ prepare_stages() {
 
 			# Prepare remote builds newest timestamp and url from backend.
 			if [[ ${stages[${i},kind]} = remote ]]; then
-				echo -e "${color_turquoise}Getting seed info: ${color_yellow_bold}${stages[${i},arch_family]}/${stages[${i},stage]}${color_nc}"
+				echo -e "${color_turquoise}Getting seed info: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
 				local metadata_content=$(wget -q -O - ${stages[${i},url]} --no-http-keep-alive --no-cache --no-cookies)
 				local stage_regex=${stages[${i},stage]}"-[0-9]{8}T[0-9]{6}Z"
 				local latest_seed=$(echo "${metadata_content}" | grep -E ${stage_regex} | head -n 1 | cut -d ' ' -f 1)
@@ -304,7 +304,7 @@ prepare_stages() {
 				# Replace URL from metadata url to stage download url
 				stages[${i},url]=${arch_url}/${latest_seed}
 				# Extract remote available timestamp and store it in stage timestamp_generated
-				stages[${i},timestamp_generated]=$(echo ${latest_seed} | sed -n -r "s|.*${stage}-([0-9]{8}T[0-9]{6}Z).*|\1|p")
+				stages[${i},timestamp_generated]=$(echo ${latest_seed} | sed -n -r "s|.*${stages[${i},stage]}-([0-9]{8}T[0-9]{6}Z).*|\1|p")
 			fi
 		fi
 
@@ -339,11 +339,11 @@ prepare_stages() {
 						# If location doesn't exists yet - clone repository
 						echo -e "${color_turquoise}Clonning overlay repo: ${color_yellow}${repo}${color_nc}"
 						mkdir -p ${repo_local_path}
-						git clone ${repo} ${repo_local_path} > /dev/null
+						git clone ${repo} ${repo_local_path}
 					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
 						# If it exists - pull repository
 						echo -e "${color_turquoise}Pulling overlay repo: ${color_yellow}${repo}${color_nc}"
-						git -C ${repo_local_path} pull > /dev/null
+						git -C ${repo_local_path} pull
 					fi
 				fi
 			done
@@ -363,44 +363,43 @@ prepare_stages() {
 
 # Save and update templates in work directory
 write_stages() {
-
-	# TODO: Map remote overlays to local path and write to final spec here.
-	# The process of cloning/pulling these repositories should be done in build process, along with downloading remote stages.
-	# NOTE: Remote job dont have platform and release. Perhaps for platform we should assign arch_family?
-
 	echo_color ${color_turquoise_bold} "[ Writing stages ]"
 
 	mkdir -p ${work_path}
-	mkdir -p ${work_path}/spec_files
+	mkdir -p ${work_path}/jobs
 
-	local i; for (( i=0; i<${stages_count}; i++ )); do
+	local i; local j=0; for (( i=0; i<${stages_count}; i++ )); do
 		[[ ${stages[${i},rebuild]} = false ]] && continue
+		((j++))
 
 		# Create stages final files - spec, catalyst.conf, portage_confdir, root_overlay, overlay, fstype and download job scripts.
 		# Treat remote and local jobs differently here.
 
+		local platform_path=${templates_path}/${stages[${i},platform]}
+		local platform_path_work=${work_path}/${stages[${i},platform]}
+		local release_path=${platform_path}/${stages[${i},release]}
+		local release_path_work=${platform_path_work}/${stages[${i},release]}
+		local stage_path=${release_path}/${stages[${i},stage]}
+		local stage_path_work=${release_path_work}/${stages[${i},stage]}
+		local spec_link_work=$(printf ${work_path}/jobs/%03d.${stages[${i},platform]}-${stages[${i},release]}-${stages[${i},stage]} ${j})
+
+		# Copy stage template workfiles to work_path. For virtual stages, just create work directory (virtual stages don't have existing stage_path directory).
+		mkdir -p ${stage_path_work}
+		if [[ -d ${stage_path} ]]; then
+			cp -rf ${stage_path}/* ${stage_path_work}/
+		fi
+
 		if [[ ${stages[${i},kind]} = local ]]; then
 
 			# Setup used paths:
-			local platform_path=${templates_path}/${stages[${i},platform]}
-			local platform_path_work=${work_path}/${stages[${i},platform]}
-			local release_path=${platform_path}/${stages[${i},release]}
-			local release_path_work=${platform_path_work}/${stages[${i},release]}
-			local stage_path=${release_path}/${stages[${i},stage]}
-			local stage_path_work=${release_path_work}/${stages[${i},stage]}
 			local portage_path_work=${stage_path_work}/portage
 			local catalyst_conf_work=${stage_path_work}/catalyst.conf
 			local stage_overlay_path_work=${stage_path_work}/overlay
 			local stage_root_overlay_path_work=${stage_path_work}/root_overlay
 			local stage_fsscript_path_work=${stage_path_work}/fsscript.sh
 			local stage_spec_path_work=${stage_path_work}/stage.spec
-			local spec_link_work=$(printf ${work_path}/spec_files/%03d.${stages[${i},platform]}-${stages[${i},release]}-${stages[${i},stage]} $((i + 1)))
 			local target_mapping=${TARGET_MAPPINGS[${stages[${i},target]}]:-${stages[${i},target]}}
 			local stage_default_pkgcache_path=${pkgcache_base_path}/${stages[${i},platform]}/${stages[${i},release]}
-
-			# Copy stage template workfiles to work_path.
-			mkdir -p ${stage_path_work}
-			cp -rf ${stage_path}/* ${stage_path_work}/
 
 			# Create new portage_work_path if doesn't exists.
 			mkdir -p ${portage_path_work}
@@ -501,6 +500,25 @@ write_stages() {
 			ln -s ${stage_spec_path_work} ${spec_link_work}.spec
 			[[ -f ${catalyst_conf_work} ]] && ln -s ${catalyst_conf_work} ${spec_link_work}.catalyst.conf
 
+		elif [[ ${stages[${i},kind]} = remote ]]; then
+			# Create stage for remote download:
+
+			local download_script_path_work=${stage_path_work}/download.sh
+			local download_path=${catalyst_builds_path}/${stages[${i},product]}.tar.xz
+			local download_dir=$(dirname ${download_path})
+
+			# Prepare download script for remote job.
+			echo "#!/bin/bash" > ${download_script_path_work}
+			echo "file=${download_path}" >> ${download_script_path_work}
+			echo "[[ -f \${file} ]] && echo 'File already exists' && exit" >> ${download_script_path_work} # Skip download if file already exists
+			echo "mkdir -p ${download_dir}" >> ${download_script_path_work}
+			echo "trap '[[ -f \${file} ]] && rm -f \${file}' EXIT INT" >> ${download_script_path_work}
+			echo "wget ${stages[${i},url]} -O \${file} || exit 1" >> ${download_script_path_work}
+			echo "trap - EXIT" >> ${download_script_path_work}
+			chmod +x ${download_script_path_work}
+
+			# Create link to download script.
+			ln -s ${download_script_path_work} ${spec_link_work}.sh
 		fi
 	done
 
@@ -512,54 +530,40 @@ write_stages() {
 build_stages() {
 	echo_color ${color_turquoise_bold} "[ Building stages ]"
 	local i; for (( i=0; i<${stages_count}; i++ )); do
-		use_stage ${i}
-		if [[ ${rebuild} = false ]]; then
-			continue
-		fi
-		local stage_work_path=${work_path}/${platform}/${release}/${stage}
-		local stage_spec_work_path=${stage_work_path}/stage.spec
-		local source_path=${catalyst_builds_path}/${source_subpath}.tar.xz
+		[[ ${stages[${i},rebuild]} = false ]] && continue
 
-		# If stage doesn't have parent built or already existing as .tar.xz, download it's
-		if [[ -n ${source_url} ]] && [[ ! -f ${source_path} ]]; then
-			echo_color ${color_turquoise} "Downloading seed for: ${platform}/${release}/${stage}"
+		local stage_path_work=${work_path}/${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}
+
+		if [[ ${stages[${i},kind]} = local ]]; then
+			echo -e "${color_turquoise}Building stage: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
 			echo ""
-			# Prepare stage catalyst parent build dir
-			local source_build_dir=$(dirname ${source_path})
-			mkdir -p ${source_build_dir}
-			# Download
-			wget ${source_url} -O ${source_path} || exit 1
+
+			# Setup used paths:
+			local stage_spec_path_work=${stage_path_work}/stage.spec
+			local catalyst_conf_work=${stage_work_path}/catalyst.conf
+
+			local args="-af ${stage_spec_path_work}"
+			[[ -f ${catalyst_conf_work} ]] && args="${args} -c ${catalyst_conf_work}"
+
+			# Perform build
+			catalyst $args || exit 1
+
+			echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
+			echo ""
+		elif [[ ${stages[${i},kind]} = remote ]]; then
+			echo -e "${color_turquoise}Downloading stage: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
+			echo ""
+
+			# Setup used paths:
+			local download_script_path_work=${stage_path_work}/download.sh
+
+			# Perform build
+			${download_script_path_work} || exit 1
+
+			echo -e "${color_green}Stage download completed: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
+			echo ""
 		fi
 
-		# Download missing remote repos
-		local repos_list
-		IFS=',' read -ra repos_list <<< ${overlays}
-		for repo in ${repos_list[@]}; do
-			local local_path_for_remote=$(echo ${repo} | awk -F '|' '{if (NF>1) print $2; else print ""}')
-			if [[ -n ${local_path_for_remote} ]]; then
-				local repo_url=$(echo ${repo} | cut -d '|' -f 1)
-				if [[ ! -d ${local_path_for_remote} ]]; then
-					echo_color ${color_turquoise} "Clonning overlay repo ${repo_url}"
-					mkdir -p ${local_path_for_remote}
-					git clone ${repo_url} ${local_path_for_remote}
-				elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
-					echo_color ${color_turquoise} "Updating overlay repo ${repo_url}"
-					git -C ${local_path_for_remote} pull
-				fi
-				echo ""
-			fi
-		done
-
-		echo_color ${color_turquoise} "Building stage: ${platform}/${release}/${stage}"
-		echo ""
-		local args="-af ${stage_spec_work_path}"
-		if [[ -n ${catalyst_conf} ]]; then
-			args="${args} -c ${catalyst_conf}"
-		fi
-		catalyst $args || exit 1
-
-		echo_color ${color_green} "Stage build completed: ${platform}/${release}/${stage}"
-		echo ""
 	done
 }
 
@@ -605,61 +609,6 @@ basearch_to_baseraw() {
 		fi
 	done
 	echo ${basearch}
-}
-
-# Read variables of stage at index. Use this in functions that sould work with given stage, instead of loading all variables manually.
-# Use prefix if need to compare with other stage variables.
-# This function also loads platform config file related to selected stage.
-use_stage() {
-
-	local idx=${1}
-	local prefix=${2}
-
-	# Reset previous values:
-	for variable in ${STAGE_KEYS[@]}; do
-		unset ${prefix}${variable}
-		unset parent_${prefix}${variable}
-	done
-
-	if [[ ${stages[${idx},kind]} = local ]]; then
-		# Handle loading details of local stage job
-
-		# Automatically determine all possible keys stored in stages, and load them to variables.
-		#local keys=($(printf "%s\n" "${!stages[@]}" | sed 's/.*,//' | sort -u))
-		for variable in ${STAGE_KEYS[@]}; do
-			local value=${stages[${idx},${variable}]}
-			eval "${prefix}${variable}='${value}'"
-		done
-
-		# Load platform config
-		if [[ -z ${prefix} ]]; then
-			# TODO: Store these in stage instead of loading manually
-			# Platform config
-			# If some properties are not set in config - unset them while loading new config
-			unset repos common_flags chost cpu_flags compression_mode
-			local platform_conf_path=${templates_path}/${platform}/platform.conf
-			source ${platform_conf_path}
-			local release_conf_path=${templates_path}/${platform}/${release}/release.conf
-			if [[ -f ${release_conf_path} ]]; then
-				# Variables in release.conf can overwrite platform defaults.
-				source ${release_conf_path}
-			fi
-		fi
-
-        elif [[ ${stages[${idx},kind]} = remote ]]; then
-		# Handle loading of remote task details
-		kind=${stages[${idx},kind]}
-		url=${stages[${idx},url]}
-		rebuild=${stages[${idx},rebuild]}
-		# ...
-	fi
-
-	# Load also parent info for supported targets
-	if [[ -z ${prefix} ]] && ( [[ ${kind} = local ]] || [[ ${kind} = binhost ]] ); then
-		if [[ -n ${parent} ]]; then
-			use_stage ${parent} parent_
-		fi
-	fi
 }
 
 # Return value of given property from given spec file.
@@ -738,20 +687,20 @@ update_parent_indexes() {
 insert_stage_with_inheritance() { # arg - index, required_by_id
 	local index=${1}
 	local dependency_stack=${2:-'|'}
-	use_stage ${index}
 	if ! contains_string stages_order[@] ${index}; then
 		# If you can find a parent that produces target = this.source, add this parent first. After that add this stage.
-		if [[ -n ${parent} ]]; then
+		local parent_index=${stages[${index},parent]}
+		if [[ -n ${parent_index} ]]; then
 
 			# Check for cicrular dependencies
-			if [[ ${dependency_stack} == *"|${parent}|"* ]]; then
+			if [[ ${dependency_stack} == *"|${parent_index}|"* ]]; then
 				dependency_stack="${dependency_stack}${index}|"
 				echo "Circular dependency detected for ${parent_platform}/${parent_release}/${parent_stage}. Verify your templates."
 				IFS='|' read -r -a dependency_indexes <<< "${dependency_stack#|}"
 				echo "Stack:"
 				local found_parent=false
 				for i in ${dependency_indexes[@]}; do
-					if [[ ${found_parent} = false ]] && [[ ${parent} != ${i} ]]; then
+					if [[ ${found_parent} = false ]] && [[ ${parent_index} != ${i} ]]; then
 						continue
 					fi
 					found_parent=true
@@ -762,7 +711,7 @@ insert_stage_with_inheritance() { # arg - index, required_by_id
 
 			# Insert parent before current index
 			local next_dependency_stack="${dependency_stack}${index}|"
-			insert_stage_with_inheritance ${parent} "${next_dependency_stack}"
+			insert_stage_with_inheritance ${parent_index} "${next_dependency_stack}"
 		fi
 		stages_order+=(${index})
 	fi
@@ -814,7 +763,7 @@ draw_stages_tree() {
 				stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_turquoise_bold}${stages[${child},stage]}${color_nc}
 			fi
 		elif [[ ${stages[${child},kind]} = remote ]]; then
-			local display_name=${stages[${child},arch_family]}/${stages[${child},stage]}
+			local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
 			# If stage is not being rebuild and it has direct children that are being rebuild, display used available_build.
 			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},timestamp_available]} ]]; then
 				for c in ${stages[${child},children]}; do
