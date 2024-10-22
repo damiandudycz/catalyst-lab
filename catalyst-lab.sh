@@ -1125,8 +1125,10 @@ esac; shift; done
 # Main program:
 
 load_stages
-if [[ ${PREPARE} = true ]]; then
+if [[ ${PREPARE} = true ]] || [[ ${--update-snapshot} = true ]]; then
 	prepare_portage_snapshot
+fi
+if [[ ${PREPARE} = true ]] || [[ ${--update-releng} = true ]]; then
 	prepare_releng
 fi
 if [[ ${FETCH_FRESH_REPOS} = true ]] || [[ ${PREPARE} = true ]]; then
