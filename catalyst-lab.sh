@@ -55,6 +55,7 @@ load_stages() {
 				# Set stage_catalyst_conf variable for stage based on file existance.
 				[[ -f ${stage_path}/catalyst.conf ]] && stage_catalyst_conf=${stage_path}/catalyst.conf || unset stage_catalyst_conf
 
+				# Local jobs loading.
 				if [[ -f ${stage_spec_path} ]]; then
 
 					# Create local stage entry and load basic data that can be retreived or calculated directly at this step.
@@ -135,8 +136,10 @@ load_stages() {
 					stages[${stages_count},catalyst_conf]=${_catalyst_conf}
 
 					stages_count=$((stages_count + 1))
-
 				fi
+
+				# TODO: Loading remote and binhost jobs
+
 			done
 		done
 	done
@@ -1222,11 +1225,8 @@ fi
 # TODO: Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
 # TODO: Check if settings common_flags is also only allowed in stage1
 # TODO: Working with distcc (including local)
-# TODO: Using remote binhosts
-# TODO: Make possible setting different build sublocation (for building modified seeds) ?
 # TODO: Add checking for valid config entries in config files
 # TODO: Detect when profile changes in stage4 and if it does, automtically add rebuilds to fsscript file
 # TODO: Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote if can just specify word remote and automatically find like, it it can specify tarball name or even full URL.
 # TODO: Add support for binhost type jobs
 # TODO: Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
-# TODO: Add failsafe mechanism for repos download/upload. For example: Dont upload if there was error with download. Or only allow upload if download was also performed. Or automatically perform download if upload is specified in options
