@@ -389,7 +389,7 @@ fetch_repos() {
 					local) ;; # Skip local binrepos
 					*)
 						echo ""
-						echo -e "${color_yellow}Warning! Unsupported repo type: ${stages[${i},binrepo_kind]} (${stages[${i},binrepo]})${color_nc}"
+						echo -e "${color_orange}Warning! Unsupported repo type: ${stages[${i},binrepo_kind]} (${stages[${i},binrepo]})${color_nc}"
 						;;
 				esac
 			fi
@@ -660,7 +660,7 @@ upload_binrepos() {
 
 		if contains_string BINREPOS_FETCH_FAILURES[@] ${stages[${i},binrepo]}; then
 			echo ""
-			echo -e "${color_yellow}Warning! Skipping upload to binrepo: ${color_yellow}${stages[${i},binrepo]} ${color_yellow}due to errors during fetching.${color_nc}"
+			echo -e "${color_orange}Warning! Skipping upload to binrepo: ${color_yellow}${stages[${i},binrepo]} ${color_orange}due to errors during fetching.${color_nc}"
 			continue
 		fi
 
@@ -682,7 +682,7 @@ upload_binrepos() {
 				if repo_url=$(git -C ${stages[${i},binrepo_local_path]} config --get remote.origin.url) && [[ ! "$repo_url" =~ ^https:// ]] && git -C ${stages[${i},binrepo_local_path]} ls-remote &>/dev/null && git -C ${stages[${i},binrepo_local_path]} push --dry-run &>/dev/null; then
 					git -C ${stages[${i},binrepo_local_path]} push
 				else
-					echo -e "${color_yellow}Warning! No write access to binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+					echo -e "${color_orange}Warning! No write access to binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
 				fi
 				changes=true
 			fi
@@ -1122,6 +1122,8 @@ readonly color_turquoise='\033[0;36m'
 readonly color_turquoise_bold='\033[1;36m'
 readonly color_yellow='\033[0;33m'
 readonly color_yellow_bold='\033[1;33m'
+readonly color_orange='\033[38;5;214m'
+readonly color_orange_bold='\033[1;38;5;214m'
 readonly color_nc='\033[0m' # No Color
 
 # Load/create config.
