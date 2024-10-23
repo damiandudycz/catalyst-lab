@@ -92,10 +92,8 @@ load_stages() {
 					local _treeish=${stage_treeish} # Can be skipped in spec, will use newest seed available
 					local _repos=${stage_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
 					local _rel_type=${stage_rel_type:-${platform}/${release}}
-
 					local _binrepo=${stage_binrepo:-${release_binrepo:-${platform_binrepo:-${binpkgs_cache_path}/local}}}
 					local _binrepo_path=${stage_binrepo_path:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
-
 					local _chost=${stage_chost:-${release_chost:-${platform_chost}}} # Can be definied in platform, release or stage (spec)
 					local _cpu_flags=${stage_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
 					local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags}}} # Can be definied in platform, release or stage (spec)
@@ -271,15 +269,21 @@ load_stages() {
 	# Determine binrepos local paths and types.
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		if [[ -n ${stages[${i},binrepo]} ]]; then
-			if [[ ${stages[${i},binrepo]} == http://* || ${stages[${i},binrepo]} == https://* || ${stages[${i},binrepo]} == git@* ]]; then
-				stages[${i},binrepo_kind]=git
-			else
-				stages[${i},binrepo_kind]=local
+			# Check if binrepo contains type in [TYPE]: prefix. If it does use it as a type. If not try to infer from the content
+			local repo_kind=$(echo ${stages[${i},binrepo]} | grep -oP '(?<=^\[)[^]]+(?=\]:)')
+			if [[ -z ${repo_kind} ]] && ([[ ${stages[${i},binrepo]} == http://* || ${stages[${i},binrepo]} == https://* || ${stages[${i},binrepo]} == git@* ]]); then
+				# Assume git repo for URLs
+				repo_kind=git
 			fi
+			# If type not determined yet, assume local.
+			[[ -z ${repo_kind} ]] && repo_kind=local
+			stages[${i},binrepo_kind]=${repo_kind}
+
+			# Remove type from binrepo value
+			stages[${i},binrepo]=$(echo ${stages[${i},binrepo]} | sed 's/^\[[^]]*\]://')
+
 			# Map remote repositories to local names
-			stages[${i},binrepo_local_path]=$(binrepo_local_path ${stages[${i},binrepo]})
-		else
-			stages[${i},binrepo_local_path]=${stages[${i},binrepo]}
+			stages[${i},binrepo_local_path]=$(binrepo_local_path ${stages[${i},binrepo]} ${stages[${i},binrepo_kind]})
 		fi
 	done
 
@@ -335,6 +339,7 @@ fetch_repos() {
 				handled_repos+=(${repo})
 				# Check if is remote repository
 				if [[ ${repo} == http://* || ${repo} == https://* ]]; then
+					echo ""
 					local repo_local_path=$(repo_local_path ${repo})
 					if [[ ! -d ${repo_local_path} ]]; then
 						# If location doesn't exists yet - clone repository
@@ -360,20 +365,33 @@ fetch_repos() {
 			# Clone/pull used repositories
 			if ! contains_string handled_repos[@] ${stages[${i},binrepo]}; then
 				handled_repos+=(${stages[${i},binrepo]})
-				# Check if is remote repository
-				if [[ ${stages[${i},binrepo_kind]} == git ]]; then
-					local repo_local_path=$(binrepo_local_path ${stages[${i},binrepo]})
-					if [[ ! -d ${stages[${i},binrepo_local_path]}/.git ]]; then
-						# If location doesn't exists yet - clone repository
-						echo -e "${color_turquoise}Clonning binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
-						mkdir -p ${repo_local_path}
-						git clone ${stages[${i},binrepo]} ${stages[${i},binrepo_local_path]}
-					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
-						# If it exists - pull repository
-						echo -e "${color_turquoise}Pulling binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
-						git -C ${stages[${i},binrepo_local_path]} pull
-					fi
-				fi
+				# Check if is remote repository and process in correct way
+				case ${stages[${i},binrepo_kind]} in
+					git)
+						echo ""
+						if [[ ! -d ${stages[${i},binrepo_local_path]}/.git ]]; then
+							# If location doesn't exists yet - clone repository
+							echo -e "${color_turquoise}Clonning binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+							mkdir -p ${stages[${i},binrepo_local_path]}
+							git clone ${stages[${i},binrepo]} ${stages[${i},binrepo_local_path]} || BINREPOS_FETCH_FAILURES+=(${stages[${i},binrepo]})
+						elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
+							# If it exists - pull repository
+							echo -e "${color_turquoise}Pulling binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+							git -C ${stages[${i},binrepo_local_path]} pull || BINREPOS_FETCH_FAILURES+=(${stages[${i},binrepo]})
+						fi
+						;;
+					rsync)
+						echo ""
+						echo -e "${color_turquoise}Syncing binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+						[[ ! -d ${stages[${i},binrepo_local_path]} ]] && mkdir -p ${stages[${i},binrepo_local_path]}
+						rsync ${RSYNC_OPTIONS} ${ssh_username}@${stages[${i},binrepo]}/ ${stages[${i},binrepo_local_path]}/ || BINREPOS_FETCH_FAILURES+=(${stages[${i},binrepo]})
+						;;
+					local) ;; # Skip local binrepos
+					*)
+						echo ""
+						echo -e "${color_yellow}Warning! Unsupported repo type: ${stages[${i},binrepo_kind]} (${stages[${i},binrepo]})${color_nc}"
+						;;
+				esac
 			fi
 		fi
 	done
@@ -395,6 +413,7 @@ prepare_stages() {
 
 			# Prepare remote builds newest timestamp and url from backend.
 			if [[ ${stages[${i},kind]} = remote ]]; then
+				echo ""
 				echo -e "${color_turquoise}Getting seed info: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
 				local metadata_content=$(wget -q -O - ${stages[${i},url]} --no-http-keep-alive --no-cache --no-cookies)
 				local stage_regex=${stages[${i},stage]}"-[0-9]{8}T[0-9]{6}Z"
@@ -635,32 +654,49 @@ upload_binrepos() {
 	echo_color ${color_turquoise_bold} "[ Uploading binrepos ]"
 	local handled_repos=()
 	local i; for (( i=0; i<${stages_count}; i++ )); do
-		[[ ${stages[${i},binrepo_kind]} = git ]] || continue
 		[[ ${stages[${i},selected]} = true ]] || ( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) || continue # Only upload selected repos or rebild if building now
-		[[ -d ${stages[${i},binrepo_local_path]}/.git ]] || continue # Skip if this repo doesnt yet exists
 		contains_string handled_repos[@] ${stages[${i},binrepo]} && continue
 		handled_repos+=(${stages[${i},binrepo]})
-		echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
-		# Check if there are changes to commit
-		local changes=false
-		if [[ -n $(git -C ${stages[${i},binrepo_local_path]} status --porcelain) ]]; then
-			git -C ${stages[${i},binrepo_local_path]} add -A
-			git -C ${stages[${i},binrepo_local_path]} commit -m "Automatic update: ${timestamp}"
-			changes=true
+
+		if contains_string BINREPOS_FETCH_FAILURES[@] ${stages[${i},binrepo]}; then
+			echo ""
+			echo -e "${color_yellow}Warning! Skipping upload to binrepo: ${color_yellow}${stages[${i},binrepo]} ${color_yellow}due to errors during fetching.${color_nc}"
+			continue
 		fi
-		# Check if there are some commits to push
-		if ! git -C "${stages[${i},binrepo_local_path]}" diff --exit-code origin/$(git -C "${stages[${i},binrepo_local_path]}" rev-parse --abbrev-ref HEAD) --quiet; then
-			# Check for write access.
-			if repo_url=$(git -C ${stages[${i},binrepo_local_path]} config --get remote.origin.url) && [[ ! "$repo_url" =~ ^https:// ]] && git -C ${stages[${i},binrepo_local_path]} ls-remote &>/dev/null && git -C ${stages[${i},binrepo_local_path]} push --dry-run &>/dev/null; then
-				git -C ${stages[${i},binrepo_local_path]} push
-			else
-				echo -e "${color_yellow}Warning! No write access to binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+
+		case ${stages[${i},binrepo_kind]} in
+		git)
+			[[ -d ${stages[${i},binrepo_local_path]}/.git ]] || continue # Skip if this repo doesnt yet exists
+			echo ""
+			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+			# Check if there are changes to commit
+			local changes=false
+			if [[ -n $(git -C ${stages[${i},binrepo_local_path]} status --porcelain) ]]; then
+				git -C ${stages[${i},binrepo_local_path]} add -A
+				git -C ${stages[${i},binrepo_local_path]} commit -m "Automatic update: ${timestamp}"
+				changes=true
 			fi
-			changes=true
-		fi
-		if [[ ${changes} = false ]]; then
-			echo "No local changes detected"
-		fi
+			# Check if there are some commits to push
+			if ! git -C "${stages[${i},binrepo_local_path]}" diff --exit-code origin/$(git -C "${stages[${i},binrepo_local_path]}" rev-parse --abbrev-ref HEAD) --quiet; then
+				# Check for write access.
+				if repo_url=$(git -C ${stages[${i},binrepo_local_path]} config --get remote.origin.url) && [[ ! "$repo_url" =~ ^https:// ]] && git -C ${stages[${i},binrepo_local_path]} ls-remote &>/dev/null && git -C ${stages[${i},binrepo_local_path]} push --dry-run &>/dev/null; then
+					git -C ${stages[${i},binrepo_local_path]} push
+				else
+					echo -e "${color_yellow}Warning! No write access to binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+				fi
+				changes=true
+			fi
+			if [[ ${changes} = false ]]; then
+				echo "No local changes detected"
+			fi
+			;;
+		rsync)
+			echo ""
+			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+			rsync ${RSYNC_OPTIONS} ${stages[${i},binrepo_local_path]}/ ${ssh_username}@${stages[${i},binrepo]}/
+			;;
+		esac
+
 	done
 	echo ""
 }
@@ -972,12 +1008,20 @@ repo_local_path() {
 
 binrepo_local_path() {
 	local repository=${1}
-	if [[ ${repository} == http://* || ${repository} == https://* || ${repository} == git@* ]]; then
+	local repo_kind=${2}
+
+	case ${repo_kind} in
+	git|rsync)
 		local local_name=$(echo ${repository} | sed 's|http[s]*://||' | sed 's|git@||' | sed -e 's/[^A-Za-z0-9._-]/_/g')
-		echo ${binpkgs_cache_path}/remote/${local_name}
-	else
+		echo ${binpkgs_cache_path}/remote/${repo_kind}_${local_name}
+		;;
+	local)
 		echo ${repository}
-	fi
+		;;
+	*)	# Unsupported type of repository, just return it's full name
+		echo ${repository}
+		;;
+	esac
 }
 
 # ------------------------------------------------------------------------------
@@ -1013,8 +1057,8 @@ declare STAGE_KEYS=( # Variables stored in stages[]
 
 	chost common_flags cpu_flags
 
-	treeish          overlays     overlays_local_paths binrepo     binrepo_local_path
-	binrepo_path     binrepo_kind catalyst_conf        releng_base version_stamp
+	treeish       overlays     overlays_local_paths binrepo     binrepo_local_path
+	binrepo_path  binrepo_kind catalyst_conf        releng_base version_stamp
 	compression_mode
 
 	selected rebuild takes_part
@@ -1060,6 +1104,12 @@ declare -A RELENG_BASES=(
 # List of targets that are compressed after build. This allows adding compression_mode property automatically to stages.
 declare COMPRESSABLE_TARGETS=(stage1 stage2 stage3 stage4 livecd-stage1 livecd-stage2)
 
+# Contains binrepos which failed downloading changes during fetch process.
+# If this happends, upload of these repos is supressed.
+declare BINREPOS_FETCH_FAILURES=()
+
+readonly RSYNC_OPTIONS="--archive --delete --delete-after --omit-dir-times --delay-updates --mkpath --stats"
+
 readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
 readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
 readonly qemu_has_static_user=$(grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE && echo true || echo false)
@@ -1089,6 +1139,7 @@ catalyst_usr_path=/usr/share/catalyst
 binpkgs_cache_path=/var/cache/catalyst-lab/binpkgs
 overlays_cache_path=/var/cache/catalyst-lab/overlays
 tmp_path=/tmp/catalyst-lab
+ssh_username=catalyst-lab # Important! Replace with your username. This value is used when downloading/uploading rsync binrepos.
 jobs=$(nproc)
 load_average=$(nproc).0
 EOF
@@ -1123,6 +1174,12 @@ esac; shift; done
 
 # ------------------------------------------------------------------------------
 # Main program:
+
+# Validate parameters
+if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]]; then
+	echo "If using --upload-binrepos, it is mandatory to also use --update-repos. Exiting."
+	exit 1
+fi
 
 load_stages
 if [[ ${PREPARE} = true ]] || [[ ${--update-snapshot} = true ]]; then
@@ -1170,3 +1227,4 @@ fi
 # TODO: Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote if can just specify word remote and automatically find like, it it can specify tarball name or even full URL.
 # TODO: Add support for binhost type jobs
 # TODO: Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
+# TODO: Add failsafe mechanism for repos download/upload. For example: Dont upload if there was error with download. Or only allow upload if download was also performed. Or automatically perform download if upload is specified in options
