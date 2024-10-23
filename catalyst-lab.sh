@@ -538,6 +538,7 @@ write_stages() {
 				# Update NPROC value in used catalyst_conf.
 				sed -i "s|@JOBS@|${jobs}|g" ${catalyst_conf_work}
 				sed -i "s|@LOAD_AVERAGE@|${load_average}|g" ${catalyst_conf_work}
+				sed -i "s|@TMPFS_SIZE@|${tmpfs_size}|g" ${catalyst_conf_work}
 			fi
 
 			# Replace spec templates with real data:
@@ -1177,6 +1178,7 @@ catalyst_usr_path=/usr/share/catalyst
 binpkgs_cache_path=/var/cache/catalyst-lab/binpkgs
 overlays_cache_path=/var/cache/catalyst-lab/overlays
 tmp_path=/tmp/catalyst-lab
+tmpfs_size=6
 ssh_username=catalyst-lab # Important! Replace with your username. This value is used when downloading/uploading rsync binrepos.
 jobs=$(nproc)
 load_average=$(nproc).0
