@@ -56,7 +56,7 @@ load_stages() {
 				[[ -f ${stage_path}/catalyst.conf ]] && stage_catalyst_conf=${stage_path}/catalyst.conf || unset stage_catalyst_conf
 
 				# Load values stored directly in stage.spec:
-				local properties_to_load=(kind binrepo binrepo_path chost common_flags compression_mode cpu_flags rel_type releng_base repos source_subpath subarch target treeish version_stamp)
+				local properties_to_load=(kind binrepo binrepo_path chost common_flags compression_mode cpu_flags rel_type releng_base repos source_subpath subarch target treeish version_stamp profile)
 				for key in ${properties_to_load[@]}; do
 					eval "local stage_${key}=\$(read_spec_variable ${stage_info_path} ${key})"
 				done
@@ -90,8 +90,9 @@ load_stages() {
 				local _binrepo_path=${stage_binrepo_path:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
 				local _version_stamp=${stage_version_stamp:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
 				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
+				local _profile=${stage_profile}
 				# Sanitize selected variables
-				local properties_to_sanitize=(version_stamp source_subpath product binrepo binrepo_path rel_type)
+				local properties_to_sanitize=(version_stamp source_subpath product binrepo binrepo_path rel_type profile)
 				for key in ${properties_to_sanitize[@]}; do
 					eval "_${key}=\$(sanitize_spec_variable ${platform} ${release} ${stage} ${platform_family} ${platform_basearch} ${_subarch} \${_${key}})"
 				done
@@ -128,6 +129,7 @@ load_stages() {
 				stages[${stages_count},catalyst_conf]=${_catalyst_conf}
 				stages[${stages_count},rel_type]=${_rel_type}
 				stages[${stages_count},product]=${_product}
+				stages[${stages_count},profile]=${_profile}
 				stages[${stages_count},available_build]=${_available_build}
 				stages[${stages_count},timestamp_available]=${_available_build_timestamp}
 
@@ -459,6 +461,7 @@ write_stages() {
 
 	mkdir -p ${work_path}
 	mkdir -p ${work_path}/jobs
+	mkdir -p ${work_path}/binhosts
 
 	local i; local j=0; for (( i=0; i<${stages_count}; i++ )); do
 		[[ ${stages[${i},rebuild]} = false ]] && continue
@@ -474,6 +477,7 @@ write_stages() {
 		local stage_path=${release_path}/${stages[${i},stage]}
 		local stage_path_work=${release_path_work}/${stages[${i},stage]}
 		local spec_link_work=$(printf ${work_path}/jobs/%03d.${stages[${i},platform]}-${stages[${i},release]}-${stages[${i},stage]} ${j})
+		local portage_path_work=${stage_path_work}/portage
 
 		# Copy stage template workfiles to work_path. For virtual stages, just create work directory (virtual stages don't have existing stage_path directory).
 		mkdir -p ${stage_path_work}
@@ -484,7 +488,6 @@ write_stages() {
 		if [[ ${stages[${i},kind]} = build ]]; then
 
 			# Setup used paths:
-			local portage_path_work=${stage_path_work}/portage
 			local catalyst_conf_work=${stage_path_work}/catalyst.conf
 			local stage_overlay_path_work=${stage_path_work}/overlay
 			local stage_root_overlay_path_work=${stage_path_work}/root_overlay
@@ -623,11 +626,97 @@ EOF
 		elif [[ ${stages[${i},kind]} = binhost ]]; then
 			# Create stage for building binhost packages.
 
-			# Prepare build script for binhost job.
 			local binhost_script_path_work=${stage_path_work}/build-binpkgs.sh
+			local source_tarball_path=${catalyst_builds_path}/${stages[${i},source_subpath]}.tar.xz
+			local build_work_path=${work_path}/binhosts/${stages[${i},product]}
+
+			# Create new portage_work_path if doesn't exists.
+			mkdir -p ${portage_path_work}
+
+			# Prepare portage enviroment - Combine base portage files from releng with stage template portage files.
+			if [[ -n ${stages[${i},releng_base]} ]]; then
+				local interpreter_portage_postfix=$( [[ ${stages[${i},arch_emulation]} = true ]] && echo -qemu )
+				local releng_base_dir=${releng_path}/releases/portage/${stages[${i},releng_base]}${interpreter_portage_postfix}
+				cp -ru ${releng_base_dir}/* ${portage_path_work}/
+			fi
+
+			# Set 00cpu-flags file if used.
+			if [[ -n ${stages[${i},cpu_flags]} ]]; then
+				local package_use_path_work=${portage_path_work}/package.use
+				mkdir -p ${package_use_path_work}
+				echo "*/* "${stages[${i},cpu_flags]} > ${package_use_path_work}/00cpu-flags
+			fi
+
+			# Setup profile if used.
+			if [[ -n ${stages[${i},profile]} ]]; then
+				# TODO: Make it also work for profiles from outside gentoo, like ps3:default...
+				#										
+				[[ -f ${portage_path_work}/make.profile ]] && rm ${portage_path_work}/make.profile
+				pushd ${portage_path_work} > /dev/null
+				ln -s ../../var/db/repos/gentoo/profiles/${stages[${i},profile]} ${portage_path_work}/make.profile
+				popd > /dev/null
+			fi
+
+			# TODO: Setup common_flags, use flags and add bindinst to use. Also copy defaults from corresponding toml file here, to make.conf. Overwrites for CPUFLAGS can still be set with 00cpu-flags.
+
+			# TODO: Make sure that when emerging new packages, default gentoo binrepos.conf is not being used. This can probably be achieved with correct emerge flags. Still local binrepo packages should be used!
+
+
+			mkdir -p ${build_work_path}
+
+			# Prepare build script for binhost job.
 			cat <<EOF | sed 's/^[ \t]*//' | tee ${binhost_script_path_work} > /dev/null || exit 1
 				#!/bin/bash
-				echo "Currently not supported"
+				echo "(This functionality is a work in progress)"
+
+				echo "Extract ${source_tarball_path} to ${build_work_path}"
+				tar -xpf ${source_tarball_path} -C ${build_work_path}
+
+				if [[ ${stages[${i},arch_emulation]} = true ]]; then
+					for interpreter in "${stages[${i},arch_interpreter]}"; do
+						echo "Inject interpreter: \${interpreter}"
+						cp \${interpreter} ${build_work_path}/usr/bin/
+					done
+				fi
+
+				echo "Copy resolve.conf"
+				cp /etc/resolve.conf ${build_work_path}/etc/resolve.conf
+
+				echo "Preparing portage directory"
+				cp -ru ${portage_path_work}/* ${build_work_path}/etc/portage/
+
+				# Extract portage snapshot.
+				echo "Preparing portage snapshot"
+				unsquashfs -d ${build_work_path}/var/db/repos/gentoo ${catalyst_path}/snapshots/gentoo-${stages[${i},treeish]}.sqfs
+
+				echo "Emerging packages"
+unshare --mount -- bash -c "
+  mount --types proc /proc ${build_work_path}/proc
+  mount --bind /dev ${build_work_path}/dev
+  mount --bind /sys ${build_work_path}/sys
+  mount --bind /run ${build_work_path}/run
+
+  # Trap to ensure cleanup
+  trap 'umount -l ${build_work_path}/{dev,proc,sys,run}' EXIT
+
+  # Perform chroot
+  chroot ${build_work_path} /bin/bash -c '
+    emerge nano
+  '
+"
+
+
+				# TODO:
+				# + Extract source archive
+				# + Combine with portage directory (including releng base elements)
+				# - Bind working directories
+				# + Copy interpreters
+				# + Setup profile
+				# - Setup common_flags, use flags, etc in portage
+				# + Extract portage snapshot used
+				# - Get the list of packages to build and emerge them with correct flags
+				# - Unmount binded folders
+				# - Cleanup file
 EOF
 			chmod +x ${binhost_script_path_work}
 
@@ -1105,7 +1194,7 @@ declare RELEASE_KEYS=( # Variables allowed in release.conf
 	compression_mode binrepo      binrepo_path
 )
 declare STAGE_KEYS=( # Variables stored in stages[] for the script.
-	kind
+	kind profile
 
 	arch_basearch arch_baseraw     arch_subarch
 	arch_family   arch_interpreter arch_emulation
