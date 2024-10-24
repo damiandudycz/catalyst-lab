@@ -50,177 +50,96 @@ load_stages() {
 			RL_VAL_RELEASE_STAGES=$(get_directories ${release_path})
 			for stage in ${RL_VAL_RELEASE_STAGES[@]}; do
 				local stage_path=${templates_path}/${platform}/${release}/${stage}
+				local stage_info_path=${stage_path}/stage.spec
 
-				local stage_build_info_path=${stage_path}/build.spec
-				local stage_binhost_info_path=${stage_path}/binhost.spec
-				local stage_download_info_path=${stage_path}/download.spec
+				# Set stage_catalyst_conf variable for stage based on file existance.
+				[[ -f ${stage_path}/catalyst.conf ]] && stage_catalyst_conf=${stage_path}/catalyst.conf || unset stage_catalyst_conf
 
-# WIP
-#local stage_info_path=${stage_path}/stage.spec
-#
-#local stage_kind=$(read_spec_variable ${stage_info_path} kind); stage_kind=${stage_kind:-build} # If not specified, assume build.
-#echo "SK: ${stage_kind}"
-#exit
+				# Load values stored directly in stage.spec:
+				local properties_to_load=(kind binrepo binrepo_path chost common_flags compression_mode cpu_flags rel_type releng_base repos source_subpath subarch target treeish version_stamp)
+				for key in ${properties_to_load[@]}; do
+					eval "local stage_${key}=\$(read_spec_variable ${stage_info_path} ${key})"
+				done
+				# Prepare shared overwrites and computations of varialbles. These include properties for every possible stage type.
+				# Only include here variables that might require special treament and the value will be the same for all target types.
+				# If some property is different between different stage types, it will be set bellow.
+				local _kind=${stage_kind:-build} # If not specified, assume build.
+				# Prepare variables that differ between kinds.
+				if [[ ${_kind} = build ]]; then
+					local _target=${stage_target:-$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')} # Can be skipped in spec, will be determined from stage name
+				elif [[ ${_kind} = download ]]; then
+					local _target=${stage_target:-$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')} # Can be skipped in spec, will be determined from stage name
+				elif [[ ${_kind} = binhost ]]; then
+					local _target=${stage_target:-binhost}
+				fi
+				# Prepare variables with form shared between kinds.
+				local _selected=$(is_stage_selected ${_platform} ${_release} ${_stage})
+				local _arch_emulation=$( [[ ${host_arch} = ${platform_basearch} ]] && echo false || echo true )
+				local _subarch=${stage_subarch:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
+				local _repos=${stage_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
+				local _chost=${stage_chost:-${release_chost:-${platform_chost}}} # Can be definied in platform, release or stage (spec)
+				local _cpu_flags=${stage_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
+				local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags}}} # Can be definied in platform, release or stage (spec)
+				local _releng_base=${stage_releng_base:-${RELENG_BASES[${_target}]}} # Can be skipped in spec, will be determined automatically from target
+				local _compression_mode=${stage_compression_mode:-${release_compression_mode:-${platform_compression_mode:-pixz}}} # Can be definied in platform, release or stage (spec)
+				local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
+				# Set and sanitize some of variables:
+				local _rel_type=${stage_rel_type:-${platform}/${release}}
+				local _source_subpath=${stage_source_subpath}
+				local _binrepo=${stage_binrepo:-${release_binrepo:-${platform_binrepo:-${binpkgs_cache_path}/local}}}
+				local _binrepo_path=${stage_binrepo_path:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
+				local _version_stamp=${stage_version_stamp:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
+				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
+				# Sanitize selected variables
+				local properties_to_sanitize=(version_stamp source_subpath product binrepo binrepo_path rel_type)
+				for key in ${properties_to_sanitize[@]}; do
+					eval "_${key}=\$(sanitize_spec_variable ${platform} ${release} ${stage} ${platform_family} ${platform_basearch} ${_subarch} \${_${key}})"
+				done
+				# Computer after sanitization of dependencies.
+				local _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E $(echo ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
+				local _available_build_timestamp=$( [[ -n ${_available_build} ]] && start_pos=$(expr index "${_product}" "@TIMESTAMP@") && echo "${_available_build:$((start_pos - 1)):16}" )
+
+				# Apply modified properties to stage config entry:
+				# Non modified entries, directly from platform, release or stage settings:
+				stages[${stages_count},platform]=${platform}
+				stages[${stages_count},release]=${release}
+				stages[${stages_count},stage]=${stage}
+				stages[${stages_count},arch_basearch]=${platform_basearch}
+				stages[${stages_count},arch_baseraw]=${platform_baseraw}
+				stages[${stages_count},arch_family]=${platform_family}
+				stages[${stages_count},arch_interpreter]=${platform_interpreter}
+				stages[${stages_count},treeish]=${stage_treeish} # At this point it could be empty. Will be set automatically later.
+				# Modified entries, that can be adjusted by the script:
+				stages[${stages_count},kind]=${_kind}
+				stages[${stages_count},target]=${_target}
+				stages[${stages_count},source_subpath]=${_source_subpath}
+				stages[${stages_count},selected]=${_selected}
+				stages[${stages_count},arch_emulation]=${_arch_emulation}
+				stages[${stages_count},arch_subarch]=${_subarch}
+				stages[${stages_count},overlays]=${_repos}
+				stages[${stages_count},chost]=${_chost}
+				stages[${stages_count},common_flags]=${_common_flags}
+				stages[${stages_count},cpu_flags]=${_cpu_flags}
+				stages[${stages_count},releng_base]=${_releng_base}
+				stages[${stages_count},compression_mode]=${_compression_mode}
+				stages[${stages_count},binrepo]=${_binrepo}
+				stages[${stages_count},binrepo_path]=${_binrepo_path}
+				stages[${stages_count},version_stamp]=${_version_stamp}
+				stages[${stages_count},catalyst_conf]=${_catalyst_conf}
+				stages[${stages_count},rel_type]=${_rel_type}
+				stages[${stages_count},product]=${_product}
+				stages[${stages_count},available_build]=${_available_build}
+				stages[${stages_count},timestamp_available]=${_available_build_timestamp}
+
+				# Increase processed stages count.
+				stages_count=$((stages_count + 1))
 
 				# TODO: Download jobs loading.
-				if [[ -f ${stage_download_info_path} ]]; then
-					# Create download job for ${stage_download_info_path}
-					local _kind=download
+				#if [[ ${_stage_kind} = download ]]; then
+				#	# Create download job for ${stage_info_path}
 				#	stages[${stages_count},kind]=${_kind}
 				#	stages_count=$((stages_count + 1))
-				fi
-
-				# Local jobs loading.
-				if [[ -f ${stage_build_info_path} ]]; then
-
-					# Create local stage entry and load basic data that can be retreived or calculated directly at this step.
-
-					# Set stage_catalyst_conf variable for stage based on file existance.
-					[[ -f ${stage_path}/catalyst.conf ]] && stage_catalyst_conf=${stage_path}/catalyst.conf || unset stage_catalyst_conf
-
-					# Prepare static values from spec file:
-					local stage_build_target=$(read_spec_variable ${stage_build_info_path} target) # eq.: stage3
-					local stage_build_subarch=$(read_spec_variable ${stage_build_info_path} subarch) # eq.: cell
-					local stage_build_version_stamp=$(read_spec_variable ${stage_build_info_path} version_stamp) # eq.: base-openrc-@TIMESTAMP@
-					local stage_build_source_subpath=$(read_spec_variable ${stage_build_info_path} source_subpath) # Note: For builds that uses remote seeds, @TIMESTAMP@ will be later removed in this variable. But only for remotes, in local sources, it still contain @TIMESTAMP@
-					local stage_build_repos=$(read_spec_variable ${stage_build_info_path} repos)
-					local stage_build_releng_base=$(read_spec_variable ${stage_build_info_path} releng_base)
-					local stage_build_chost=$(read_spec_variable ${stage_build_info_path} chost)
-					local stage_build_common_flags=$(read_spec_variable ${stage_build_info_path} common_flags)
-					local stage_build_cpu_flags=$(read_spec_variable ${stage_build_info_path} cpu_flags)
-					local stage_build_compression_mode=$(read_spec_variable ${stage_build_info_path} compression_mode)
-					local stage_build_treeish=$(read_spec_variable ${stage_build_info_path} treeish)
-					local stage_build_binrepo=$(read_spec_variable ${stage_build_info_path} binrepo)
-					local stage_build_binrepo_path=$(read_spec_variable ${stage_build_info_path} binrepo_path)
-					local stage_build_rel_type=$(read_spec_variable ${stage_build_info_path} rel_type)
-
-					# Determine final values from best possible place or calculate:
-					local _kind=build
-					local _platform=${platform}
-					local _release=${release}
-					local _stage=${stage}
-					local _target=${stage_build_target:-$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')} # Can be skipped in spec, will be determined from stage name
-					local _basearch=${platform_basearch}
-					local _baseraw=${platform_baseraw}
-					local _family=${platform_family}
-					local _interpreter=${platform_interpreter} # Can be skipped in spec, will be determined from platform.conf
-					local _emulation=$( [[ ${host_arch} = ${_basearch} ]] && echo false || echo true )
-					local _subarch=${stage_build_subarch:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
-					local _releng_base=${stage_build_releng_base:-${RELENG_BASES[${_target}]}} # Can be skipped in spec, will be determined automatically from target
-					local _source_subpath=${stage_build_source_subpath}
-					local _treeish=${stage_build_treeish} # Can be skipped in spec, will use newest seed available
-					local _repos=${stage_build_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
-					local _rel_type=${stage_build_rel_type:-${platform}/${release}}
-					local _binrepo=${stage_build_binrepo:-${release_binrepo:-${platform_binrepo:-${binpkgs_cache_path}/local}}}
-					local _binrepo_path=${stage_build_binrepo_path:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
-					local _chost=${stage_build_chost:-${release_chost:-${platform_chost}}} # Can be definied in platform, release or stage (spec)
-					local _cpu_flags=${stage_build_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
-					local _common_flags=${stage_build_common_flags:-${release_common_flags:-${platform_common_flags}}} # Can be definied in platform, release or stage (spec)
-					local _compression_mode=${stage_build_compression_mode:-${release_compression_mode:-${platform_compression_mode:-pixz}}} # Can be definied in platform, release or stage (spec)
-					local _version_stamp=${stage_build_version_stamp:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
-					local _catalyst_conf=${stage_build_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
-					local _product=${stage_build_rel_type:-${_platform}/${_release}}/${_target}-${_subarch}-${_version_stamp}
-					local _available_build=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E ${_available_build} | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
-					local _available_build_timestamp=$( [[ -n ${_available_build} ]] && start_pos=$(expr index "${_product}" "@TIMESTAMP@") && echo "${_available_build:$((start_pos - 1)):16}" )
-					local _is_selected=$(is_stage_selected ${_platform} ${_release} ${_stage})
-
-					# Store determined variables and sanitize selected:
-					stages[${stages_count},kind]=${_kind}
-					stages[${stages_count},platform]=${_platform}
-					stages[${stages_count},release]=${_release}
-					stages[${stages_count},stage]=${_stage}
-					stages[${stages_count},selected]=${_is_selected}
-					stages[${stages_count},target]=${_target}
-					stages[${stages_count},version_stamp]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_version_stamp})
-					stages[${stages_count},source_subpath]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_source_subpath})
-					stages[${stages_count},product]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_product})
-					stages[${stages_count},overlays]=${_repos}
-					stages[${stages_count},binrepo]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_binrepo})
-					stages[${stages_count},binrepo_path]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_binrepo_path})
-					stages[${stages_count},rel_type]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_rel_type})
-					stages[${stages_count},releng_base]=${_releng_base}
-					stages[${stages_count},arch_basearch]=${_basearch}
-					stages[${stages_count},arch_baseraw]=${_baseraw}
-					stages[${stages_count},arch_subarch]=${_subarch}
-					stages[${stages_count},arch_family]=${_family}
-					stages[${stages_count},arch_interpreter]=${_interpreter}
-					stages[${stages_count},arch_emulation]=${_emulation}
-					stages[${stages_count},chost]=${_chost}
-					stages[${stages_count},common_flags]=${_common_flags}
-					stages[${stages_count},cpu_flags]=${_cpu_flags}
-					stages[${stages_count},compression_mode]=${_compression_mode}
-					stages[${stages_count},available_build]=${_available_build}
-					stages[${stages_count},timestamp_available]=${_available_build_timestamp}
-					stages[${stages_count},catalyst_conf]=${_catalyst_conf}
-
-					stages_count=$((stages_count + 1))
-				fi
-
-				# Binhost jobs loading.
-				if [[ -f ${stage_binhost_info_path} ]]; then
-					# Create binhost job for ${stage_binhost_info_path}
-
-					local stage_binhost_source_subpath=$(read_spec_variable ${stage_binhost_info_path} source_subpath)
-					local stage_binhost_subarch=$(read_spec_variable ${stage_binhost_info_path} subarch) # eq.: cell
-					local stage_binhost_chost=$(read_spec_variable ${stage_binhost_info_path} chost)
-					local stage_binhost_common_flags=$(read_spec_variable ${stage_binhost_info_path} common_flags)
-					local stage_binhost_cpu_flags=$(read_spec_variable ${stage_binhost_info_path} cpu_flags)
-					local stage_binhost_repos=$(read_spec_variable ${stage_binhost_info_path} repos)
-					local stage_binhost_binrepo=$(read_spec_variable ${stage_binhost_info_path} binrepo)
-					local stage_binhost_binrepo_path=$(read_spec_variable ${stage_binhost_info_path} binrepo_path)
-
-					local _kind=binhost
-					local _target=binhost
-					local _releng_base=stages
-					local _version_stamp='@TIMESTAMP@'
-					local _platform=${platform}
-					local _release=${release}
-					local _stage=${stage}
-					local _rel_type=${platform}/${release}
-					local _basearch=${platform_basearch}
-					local _baseraw=${platform_baseraw}
-					local _family=${platform_family}
-					local _interpreter=${platform_interpreter} # Can be skipped in spec, will be determined from platform.conf
-					local _emulation=$( [[ ${host_arch} = ${_basearch} ]] && echo false || echo true )
-					local _subarch=${stage_binhost_subarch:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
-					local _chost=${stage_binhost_chost:-${release_chost:-${platform_chost}}} # Can be definied in platform, release or stage (spec)
-					local _cpu_flags=${stage_binhost_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
-					local _common_flags=${stage_binhost_common_flags:-${release_common_flags:-${platform_common_flags}}} # Can be definied in platform, release or stage (spec)
-					local _repos=${stage_binhost_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
-					local _binrepo=${stage_binhost_binrepo:-${release_binrepo:-${platform_binrepo:-${binpkgs_cache_path}/local}}}
-					local _binrepo_path=${stage_binhost_binrepo_path:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
-					local _source_subpath=${stage_binhost_source_subpath}
-					local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
-					local _is_selected=$(is_stage_selected ${_platform} ${_release} ${_stage})
-
-					stages[${stages_count},kind]=${_kind}
-					stages[${stages_count},platform]=${_platform}
-					stages[${stages_count},release]=${_release}
-					stages[${stages_count},stage]=${_stage}
-					stages[${stages_count},target]=${_target}
-					stages[${stages_count},rel_type]=${_rel_type}
-					stages[${stages_count},releng_base]=${_releng_base}
-					stages[${stages_count},version_stamp]=${_version_stamp}
-					stages[${stages_count},arch_basearch]=${_basearch}
-					stages[${stages_count},arch_baseraw]=${_baseraw}
-					stages[${stages_count},arch_subarch]=${_subarch}
-					stages[${stages_count},arch_family]=${_family}
-					stages[${stages_count},arch_interpreter]=${_interpreter}
-					stages[${stages_count},arch_emulation]=${_emulation}
-					stages[${stages_count},chost]=${_chost}
-					stages[${stages_count},common_flags]=${_common_flags}
-					stages[${stages_count},cpu_flags]=${_cpu_flags}
-					stages[${stages_count},overlays]=${_repos}
-					stages[${stages_count},binrepo]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_binrepo})
-					stages[${stages_count},binrepo_path]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_binrepo_path})
-					stages[${stages_count},source_subpath]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_source_subpath})
-					stages[${stages_count},product]=[BINHOST]:${_product}
-					stages[${stages_count},selected]=${_is_selected}
-
-					stages_count=$((stages_count + 1))
-				fi
-
-				# TODO: Loading download and binhost jobs
+				#fi
 
 			done
 		done
@@ -568,7 +487,7 @@ write_stages() {
 			local stage_overlay_path_work=${stage_path_work}/overlay
 			local stage_root_overlay_path_work=${stage_path_work}/root_overlay
 			local stage_fsscript_path_work=${stage_path_work}/fsscript.sh
-			local stage_build_info_path_work=${stage_path_work}/build.spec
+			local stage_info_path_work=${stage_path_work}/stage.spec
 			local target_mapping=${TARGET_MAPPINGS[${stages[${i},target]}]:-${stages[${i},target]}}
 			local stage_pkgcache_path=${stages[${i},binrepo_local_path]}/${stages[${i},binrepo_path]}
 
@@ -599,77 +518,77 @@ write_stages() {
 			fi
 
 			# Replace spec templates with real data:
-			echo "" >> ${stage_build_info_path_work} # Add new line, to separate new entries
-			echo "# Added by catalyst-lab" >> ${stage_build_info_path_work}
+			echo "" >> ${stage_info_path_work} # Add new line, to separate new entries
+			echo "# Added by catalyst-lab" >> ${stage_info_path_work}
 
-			set_spec_variable ${stage_build_info_path_work} source_subpath ${stages[${i},source_subpath]} # source_subpath shoud always be replaced with calculated value, to take into consideration existing old builds usage.
+			set_spec_variable ${stage_info_path_work} source_subpath ${stages[${i},source_subpath]} # source_subpath shoud always be replaced with calculated value, to take into consideration existing old builds usage.
 
-			set_spec_variable_if_missing ${stage_build_info_path_work} target ${stages[${i},target]}
-			set_spec_variable_if_missing ${stage_build_info_path_work} rel_type ${stages[${i},rel_type]}
-			set_spec_variable_if_missing ${stage_build_info_path_work} subarch ${stages[${i},arch_subarch]}
-			set_spec_variable_if_missing ${stage_build_info_path_work} version_stamp ${stages[${i},version_stamp]}
-			set_spec_variable_if_missing ${stage_build_info_path_work} snapshot_treeish ${stages[${i},treeish]}
-			set_spec_variable_if_missing ${stage_build_info_path_work} portage_confdir ${portage_path_work}
-			set_spec_variable_if_missing ${stage_build_info_path_work} pkgcache_path ${stage_pkgcache_path}
+			set_spec_variable_if_missing ${stage_info_path_work} target ${stages[${i},target]}
+			set_spec_variable_if_missing ${stage_info_path_work} rel_type ${stages[${i},rel_type]}
+			set_spec_variable_if_missing ${stage_info_path_work} subarch ${stages[${i},arch_subarch]}
+			set_spec_variable_if_missing ${stage_info_path_work} version_stamp ${stages[${i},version_stamp]}
+			set_spec_variable_if_missing ${stage_info_path_work} snapshot_treeish ${stages[${i},treeish]}
+			set_spec_variable_if_missing ${stage_info_path_work} portage_confdir ${portage_path_work}
+			set_spec_variable_if_missing ${stage_info_path_work} pkgcache_path ${stage_pkgcache_path}
 
-			update_spec_variable ${stage_build_info_path_work} TIMESTAMP ${stages[${i},timestamp_generated]}
-			update_spec_variable ${stage_build_info_path_work} PLATFORM ${stages[${i},platform]}
-			update_spec_variable ${stage_build_info_path_work} RELEASE ${stages[${i},release]}
-			update_spec_variable ${stage_build_info_path_work} TREEISH ${stages[${i},treeish]}
-			update_spec_variable ${stage_build_info_path_work} FAMILY_ARCH ${stages[${i},arch_family]}
-			update_spec_variable ${stage_build_info_path_work} BASE_ARCH ${stages[${i},arch_basearch]}
-			update_spec_variable ${stage_build_info_path_work} SUB_ARCH ${stages[${i},arch_subarch]}
-			update_spec_variable ${stage_build_info_path_work} PKGCACHE_BASE_PATH ${pkgcache_base_path}
+			update_spec_variable ${stage_info_path_work} TIMESTAMP ${stages[${i},timestamp_generated]}
+			update_spec_variable ${stage_info_path_work} PLATFORM ${stages[${i},platform]}
+			update_spec_variable ${stage_info_path_work} RELEASE ${stages[${i},release]}
+			update_spec_variable ${stage_info_path_work} TREEISH ${stages[${i},treeish]}
+			update_spec_variable ${stage_info_path_work} FAMILY_ARCH ${stages[${i},arch_family]}
+			update_spec_variable ${stage_info_path_work} BASE_ARCH ${stages[${i},arch_basearch]}
+			update_spec_variable ${stage_info_path_work} SUB_ARCH ${stages[${i},arch_subarch]}
+			update_spec_variable ${stage_info_path_work} PKGCACHE_BASE_PATH ${pkgcache_base_path}
 
 			# releng portage_prefix.
 			if [[ -n ${stages[${i},releng_base]} ]]; then
-				set_spec_variable_if_missing ${stage_build_info_path_work} portage_prefix releng
-				sed -i '/^releng_base:/d' ${stage_build_info_path_work}
+				set_spec_variable_if_missing ${stage_info_path_work} portage_prefix releng
+				sed -i '/^releng_base:/d' ${stage_info_path_work}
 			fi
 
-			[[ -n ${stages[$${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_build_info_path_work} common_flags "${stages[${i},common_flags]}"
-			[[ ${stages[${i},arch_emulation]} = true ]] && set_spec_variable_if_missing ${stage_build_info_path_work} interpreter "${stages[${i},arch_interpreter]}"
-			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_build_info_path_work} ${target_mapping}/overlay ${stage_overlay_path_work}
-			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_build_info_path_work} ${target_mapping}/root_overlay ${stage_root_overlay_path_work}
-			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_build_info_path_work} ${target_mapping}/fsscript ${stage_fsscript_path_work}
-			[[ -n ${stages[${i},overlays_local_paths]} ]] && set_spec_variable_if_missing ${stage_build_info_path_work} repos "${stages[${i},overlays_local_paths]}"
+			[[ -n ${stages[$${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_info_path_work} common_flags "${stages[${i},common_flags]}"
+			[[ ${stages[${i},arch_emulation]} = true ]] && set_spec_variable_if_missing ${stage_info_path_work} interpreter "${stages[${i},arch_interpreter]}"
+			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/overlay ${stage_overlay_path_work}
+			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/root_overlay ${stage_root_overlay_path_work}
+			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/fsscript ${stage_fsscript_path_work}
+			[[ -n ${stages[${i},overlays_local_paths]} ]] && set_spec_variable_if_missing ${stage_info_path_work} repos "${stages[${i},overlays_local_paths]}"
 
 			# Special variables for only some stages:
 
 			# Update seed.
 			if [[ ${stages[${i},target]} = stage1 ]]; then
-				set_spec_variable_if_missing ${stage_build_info_path_work} update_seed yes
-				set_spec_variable_if_missing ${stage_build_info_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg @system @world"
+				set_spec_variable_if_missing ${stage_info_path_work} update_seed yes
+				set_spec_variable_if_missing ${stage_info_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg @system @world"
 			fi
 
 			# Binrepo path.
 			if [[ ${stages[${i},target]} = stage4 ]]; then
-				set_spec_variable_if_missing ${stage_build_info_path_work} binrepo_path ${stages[${i},binrepo_path]}
+				set_spec_variable_if_missing ${stage_info_path_work} binrepo_path ${stages[${i},binrepo_path]}
 			fi
 
 			# LiveCD - stage2 specific default values.
 			if [[ ${stages[${i},target]} = livecd-stage2 ]]; then
-				set_spec_variable_if_missing ${stage_build_info_path_work} type gentoo-release-minimal
-				set_spec_variable_if_missing ${stage_build_info_path_work} volid Gentoo_${stages[${i},platform]}
-				set_spec_variable_if_missing ${stage_build_info_path_work} fstype squashfs
-				set_spec_variable_if_missing ${stage_build_info_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp]}.iso
+				set_spec_variable_if_missing ${stage_info_path_work} type gentoo-release-minimal
+				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo_${stages[${i},platform]}
+				set_spec_variable_if_missing ${stage_info_path_work} fstype squashfs
+				set_spec_variable_if_missing ${stage_info_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp]}.iso
 			fi
 
 			if [[ -n ${stages[${i},chost]} ]] && [[ ${stages[${i},target]} = stage1 ]]; then # Only allow setting chost in stage1 targets.
-				set_spec_variable_if_missing ${stage_build_info_path_work} chost ${stages[${i},chost]}
+				set_spec_variable_if_missing ${stage_info_path_work} chost ${stages[${i},chost]}
 			fi
 
 			if contains_string COMPRESSABLE_TARGETS[@] ${stages[${i},target]}; then
-				set_spec_variable_if_missing ${stage_build_info_path_work} compression_mode ${stages[${i},compression_mode]}
+				set_spec_variable_if_missing ${stage_info_path_work} compression_mode ${stages[${i},compression_mode]}
 			fi
 
 			# Add target prefix to things like use, rcadd, unmerge, etc.
 			for target_key in ${TARGET_KEYS[@]}; do
-				sed -i "s|^${target_key}:|${target_mapping}/${target_key}:|" ${stage_build_info_path_work}
+				sed -i "s|^${target_key}:|${target_mapping}/${target_key}:|" ${stage_info_path_work}
 			done
 
 			# Create links to spec files and optionally to catalyst_conf if using custom.
-			ln -s ${stage_build_info_path_work} ${spec_link_work}.spec
+			ln -s ${stage_info_path_work} ${spec_link_work}.spec
 			[[ -f ${catalyst_conf_work} ]] && ln -s ${catalyst_conf_work} ${spec_link_work}.catalyst.conf
 
 		elif [[ ${stages[${i},kind]} = download ]]; then
@@ -716,10 +635,10 @@ build_stages() {
 			echo ""
 
 			# Setup used paths:
-			local stage_build_info_path_work=${stage_path_work}/build.spec
+			local stage_info_path_work=${stage_path_work}/stage.spec
 			local catalyst_conf_work=${stage_work_path}/catalyst.conf
 
-			local args="-af ${stage_build_info_path_work}"
+			local args="-af ${stage_info_path_work}"
 			[[ -f ${catalyst_conf_work} ]] && args="${args} -c ${catalyst_conf_work}"
 
 			# Perform build
@@ -1217,6 +1136,7 @@ declare -A RELENG_BASES=(
 	# while the name of releng portage subfolder is filled automatically.
 	[stage1]=stages [stage2]=stages [stage3]=stages [stage4]=stages
 	[livecd-stage1]=isos [livecd-stage2]=isos
+	[binhost]=stages
 )
 # List of targets that are compressed after build. This allows adding compression_mode property automatically to stages.
 declare COMPRESSABLE_TARGETS=(stage1 stage2 stage3 stage4 livecd-stage1 livecd-stage2)
