@@ -55,8 +55,8 @@ load_stages() {
 				# Set stage_catalyst_conf variable for stage based on file existance.
 				[[ -f ${stage_path}/catalyst.conf ]] && stage_catalyst_conf=${stage_path}/catalyst.conf || unset stage_catalyst_conf
 
-				# Load values stored directly in stage.spec:
-				local properties_to_load=(kind binrepo binrepo_path chost common_flags compression_mode cpu_flags rel_type releng_base repos source_subpath subarch target treeish version_stamp profile)
+				# Load values stored directly in stage.spec to variables with stage_ prefix.
+				local properties_to_load=(kind binrepo binrepo_path chost common_flags compression_mode cpu_flags rel_type releng_base repos source_subpath subarch target treeish version_stamp profile packages)
 				for key in ${properties_to_load[@]}; do
 					eval "local stage_${key}=\$(read_spec_variable ${stage_info_path} ${key})"
 				done
@@ -110,6 +110,7 @@ load_stages() {
 				stages[${stages_count},arch_family]=${platform_family}
 				stages[${stages_count},arch_interpreter]=${platform_interpreter}
 				stages[${stages_count},treeish]=${stage_treeish} # At this point it could be empty. Will be set automatically later.
+				stages[${stages_count},packages]=${stage_packages}
 				# Modified entries, that can be adjusted by the script:
 				stages[${stages_count},kind]=${_kind}
 				stages[${stages_count},target]=${_target}
@@ -708,7 +709,7 @@ EOF
 
 					# Install packages inside chroot environment.
 					chroot ${build_work_path} /bin/bash -c '
-						emerge --buildpkg --usepkg --changed-use --update --deep --quiet nano sudo
+						emerge --buildpkg --usepkg --changed-use --update --deep --quiet ${stages[${i},packages]}
 					'
 				"
 
@@ -891,7 +892,7 @@ read_spec_variable() {
 	local spec_path=${1}
 	local variable_name=${2}
 	# get variable from spec file and trim whitespaces.
-	local value=$(cat ${spec_path} | sed -n "/^${variable_name}:/s/^${variable_name}:\(.*\)/\1/p" | tr -d '[:space:]')
+	local value=$(cat ${spec_path} | sed -n "/^${variable_name}:/s/^${variable_name}:\(.*\)/\1/p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 	echo ${value}
 }
 
@@ -1215,7 +1216,7 @@ declare STAGE_KEYS=( # Variables stored in stages[] for the script.
 
 	treeish      repos        repos_local_paths binrepo     binrepo_local_path
 	binrepo_path binrepo_kind catalyst_conf     releng_base version_stamp
-	compression_mode
+	compression_mode          packages
 
 	selected rebuild takes_part
 
