@@ -606,13 +606,15 @@ write_stages() {
 			local download_dir=$(dirname ${download_path})
 
 			# Prepare download script for download job.
-			echo "#!/bin/bash" > ${download_script_path_work}
-			echo "file=${download_path}" >> ${download_script_path_work}
-			echo "[[ -f \${file} ]] && echo 'File already exists' && exit" >> ${download_script_path_work} # Skip download if file already exists
-			echo "mkdir -p ${download_dir}" >> ${download_script_path_work}
-			echo "trap '[[ -f \${file} ]] && rm -f \${file}' EXIT INT" >> ${download_script_path_work}
-			echo "wget ${stages[${i},url]} -O \${file} || exit 1" >> ${download_script_path_work}
-			echo "trap - EXIT" >> ${download_script_path_work}
+			cat <<EOF | sed 's/^[ \t]*//' | tee ${download_script_path_work} > /dev/null || exit 1
+				#!/bin/bash
+				file=${download_path}
+				[[ -f \${file} ]] && echo 'File already exists' && exit
+				mkdir -p ${download_dir}
+				trap '[[ -f \${file} ]] && rm -f \${file}' EXIT INT
+				wget ${stages[${i},url]} -O \${file} || exit 1
+				trap - EXIT
+EOF
 			chmod +x ${download_script_path_work}
 
 			# Create link to download script.
@@ -621,9 +623,12 @@ write_stages() {
 		elif [[ ${stages[${i},kind]} = binhost ]]; then
 			# Create stage for building binhost packages.
 
+			# Prepare build script for binhost job.
 			local binhost_script_path_work=${stage_path_work}/build-binpkgs.sh
-			echo "#!/bin/bash" > ${binhost_script_path_work}
-			echo "echo 'Currently not supported.'" >> ${binhost_script_path_work}
+			cat <<EOF | sed 's/^[ \t]*//' | tee ${binhost_script_path_work} > /dev/null || exit 1
+				#!/bin/bash
+				echo "Currently not supported"
+EOF
 			chmod +x ${binhost_script_path_work}
 
 			# Create link to build script.
@@ -1190,20 +1195,20 @@ if [[ ! -f /etc/catalyst-lab/catalyst-lab.conf ]]; then
 	# Create default config if not available
 	mkdir -p /etc/catalyst-lab
 	mkdir -p /etc/catalyst-lab/templates
-	cat <<EOF | tee /etc/catalyst-lab/catalyst-lab.conf > /dev/null || exit 1
-# Main configuration for catalyst-lab.
-seeds_url=https://gentoo.osuosl.org/releases/@ARCH_FAMILY@/autobuilds
-templates_path=/etc/catalyst-lab/templates
-releng_path=/opt/releng
-catalyst_path=/var/tmp/catalyst
-catalyst_usr_path=/usr/share/catalyst
-binpkgs_cache_path=/var/cache/catalyst-lab/binpkgs
-repos_cache_path=/var/cache/catalyst-lab/repos
-tmp_path=/tmp/catalyst-lab
-tmpfs_size=6
-ssh_username=catalyst-lab # Important! Replace with your username. This value is used when downloading/uploading rsync binrepos.
-jobs=$(nproc)
-load_average=$(nproc).0
+	cat <<EOF | sed 's/^[ \t]*//' | tee /etc/catalyst-lab/catalyst-lab.conf > /dev/null || exit 1
+		# Main configuration for catalyst-lab.
+		seeds_url=https://gentoo.osuosl.org/releases/@ARCH_FAMILY@/autobuilds
+		templates_path=/etc/catalyst-lab/templates
+		releng_path=/opt/releng
+		catalyst_path=/var/tmp/catalyst
+		catalyst_usr_path=/usr/share/catalyst
+		binpkgs_cache_path=/var/cache/catalyst-lab/binpkgs
+		repos_cache_path=/var/cache/catalyst-lab/repos
+		tmp_path=/tmp/catalyst-lab
+		tmpfs_size=6
+		ssh_username=catalyst-lab # Important! Replace with your username. This value is used when downloading/uploading rsync binrepos.
+		jobs=$(nproc)
+		load_average=$(nproc).0
 EOF
 	echo "Default config file created: /etc/catalyst-lab/catalyst-lab.conf"
 	echo ""
