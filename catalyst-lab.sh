@@ -649,15 +649,11 @@ EOF
 				echo "*/* "${stages[${i},cpu_flags]} > ${package_use_path_work}/00cpu-flags
 			fi
 
-			# Setup profile if used.
-			if [[ -n ${stages[${i},profile]} ]]; then
-				# TODO: Make it also work for profiles from outside gentoo, like ps3:default...
-				#										
-				[[ -f ${portage_path_work}/make.profile ]] && rm ${portage_path_work}/make.profile
-				pushd ${portage_path_work} > /dev/null
-				ln -s ../../var/db/repos/gentoo/profiles/${stages[${i},profile]} ${portage_path_work}/make.profile
-				popd > /dev/null
-			fi
+			# Load common_flags, use and chost from toml or from stage if set.
+			local common_flags=${stages[${i},common_flags]} # TODO: LOAD DEFAULTS FROM TOML FILE
+			local chost=${stages[${i},chost]} # TODO: LOAD DEFAULTS FROM TOML FILE
+			# TODO: Same with use
+
 
 			# TODO: Mounting overlay repos.
 			# TODO: Setup common_flags, use flags and add bindinst to use. Also copy defaults from corresponding toml file here, to make.conf. Overwrites for CPUFLAGS can still be set with 00cpu-flags.
@@ -673,6 +669,9 @@ EOF
 				echo "Extract ${source_tarball_path} to ${build_work_path}"
 				tar -xpf ${source_tarball_path} -C ${build_work_path}
 
+				# Cleanup build_work_path on exit.
+				trap 'echo "Cleaning: ${build_work_path}"; rm -rf ${build_work_path}' EXIT
+
 				if [[ ${stages[${i},arch_emulation]} = true ]]; then
 					for interpreter in "${stages[${i},arch_interpreter]}"; do
 						echo "Inject interpreter: \${interpreter}"
@@ -683,47 +682,68 @@ EOF
 				echo "Preparing portage directory"
 				cp -ru ${portage_path_work}/* ${build_work_path}/etc/portage/
 
+				# Set common-flags and chost.
+				[[ -n "${common_flags}" ]] && sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf
+				[[ -n "${chost}" ]] && sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf
+
 				# Extract portage snapshot.
 				echo "Preparing portage snapshot"
 				unsquashfs -d ${build_work_path}/var/db/repos/gentoo ${catalyst_path}/snapshots/gentoo-${stages[${i},treeish]}.sqfs
 
-				echo "Emerging packages"
+				echo "Entering chroot environment"
 				unshare --mount -- bash -c "
 					# Mount necessary filesystems
 					mkdir -p ${build_work_path}/{dev,dev/pts,proc,sys,run}
 					mount -t proc /proc ${build_work_path}/proc
 					mount -t sysfs /sys ${build_work_path}/sys
-					mount -t tmpfs tmpfs ${build_work_path}/run  # Use tmpfs for run to isolate it
-					mount -t devtmpfs devtmpfs ${build_work_path}/dev  # Use devtmpfs for devices
+					mount -t tmpfs tmpfs ${build_work_path}/run
+					mount -t devtmpfs devtmpfs ${build_work_path}/dev
 					mount -t devpts devpts ${build_work_path}/dev/pts
 
 					# Bind mount binrepo to /var/cache/binpkgs to allow using and building packages for the binrepo.
 					mount --bind ${binrepo_path} ${build_work_path}/var/cache/binpkgs
+
+					# Bind overlay repos.
+					repo_mount_paths=''
+					if [[ -n '${stages[${i},repos_local_paths]}' ]]; then
+						for repo in '${stages[${i},repos_local_paths]}'; do
+							repo_name=\\\$(basename \\\${repo})
+							repo_mount_path=/var/db/repos/\\\${repo_name}
+							mkdir \\\${repo_mount_path}
+							mount --bind \\\${repo} \\\${repo_mount_path}
+							repo_mount_paths=\\"\\\${repo_mount_paths},\\\${repo_mount_path}\\"
+						done
+					fi
+
+					if [[ -n '${stages[${i},profile]}' ]]; then
+						eselect profile set ${stages[${i},profile]}
+					fi
 
 					# Bind mount resolv.conf for DNS resolution
 					[[ ! -f ${build_work_path}/etc/resolv.conf ]] && touch ${build_work_path}/etc/resolv.conf
 					mount --bind /etc/resolv.conf ${build_work_path}/etc/resolv.conf
 
 					# Trap to ensure cleanup
-					trap 'umount -l ${build_work_path}/{dev/pts,dev,proc,sys,run,var/cache/binpkgs,etc/resolv.conf}' EXIT
+					trap 'umount -l ${build_work_path}/{dev/pts,dev,proc,sys,run,var/cache/binpkgs,etc/resolv.conf\\\${repo_mount_paths}}' EXIT
 
 					# Install packages inside chroot environment.
 					chroot ${build_work_path} /bin/bash -c '
-						emerge --buildpkg --usepkg --changed-use --update --deep --quiet ${stages[${i},packages]}
+						emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going --quiet ${stages[${i},packages]}
 					'
 				"
 
 				# TODO:
 				# + Extract source archive
 				# + Combine with portage directory (including releng base elements)
-				# - Bind working directories
+				# + Bind working directories
 				# + Copy interpreters
 				# + Setup profile
+				# + Bind overlays
 				# - Setup common_flags, use flags, etc in portage
 				# + Extract portage snapshot used
-				# - Get the list of packages to build and emerge them with correct flags
-				# - Unmount binded folders
-				# - Cleanup file
+				# + Get the list of packages to build and emerge them with correct flags
+				# + Unmount binded folders
+				# + Cleanup files
 EOF
 			chmod +x ${binhost_script_path_work}
 
