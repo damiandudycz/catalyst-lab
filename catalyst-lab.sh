@@ -403,6 +403,8 @@ fetch_repos() {
 			fi
 		fi
 	done
+
+	echo_color ${color_green} "Remote repositories prepared"
 	echo ""
 }
 
@@ -618,8 +620,15 @@ write_stages() {
 
 		elif [[ ${stages[${i},kind]} = binhost ]]; then
 			# Create stage for building binhost packages.
-			# Maybe create script, prepare patches in work dir
-			echo "Preparing workspace for ${stages[${i},product]}. Currently not supported."
+
+			local binhost_script_path_work=${stage_path_work}/build-binpkgs.sh
+			echo "#!/bin/bash" > ${binhost_script_path_work}
+			echo "echo 'Currently not supported.'" >> ${binhost_script_path_work}
+			chmod +x ${binhost_script_path_work}
+
+			# Create link to build script.
+			ln -s ${binhost_script_path_work} ${spec_link_work}.sh
+
 		fi
 	done
 
@@ -637,7 +646,6 @@ build_stages() {
 
 		if [[ ${stages[${i},kind]} = build ]]; then
 			echo -e "${color_turquoise}Building stage: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
-			echo ""
 
 			# Setup used paths:
 			local stage_info_path_work=${stage_path_work}/stage.spec
@@ -654,7 +662,6 @@ build_stages() {
 
 		elif [[ ${stages[${i},kind]} = download ]]; then
 			echo -e "${color_turquoise}Downloading stage: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
-			echo ""
 
 			# Setup used paths:
 			local download_script_path_work=${stage_path_work}/download.sh
@@ -667,12 +674,20 @@ build_stages() {
 
 		elif [[ ${stages[${i},kind]} = binhost ]]; then
 			echo -e "${color_turquoise}Building packages in stage: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
-			echo ""
-			echo "Currently not supported"
+
+			# Setup used paths:
+			local binhost_script_path_work=${stage_path_work}/build-binpkgs.sh
+
+			# Perform build
+			${binhost_script_path_work} || exit 1
+
+                        echo -e "${color_green}Stage build completed: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
 			echo ""
 		fi
 
 	done
+
+	echo_color ${color_green} "Stage builds completed"
 	echo ""
 }
 
