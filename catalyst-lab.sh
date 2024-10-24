@@ -73,7 +73,7 @@ load_stages() {
 					local _target=${stage_target:-binhost}
 				fi
 				# Prepare variables with form shared between kinds.
-				local _selected=$(is_stage_selected ${_platform} ${_release} ${_stage})
+				local _selected=$(is_stage_selected ${platform} ${release} ${stage})
 				local _arch_emulation=$( [[ ${host_arch} = ${platform_basearch} ]] && echo false || echo true )
 				local _subarch=${stage_subarch:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
 				local _repos=${stage_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)

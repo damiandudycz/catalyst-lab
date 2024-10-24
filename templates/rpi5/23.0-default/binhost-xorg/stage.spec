@@ -1,2 +1,2 @@
 kind: binhost
-source_subpath: @PLATFORM@/@RELEASE@/stage3-@SUB_ARCH@-base-openrc-@TIMESTAMP@
+source_subpath: @FAMILY_ARCH@/gentoo/stage3-@BASE_ARCH@-openrc-@TIMESTAMP@
