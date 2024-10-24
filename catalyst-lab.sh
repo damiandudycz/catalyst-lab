@@ -116,7 +116,7 @@ load_stages() {
 				stages[${stages_count},selected]=${_selected}
 				stages[${stages_count},arch_emulation]=${_arch_emulation}
 				stages[${stages_count},arch_subarch]=${_subarch}
-				stages[${stages_count},overlays]=${_repos}
+				stages[${stages_count},repos]=${_repos}
 				stages[${stages_count},chost]=${_chost}
 				stages[${stages_count},common_flags]=${_common_flags}
 				stages[${stages_count},cpu_flags]=${_cpu_flags}
@@ -261,16 +261,16 @@ load_stages() {
 	draw_stages_tree
 	echo ""
 
-	# Determinel overlays local paths.
+	# Determinel repos local paths.
 	local i; for (( i=0; i<${stages_count}; i++ )); do
-		if [[ -n ${stages[${i},overlays]} ]]; then
+		if [[ -n ${stages[${i},repos]} ]]; then
 			# Map download repositories to local names
 			local local_repo_urls=()
-			for repo in ${stages[${i},overlays]}; do
+			for repo in ${stages[${i},repos]}; do
 				local_repo_urls+=$(repo_local_path ${repo})
 			done
 			local_repo_urls="${local_repo_urls[@]}" # Map to string
-			stages[${i},overlays_local_paths]="${local_repo_urls}" # Save local paths in stage details.
+			stages[${i},repos_local_paths]="${local_repo_urls}" # Save local paths in stage details.
 		fi
 	done
 
@@ -339,9 +339,9 @@ fetch_repos() {
 	# Process remote overlay repos.
 	local handled_repos=()
 	local i; for (( i=0; i<${stages_count}; i++ )); do
-		if [[ -n ${stages[${i},overlays]} ]]; then
+		if [[ -n ${stages[${i},repos]} ]]; then
 			# Clone/pull used repositories
-			for repo in ${stages[${i},overlays]}; do
+			for repo in ${stages[${i},repos]}; do
 				[[ ${stages[${i},rebuild]} = true ]] || continue # Only fetch for selected repos
 				contains_string handled_repos[@] ${repo} && continue
 				handled_repos+=(${repo})
@@ -551,7 +551,7 @@ write_stages() {
 			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/overlay ${stage_overlay_path_work}
 			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/root_overlay ${stage_root_overlay_path_work}
 			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/fsscript ${stage_fsscript_path_work}
-			[[ -n ${stages[${i},overlays_local_paths]} ]] && set_spec_variable_if_missing ${stage_info_path_work} repos "${stages[${i},overlays_local_paths]}"
+			[[ -n ${stages[${i},repos_local_paths]} ]] && set_spec_variable_if_missing ${stage_info_path_work} repos "${stages[${i},repos_local_paths]}"
 
 			# Special variables for only some stages:
 
@@ -1031,9 +1031,9 @@ is_taking_part_in_rebuild() {
 repo_local_path() {
 	local repository=${1}
 	if [[ ${repository} == http://* || ${repository} == https://* ]]; then
-		local repo_kind=git # Currently only git is supported for remote overlays
+		local repo_kind=git # Currently only git is supported for remote repos
 		local local_name=$(echo ${repository} | sed 's|http[s]*://||' | sed -e 's/[^A-Za-z0-9._-]/_/g')
-		echo ${overlays_cache_path}/${repo_kind}_${local_name}
+		echo ${repos_cache_path}/${repo_kind}_${local_name}
 	else
 		echo ${repository}
 	fi
@@ -1093,8 +1093,8 @@ declare STAGE_KEYS=( # Variables stored in stages[] for the script.
 
 	chost common_flags cpu_flags
 
-	treeish      overlays     overlays_local_paths binrepo     binrepo_local_path
-	binrepo_path binrepo_kind catalyst_conf        releng_base version_stamp
+	treeish      repos        repos_local_paths binrepo     binrepo_local_path
+	binrepo_path binrepo_kind catalyst_conf     releng_base version_stamp
 	compression_mode
 
 	selected rebuild takes_part
@@ -1178,7 +1178,7 @@ releng_path=/opt/releng
 catalyst_path=/var/tmp/catalyst
 catalyst_usr_path=/usr/share/catalyst
 binpkgs_cache_path=/var/cache/catalyst-lab/binpkgs
-overlays_cache_path=/var/cache/catalyst-lab/overlays
+repos_cache_path=/var/cache/catalyst-lab/repos
 tmp_path=/tmp/catalyst-lab
 tmpfs_size=6
 ssh_username=catalyst-lab # Important! Replace with your username. This value is used when downloading/uploading rsync binrepos.
