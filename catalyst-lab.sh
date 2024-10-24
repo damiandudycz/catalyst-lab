@@ -629,6 +629,7 @@ EOF
 			local binhost_script_path_work=${stage_path_work}/build-binpkgs.sh
 			local source_tarball_path=${catalyst_builds_path}/${stages[${i},source_subpath]}.tar.xz
 			local build_work_path=${work_path}/binhosts/${stages[${i},product]}
+			local binrepo_path=${stages[${i},binrepo_local_path]}/${stages[${i},binrepo_path]}
 
 			# Create new portage_work_path if doesn't exists.
 			mkdir -p ${portage_path_work}
@@ -657,10 +658,9 @@ EOF
 				popd > /dev/null
 			fi
 
+			# TODO: Mounting overlay repos.
 			# TODO: Setup common_flags, use flags and add bindinst to use. Also copy defaults from corresponding toml file here, to make.conf. Overwrites for CPUFLAGS can still be set with 00cpu-flags.
-
 			# TODO: Make sure that when emerging new packages, default gentoo binrepos.conf is not being used. This can probably be achieved with correct emerge flags. Still local binrepo packages should be used!
-
 
 			mkdir -p ${build_work_path}
 
@@ -679,9 +679,6 @@ EOF
 					done
 				fi
 
-				echo "Copy resolve.conf"
-				cp /etc/resolve.conf ${build_work_path}/etc/resolve.conf
-
 				echo "Preparing portage directory"
 				cp -ru ${portage_path_work}/* ${build_work_path}/etc/portage/
 
@@ -690,21 +687,30 @@ EOF
 				unsquashfs -d ${build_work_path}/var/db/repos/gentoo ${catalyst_path}/snapshots/gentoo-${stages[${i},treeish]}.sqfs
 
 				echo "Emerging packages"
-unshare --mount -- bash -c "
-  mount --types proc /proc ${build_work_path}/proc
-  mount --bind /dev ${build_work_path}/dev
-  mount --bind /sys ${build_work_path}/sys
-  mount --bind /run ${build_work_path}/run
+				unshare --mount -- bash -c "
+					# Mount necessary filesystems
+					mkdir -p ${build_work_path}/{dev,dev/pts,proc,sys,run}
+					mount -t proc /proc ${build_work_path}/proc
+					mount -t sysfs /sys ${build_work_path}/sys
+					mount -t tmpfs tmpfs ${build_work_path}/run  # Use tmpfs for run to isolate it
+					mount -t devtmpfs devtmpfs ${build_work_path}/dev  # Use devtmpfs for devices
+					mount -t devpts devpts ${build_work_path}/dev/pts
 
-  # Trap to ensure cleanup
-  trap 'umount -l ${build_work_path}/{dev,proc,sys,run}' EXIT
+					# Bind mount binrepo to /var/cache/binpkgs to allow using and building packages for the binrepo.
+					mount --bind ${binrepo_path} ${build_work_path}/var/cache/binpkgs
 
-  # Perform chroot
-  chroot ${build_work_path} /bin/bash -c '
-    emerge nano
-  '
-"
+					# Bind mount resolv.conf for DNS resolution
+					[[ ! -f ${build_work_path}/etc/resolv.conf ]] && touch ${build_work_path}/etc/resolv.conf
+					mount --bind /etc/resolv.conf ${build_work_path}/etc/resolv.conf
 
+					# Trap to ensure cleanup
+					trap 'umount -l ${build_work_path}/{dev/pts,dev,proc,sys,run,var/cache/binpkgs,etc/resolv.conf}' EXIT
+
+					# Install packages inside chroot environment.
+					chroot ${build_work_path} /bin/bash -c '
+						emerge --buildpkg --usepkg --changed-use --update --deep --quiet nano sudo
+					'
+				"
 
 				# TODO:
 				# + Extract source archive
