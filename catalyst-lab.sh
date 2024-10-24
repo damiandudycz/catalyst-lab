@@ -51,24 +51,27 @@ load_stages() {
 			for stage in ${RL_VAL_RELEASE_STAGES[@]}; do
 				local stage_path=${templates_path}/${platform}/${release}/${stage}
 
-				local stage_build_path=${stage_path}/build.spec
-				local stage_binhost_path=${stage_path}/binhost.spec
-				local stage_download_path=${stage_path}/download.spec
+				local stage_build_info_path=${stage_path}/build.spec
+				local stage_binhost_info_path=${stage_path}/binhost.spec
+				local stage_download_info_path=${stage_path}/download.spec
 
-				# download (download) jobs loading.
-				if [[ -f ${stage_download_path} ]]; then
-					# TODO: 						
-					# Create download job for ${stage_download_path}
+# WIP
+#local stage_info_path=${stage_path}/stage.spec
+#
+#local stage_kind=$(read_spec_variable ${stage_info_path} kind); stage_kind=${stage_kind:-build} # If not specified, assume build.
+#echo "SK: ${stage_kind}"
+#exit
 
+				# TODO: Download jobs loading.
+				if [[ -f ${stage_download_info_path} ]]; then
+					# Create download job for ${stage_download_info_path}
 					local _kind=download
-
 				#	stages[${stages_count},kind]=${_kind}
-
 				#	stages_count=$((stages_count + 1))
 				fi
 
 				# Local jobs loading.
-				if [[ -f ${stage_build_path} ]]; then
+				if [[ -f ${stage_build_info_path} ]]; then
 
 					# Create local stage entry and load basic data that can be retreived or calculated directly at this step.
 
@@ -76,20 +79,20 @@ load_stages() {
 					[[ -f ${stage_path}/catalyst.conf ]] && stage_catalyst_conf=${stage_path}/catalyst.conf || unset stage_catalyst_conf
 
 					# Prepare static values from spec file:
-					local stage_build_target=$(read_spec_variable ${stage_build_path} target) # eq.: stage3
-					local stage_build_subarch=$(read_spec_variable ${stage_build_path} subarch) # eq.: cell
-					local stage_build_version_stamp=$(read_spec_variable ${stage_build_path} version_stamp) # eq.: base-openrc-@TIMESTAMP@
-					local stage_build_source_subpath=$(read_spec_variable ${stage_build_path} source_subpath) # Note: For builds that uses remote seeds, @TIMESTAMP@ will be later removed in this variable. But only for remotes, in local sources, it still contain @TIMESTAMP@
-					local stage_build_repos=$(read_spec_variable ${stage_build_path} repos)
-					local stage_build_releng_base=$(read_spec_variable ${stage_build_path} releng_base)
-					local stage_build_chost=$(read_spec_variable ${stage_build_path} chost)
-					local stage_build_common_flags=$(read_spec_variable ${stage_build_path} common_flags)
-					local stage_build_cpu_flags=$(read_spec_variable ${stage_build_path} cpu_flags)
-					local stage_build_compression_mode=$(read_spec_variable ${stage_build_path} compression_mode)
-					local stage_build_treeish=$(read_spec_variable ${stage_build_path} treeish)
-					local stage_build_binrepo=$(read_spec_variable ${stage_build_path} binrepo)
-					local stage_build_binrepo_path=$(read_spec_variable ${stage_build_path} binrepo_path)
-					local stage_build_rel_type=$(read_spec_variable ${stage_build_path} rel_type)
+					local stage_build_target=$(read_spec_variable ${stage_build_info_path} target) # eq.: stage3
+					local stage_build_subarch=$(read_spec_variable ${stage_build_info_path} subarch) # eq.: cell
+					local stage_build_version_stamp=$(read_spec_variable ${stage_build_info_path} version_stamp) # eq.: base-openrc-@TIMESTAMP@
+					local stage_build_source_subpath=$(read_spec_variable ${stage_build_info_path} source_subpath) # Note: For builds that uses remote seeds, @TIMESTAMP@ will be later removed in this variable. But only for remotes, in local sources, it still contain @TIMESTAMP@
+					local stage_build_repos=$(read_spec_variable ${stage_build_info_path} repos)
+					local stage_build_releng_base=$(read_spec_variable ${stage_build_info_path} releng_base)
+					local stage_build_chost=$(read_spec_variable ${stage_build_info_path} chost)
+					local stage_build_common_flags=$(read_spec_variable ${stage_build_info_path} common_flags)
+					local stage_build_cpu_flags=$(read_spec_variable ${stage_build_info_path} cpu_flags)
+					local stage_build_compression_mode=$(read_spec_variable ${stage_build_info_path} compression_mode)
+					local stage_build_treeish=$(read_spec_variable ${stage_build_info_path} treeish)
+					local stage_build_binrepo=$(read_spec_variable ${stage_build_info_path} binrepo)
+					local stage_build_binrepo_path=$(read_spec_variable ${stage_build_info_path} binrepo_path)
+					local stage_build_rel_type=$(read_spec_variable ${stage_build_info_path} rel_type)
 
 					# Determine final values from best possible place or calculate:
 					local _kind=build
@@ -154,15 +157,67 @@ load_stages() {
 				fi
 
 				# Binhost jobs loading.
-				if [[ -f ${stage_binhost_path} ]]; then
-					# TODO: 						
-					# Create binhost job for ${stage_download_path}
+				if [[ -f ${stage_binhost_info_path} ]]; then
+					# Create binhost job for ${stage_binhost_info_path}
+
+					local stage_binhost_source_subpath=$(read_spec_variable ${stage_binhost_info_path} source_subpath)
+					local stage_binhost_subarch=$(read_spec_variable ${stage_binhost_info_path} subarch) # eq.: cell
+					local stage_binhost_chost=$(read_spec_variable ${stage_binhost_info_path} chost)
+					local stage_binhost_common_flags=$(read_spec_variable ${stage_binhost_info_path} common_flags)
+					local stage_binhost_cpu_flags=$(read_spec_variable ${stage_binhost_info_path} cpu_flags)
+					local stage_binhost_repos=$(read_spec_variable ${stage_binhost_info_path} repos)
+					local stage_binhost_binrepo=$(read_spec_variable ${stage_binhost_info_path} binrepo)
+					local stage_binhost_binrepo_path=$(read_spec_variable ${stage_binhost_info_path} binrepo_path)
 
 					local _kind=binhost
+					local _target=binhost
+					local _releng_base=stages
+					local _version_stamp='@TIMESTAMP@'
+					local _platform=${platform}
+					local _release=${release}
+					local _stage=${stage}
+					local _rel_type=${platform}/${release}
+					local _basearch=${platform_basearch}
+					local _baseraw=${platform_baseraw}
+					local _family=${platform_family}
+					local _interpreter=${platform_interpreter} # Can be skipped in spec, will be determined from platform.conf
+					local _emulation=$( [[ ${host_arch} = ${_basearch} ]] && echo false || echo true )
+					local _subarch=${stage_binhost_subarch:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
+					local _chost=${stage_binhost_chost:-${release_chost:-${platform_chost}}} # Can be definied in platform, release or stage (spec)
+					local _cpu_flags=${stage_binhost_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
+					local _common_flags=${stage_binhost_common_flags:-${release_common_flags:-${platform_common_flags}}} # Can be definied in platform, release or stage (spec)
+					local _repos=${stage_binhost_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
+					local _binrepo=${stage_binhost_binrepo:-${release_binrepo:-${platform_binrepo:-${binpkgs_cache_path}/local}}}
+					local _binrepo_path=${stage_binhost_binrepo_path:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
+					local _source_subpath=${stage_binhost_source_subpath}
+					local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
+					local _is_selected=$(is_stage_selected ${_platform} ${_release} ${_stage})
 
-				#	stages[${stages_count},kind]=${_kind}
+					stages[${stages_count},kind]=${_kind}
+					stages[${stages_count},platform]=${_platform}
+					stages[${stages_count},release]=${_release}
+					stages[${stages_count},stage]=${_stage}
+					stages[${stages_count},target]=${_target}
+					stages[${stages_count},rel_type]=${_rel_type}
+					stages[${stages_count},releng_base]=${_releng_base}
+					stages[${stages_count},version_stamp]=${_version_stamp}
+					stages[${stages_count},arch_basearch]=${_basearch}
+					stages[${stages_count},arch_baseraw]=${_baseraw}
+					stages[${stages_count},arch_subarch]=${_subarch}
+					stages[${stages_count},arch_family]=${_family}
+					stages[${stages_count},arch_interpreter]=${_interpreter}
+					stages[${stages_count},arch_emulation]=${_emulation}
+					stages[${stages_count},chost]=${_chost}
+					stages[${stages_count},common_flags]=${_common_flags}
+					stages[${stages_count},cpu_flags]=${_cpu_flags}
+					stages[${stages_count},overlays]=${_repos}
+					stages[${stages_count},binrepo]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_binrepo})
+					stages[${stages_count},binrepo_path]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_binrepo_path})
+					stages[${stages_count},source_subpath]=$(sanitize_spec_variable ${_platform} ${_release} ${_stage} ${_family} ${_basearch} ${_subarch} ${_source_subpath})
+					stages[${stages_count},product]=[BINHOST]:${_product}
+					stages[${stages_count},selected]=${_is_selected}
 
-				#	stages_count=$((stages_count + 1))
+					stages_count=$((stages_count + 1))
 				fi
 
 				# TODO: Loading download and binhost jobs
@@ -175,7 +230,8 @@ load_stages() {
 	update_parent_indexes
 
 	# Generate virtual stages to download seeds for stages without local parents.
-	declare -A added_download_stages=()
+	declare added_download_stages=()
+	declare -A added_download_stages_indexes=()
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		# Skip for builds other than local and binhost
 		[[ ${stages[${i},kind]} != build ]] && [[ ${stages[${i},kind]} != binhost ]] && continue
@@ -184,7 +240,8 @@ load_stages() {
 
 		local seed_subpath=${stages[${i},source_subpath]}
 		if ! contains_string added_download_stages[@] ${seed_subpath}; then
-			added_download_stages[${seed_subpath}]=${stages_count}
+			added_download_stages+=(${seed_subpath})
+			added_download_stages_indexes[${seed_subpath}]=${stages_count}
 			stages[${stages_count},kind]=download
 			stages[${stages_count},product]=${seed_subpath}
 			stages[${stages_count},platform]=${stages[${i},arch_family]} # Use arch family as platform for virtual remote jobs
@@ -214,7 +271,7 @@ load_stages() {
 
 			((stages_count++))
 		fi
-		stages[${i},parent]=${added_download_stages[${seed_subpath}]}
+		stages[${i},parent]=${added_download_stages_indexes[${seed_subpath}]}
 	done
 	unset added_download_stages
 
@@ -440,8 +497,8 @@ prepare_stages() {
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		# Prepare only stages that needs rebuild.
 		if [[ ${stages[${i},rebuild]} = true ]]; then
-			# Update treeish property for local builds only.
-			[[ ${stages[${i},kind]} = build ]] && stages[${i},treeish]=${stages[${i},treeish]:-${treeish}}
+			# Update treeish property for local builds and binhosts.
+			( [[ ${stages[${i},kind]} = build ]] || [[ ${stages[${i},kind]} = binhost ]] ) && stages[${i},treeish]=${stages[${i},treeish]:-${treeish}}
 
 			# Prepare download builds newest timestamp and url from backend.
 			if [[ ${stages[${i},kind]} = download ]]; then
@@ -511,7 +568,7 @@ write_stages() {
 			local stage_overlay_path_work=${stage_path_work}/overlay
 			local stage_root_overlay_path_work=${stage_path_work}/root_overlay
 			local stage_fsscript_path_work=${stage_path_work}/fsscript.sh
-			local stage_build_path_work=${stage_path_work}/build.spec
+			local stage_build_info_path_work=${stage_path_work}/build.spec
 			local target_mapping=${TARGET_MAPPINGS[${stages[${i},target]}]:-${stages[${i},target]}}
 			local stage_pkgcache_path=${stages[${i},binrepo_local_path]}/${stages[${i},binrepo_path]}
 
@@ -542,77 +599,77 @@ write_stages() {
 			fi
 
 			# Replace spec templates with real data:
-			echo "" >> ${stage_build_path_work} # Add new line, to separate new entries
-			echo "# Added by catalyst-lab" >> ${stage_build_path_work}
+			echo "" >> ${stage_build_info_path_work} # Add new line, to separate new entries
+			echo "# Added by catalyst-lab" >> ${stage_build_info_path_work}
 
-			set_spec_variable ${stage_build_path_work} source_subpath ${stages[${i},source_subpath]} # source_subpath shoud always be replaced with calculated value, to take into consideration existing old builds usage.
+			set_spec_variable ${stage_build_info_path_work} source_subpath ${stages[${i},source_subpath]} # source_subpath shoud always be replaced with calculated value, to take into consideration existing old builds usage.
 
-			set_spec_variable_if_missing ${stage_build_path_work} target ${stages[${i},target]}
-			set_spec_variable_if_missing ${stage_build_path_work} rel_type ${stages[${i},rel_type]}
-			set_spec_variable_if_missing ${stage_build_path_work} subarch ${stages[${i},arch_subarch]}
-			set_spec_variable_if_missing ${stage_build_path_work} version_stamp ${stages[${i},version_stamp]}
-			set_spec_variable_if_missing ${stage_build_path_work} snapshot_treeish ${stages[${i},treeish]}
-			set_spec_variable_if_missing ${stage_build_path_work} portage_confdir ${portage_path_work}
-			set_spec_variable_if_missing ${stage_build_path_work} pkgcache_path ${stage_pkgcache_path}
+			set_spec_variable_if_missing ${stage_build_info_path_work} target ${stages[${i},target]}
+			set_spec_variable_if_missing ${stage_build_info_path_work} rel_type ${stages[${i},rel_type]}
+			set_spec_variable_if_missing ${stage_build_info_path_work} subarch ${stages[${i},arch_subarch]}
+			set_spec_variable_if_missing ${stage_build_info_path_work} version_stamp ${stages[${i},version_stamp]}
+			set_spec_variable_if_missing ${stage_build_info_path_work} snapshot_treeish ${stages[${i},treeish]}
+			set_spec_variable_if_missing ${stage_build_info_path_work} portage_confdir ${portage_path_work}
+			set_spec_variable_if_missing ${stage_build_info_path_work} pkgcache_path ${stage_pkgcache_path}
 
-			update_spec_variable ${stage_build_path_work} TIMESTAMP ${stages[${i},timestamp_generated]}
-			update_spec_variable ${stage_build_path_work} PLATFORM ${stages[${i},platform]}
-			update_spec_variable ${stage_build_path_work} RELEASE ${stages[${i},release]}
-			update_spec_variable ${stage_build_path_work} TREEISH ${stages[${i},treeish]}
-			update_spec_variable ${stage_build_path_work} FAMILY_ARCH ${stages[${i},arch_family]}
-			update_spec_variable ${stage_build_path_work} BASE_ARCH ${stages[${i},arch_basearch]}
-			update_spec_variable ${stage_build_path_work} SUB_ARCH ${stages[${i},arch_subarch]}
-			update_spec_variable ${stage_build_path_work} PKGCACHE_BASE_PATH ${pkgcache_base_path}
+			update_spec_variable ${stage_build_info_path_work} TIMESTAMP ${stages[${i},timestamp_generated]}
+			update_spec_variable ${stage_build_info_path_work} PLATFORM ${stages[${i},platform]}
+			update_spec_variable ${stage_build_info_path_work} RELEASE ${stages[${i},release]}
+			update_spec_variable ${stage_build_info_path_work} TREEISH ${stages[${i},treeish]}
+			update_spec_variable ${stage_build_info_path_work} FAMILY_ARCH ${stages[${i},arch_family]}
+			update_spec_variable ${stage_build_info_path_work} BASE_ARCH ${stages[${i},arch_basearch]}
+			update_spec_variable ${stage_build_info_path_work} SUB_ARCH ${stages[${i},arch_subarch]}
+			update_spec_variable ${stage_build_info_path_work} PKGCACHE_BASE_PATH ${pkgcache_base_path}
 
 			# releng portage_prefix.
 			if [[ -n ${stages[${i},releng_base]} ]]; then
-				set_spec_variable_if_missing ${stage_build_path_work} portage_prefix releng
-				sed -i '/^releng_base:/d' ${stage_build_path_work}
+				set_spec_variable_if_missing ${stage_build_info_path_work} portage_prefix releng
+				sed -i '/^releng_base:/d' ${stage_build_info_path_work}
 			fi
 
-			[[ -n ${stages[$${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_build_path_work} common_flags "${stages[${i},common_flags]}"
-			[[ ${stages[${i},arch_emulation]} = true ]] && set_spec_variable_if_missing ${stage_build_path_work} interpreter "${stages[${i},arch_interpreter]}"
-			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_build_path_work} ${target_mapping}/overlay ${stage_overlay_path_work}
-			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_build_path_work} ${target_mapping}/root_overlay ${stage_root_overlay_path_work}
-			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_build_path_work} ${target_mapping}/fsscript ${stage_fsscript_path_work}
-			[[ -n ${stages[${i},overlays_local_paths]} ]] && set_spec_variable_if_missing ${stage_build_path_work} repos "${stages[${i},overlays_local_paths]}"
+			[[ -n ${stages[$${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_build_info_path_work} common_flags "${stages[${i},common_flags]}"
+			[[ ${stages[${i},arch_emulation]} = true ]] && set_spec_variable_if_missing ${stage_build_info_path_work} interpreter "${stages[${i},arch_interpreter]}"
+			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_build_info_path_work} ${target_mapping}/overlay ${stage_overlay_path_work}
+			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_build_info_path_work} ${target_mapping}/root_overlay ${stage_root_overlay_path_work}
+			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_build_info_path_work} ${target_mapping}/fsscript ${stage_fsscript_path_work}
+			[[ -n ${stages[${i},overlays_local_paths]} ]] && set_spec_variable_if_missing ${stage_build_info_path_work} repos "${stages[${i},overlays_local_paths]}"
 
 			# Special variables for only some stages:
 
 			# Update seed.
 			if [[ ${stages[${i},target]} = stage1 ]]; then
-				set_spec_variable_if_missing ${stage_build_path_work} update_seed yes
-				set_spec_variable_if_missing ${stage_build_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg @system @world"
+				set_spec_variable_if_missing ${stage_build_info_path_work} update_seed yes
+				set_spec_variable_if_missing ${stage_build_info_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg @system @world"
 			fi
 
 			# Binrepo path.
 			if [[ ${stages[${i},target]} = stage4 ]]; then
-				set_spec_variable_if_missing ${stage_build_path_work} binrepo_path ${stages[${i},binrepo_path]}
+				set_spec_variable_if_missing ${stage_build_info_path_work} binrepo_path ${stages[${i},binrepo_path]}
 			fi
 
 			# LiveCD - stage2 specific default values.
 			if [[ ${stages[${i},target]} = livecd-stage2 ]]; then
-				set_spec_variable_if_missing ${stage_build_path_work} type gentoo-release-minimal
-				set_spec_variable_if_missing ${stage_build_path_work} volid Gentoo_${stages[${i},platform]}
-				set_spec_variable_if_missing ${stage_build_path_work} fstype squashfs
-				set_spec_variable_if_missing ${stage_build_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp]}.iso
+				set_spec_variable_if_missing ${stage_build_info_path_work} type gentoo-release-minimal
+				set_spec_variable_if_missing ${stage_build_info_path_work} volid Gentoo_${stages[${i},platform]}
+				set_spec_variable_if_missing ${stage_build_info_path_work} fstype squashfs
+				set_spec_variable_if_missing ${stage_build_info_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp]}.iso
 			fi
 
 			if [[ -n ${stages[${i},chost]} ]] && [[ ${stages[${i},target]} = stage1 ]]; then # Only allow setting chost in stage1 targets.
-				set_spec_variable_if_missing ${stage_build_path_work} chost ${stages[${i},chost]}
+				set_spec_variable_if_missing ${stage_build_info_path_work} chost ${stages[${i},chost]}
 			fi
 
 			if contains_string COMPRESSABLE_TARGETS[@] ${stages[${i},target]}; then
-				set_spec_variable_if_missing ${stage_build_path_work} compression_mode ${stages[${i},compression_mode]}
+				set_spec_variable_if_missing ${stage_build_info_path_work} compression_mode ${stages[${i},compression_mode]}
 			fi
 
 			# Add target prefix to things like use, rcadd, unmerge, etc.
 			for target_key in ${TARGET_KEYS[@]}; do
-				sed -i "s|^${target_key}:|${target_mapping}/${target_key}:|" ${stage_build_path_work}
+				sed -i "s|^${target_key}:|${target_mapping}/${target_key}:|" ${stage_build_info_path_work}
 			done
 
 			# Create links to spec files and optionally to catalyst_conf if using custom.
-			ln -s ${stage_build_path_work} ${spec_link_work}.spec
+			ln -s ${stage_build_info_path_work} ${spec_link_work}.spec
 			[[ -f ${catalyst_conf_work} ]] && ln -s ${catalyst_conf_work} ${spec_link_work}.catalyst.conf
 
 		elif [[ ${stages[${i},kind]} = download ]]; then
@@ -634,6 +691,11 @@ write_stages() {
 
 			# Create link to download script.
 			ln -s ${download_script_path_work} ${spec_link_work}.sh
+
+		elif [[ ${stages[${i},kind]} = binhost ]]; then
+			# Create stage for building binhost packages.
+			# Maybe create script, prepare patches in work dir
+			echo "Preparing workspace for ${stages[${i},product]}. Currently not supported."
 		fi
 	done
 
@@ -654,10 +716,10 @@ build_stages() {
 			echo ""
 
 			# Setup used paths:
-			local stage_build_path_work=${stage_path_work}/build.spec
+			local stage_build_info_path_work=${stage_path_work}/build.spec
 			local catalyst_conf_work=${stage_work_path}/catalyst.conf
 
-			local args="-af ${stage_build_path_work}"
+			local args="-af ${stage_build_info_path_work}"
 			[[ -f ${catalyst_conf_work} ]] && args="${args} -c ${catalyst_conf_work}"
 
 			# Perform build
@@ -665,6 +727,7 @@ build_stages() {
 
 			echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
 			echo ""
+
 		elif [[ ${stages[${i},kind]} = download ]]; then
 			echo -e "${color_turquoise}Downloading stage: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
 			echo ""
@@ -676,6 +739,12 @@ build_stages() {
 			${download_script_path_work} || exit 1
 
 			echo -e "${color_green}Stage download completed: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
+			echo ""
+
+		elif [[ ${stages[${i},kind]} = binhost ]]; then
+			echo -e "${color_turquoise}Building packages in stage: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
+			echo ""
+			echo "Currently not supported"
 			echo ""
 		fi
 
@@ -837,14 +906,18 @@ update_parent_indexes() {
                 if [[ ${stages[${i},kind]} != build ]] && [[ ${stages[${i},kind]} != binhost ]]; then
                         continue
                 fi
-		stages[${i},parent]='' # Reset previously set parent index if any.
-		local j; for (( j=0; j<${stages_count}; j++ )); do
-			if [[ ${stages[${i},source_subpath]} == ${stages[${j},product]} ]]; then
-				# Save found parent index
-				stages[${i},parent]=${j}
-				break
-			fi
-		done
+		stages[${i},parent]=$(find_stage_producing ${stages[${i},source_subpath]})
+	done
+}
+
+# Searches for index of a parent stage, that produces given product. Can be used to match with source_subpath
+find_stage_producing() {
+	local searched_product=${1}
+	local j; for (( j=0; j<${stages_count}; j++ )); do
+		if [[ ${searched_product} == ${stages[${j},product]} ]]; then
+			echo ${j}
+			return
+		fi
 	done
 }
 
@@ -948,7 +1021,14 @@ draw_stages_tree() {
 				stage_name="download: ${color_yellow_bold}${display_name}${color_nc}"
 			fi
 		elif [[ ${stages[${child},kind]} = binhost ]]; then
-			stage_name="[ Binhost update ]" # TODO: Better display of this kind of stages
+                        local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
+                        stage_name="${color_gray}binhost: ${display_name}${color_nc}"
+                        if [[ ${stages[${child},rebuild]} = true ]]; then
+                                stage_name="binhost: ${color_purple}${display_name}${color_nc}"
+                        fi
+                        if [[ ${stages[${child},selected]} = true ]]; then
+                                stage_name="binhost: ${color_purple_bold}${display_name}${color_nc}"
+                        fi
 		fi
 		new_prefix="${prefix}├── "
 		if [[ -n ${stages[${child},children]} ]]; then
@@ -1161,6 +1241,8 @@ readonly color_yellow='\033[0;33m'
 readonly color_yellow_bold='\033[1;33m'
 readonly color_orange='\033[38;5;214m'
 readonly color_orange_bold='\033[1;38;5;214m'
+readonly color_purple='\033[38;5;135m'
+readonly color_purple_bold='\033[1;38;5;135m'
 readonly color_nc='\033[0m' # No Color
 
 # Load/create config.
@@ -1266,3 +1348,4 @@ fi
 # TODO: Add support for binhost type jobs
 # TODO: Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
 # TODO: Storing multiple job types in the same stage directory can cause some issues. If that's the case, enforce using single file in stage directory.
+# TODO: Add validation that parent and children uses the same base architecture
