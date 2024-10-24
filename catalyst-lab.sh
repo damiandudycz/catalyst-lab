@@ -543,8 +543,13 @@ write_stages() {
 			# releng portage_prefix.
 			if [[ -n ${stages[${i},releng_base]} ]]; then
 				set_spec_variable_if_missing ${stage_info_path_work} portage_prefix releng
-				sed -i '/^releng_base:/d' ${stage_info_path_work}
 			fi
+
+			# Clear properties not used in final spec.
+			local properties_to_clear=(kind releng_base)
+			for key in ${properties_to_clear[@]}; do
+				sed -i "/^${key}:/d" ${stage_info_path_work}
+			done
 
 			[[ -n ${stages[$${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_info_path_work} common_flags "${stages[${i},common_flags]}"
 			[[ ${stages[${i},arch_emulation]} = true ]] && set_spec_variable_if_missing ${stage_info_path_work} interpreter "${stages[${i},arch_interpreter]}"
