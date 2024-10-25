@@ -55,44 +55,56 @@ load_stages() {
 				# Set stage_catalyst_conf variable for stage based on file existance.
 				[[ -f ${stage_path}/catalyst.conf ]] && stage_catalyst_conf=${stage_path}/catalyst.conf || unset stage_catalyst_conf
 
-				# Load values stored directly in stage.spec to variables with stage_ prefix.
-				local properties_to_load=(kind binrepo binrepo_path chost common_flags compression_mode cpu_flags rel_type releng_base repos source_subpath subarch target treeish version_stamp profile packages)
-				for key in ${properties_to_load[@]}; do
-					eval "local stage_${key}=\$(read_spec_variable ${stage_info_path} ${key})"
+				# Load values stored directly in stage.spec to stage dictionary
+				declare -A stage_values=(); local key=""
+				# Read the file
+				while IFS= read -r line || [[ -n ${line} ]]; do
+					line=$(echo ${line} | sed 's/#.*//; s/[[:space:]]*$//') # Remove comments and trim trailing whitespace
+					[[ -z ${line} ]] && continue # Skip empty lines
+					# Check if the line contains a new key
+					if [[ ${line} =~ ^([a-zA-Z0-9_-]+):[[:space:]]*(.*) ]]; then
+						key=${BASH_REMATCH[1]}
+						value=${BASH_REMATCH[2]}
+						stage_values[${key}]="${value}"
+					elif [[ -n ${key} ]]; then
+						stage_values[${key}]+=" $(echo ${line} | xargs)"
+					fi
+				done < ${stage_info_path}
+				# Trim leading/trailing spaces:
+				for key in ${!stage_values[@]}; do
+					local value=$(echo ${stage_values[${key}]} | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+					stage_values[${key}]=${value}
 				done
+
 				# Prepare shared overwrites and computations of varialbles. These include properties for every possible stage type.
 				# Only include here variables that might require special treament and the value will be the same for all target types.
 				# If some property is different between different stage types, it will be set bellow.
-				local _kind=${stage_kind:-build} # If not specified, assume build.
+				local _kind=${stage_values[kind]:-build} # If not specified, assume build.
 				# Prepare variables that differ between kinds.
 				if [[ ${_kind} = build ]]; then
-					local _target=${stage_target:-$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')} # Can be skipped in spec, will be determined from stage name
+					local _target=${stage_values[target]:-$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')} # Can be skipped in spec, will be determined from stage name
 				elif [[ ${_kind} = download ]]; then
-					local _target=${stage_target:-$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')} # Can be skipped in spec, will be determined from stage name
+					local _target=${stage_values[target]:-$(echo ${stage} | sed -E 's/(.*stage[0-9]+)-.*/\1/')} # Can be skipped in spec, will be determined from stage name
 				elif [[ ${_kind} = binhost ]]; then
-					local _target=${stage_target:-binhost}
+					local _target=${stage_values[target]:-binhost}
 				fi
 				# Prepare variables with form shared between kinds.
 				local _selected=$(is_stage_selected ${platform} ${release} ${stage})
 				local _arch_emulation=$( [[ ${host_arch} = ${platform_basearch} ]] && echo false || echo true )
-				local _subarch=${stage_subarch:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
-				load_toml ${platform_basearch} ${_subarch} # Loading some variables directly from matching toml, if not specified in stage configs.
-				local _repos=${stage_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
-				local _cpu_flags=${stage_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
-				local _chost=${stage_chost:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
-				local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags:-${TOML_CACHE[${platform_basearch},${_subarch},common_flags]}}}} # Can be definied in platform, release or stage (spec)
-				local _use=$(echo "${TOML_CACHE[${platform_basearch},${_subarch},use]} ${platform_use} ${release_use} ${stage_use}") # | sed 's/ \{1,\}/ /g') # For USE flags, we combine all the values from toml, platform, release and stage
-				local _releng_base=${stage_releng_base:-${RELENG_BASES[${_target}]}} # Can be skipped in spec, will be determined automatically from target
-				local _compression_mode=${stage_compression_mode:-${release_compression_mode:-${platform_compression_mode:-pixz}}} # Can be definied in platform, release or stage (spec)
-				local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
+				local _subarch=${stage_values[subarch]:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
+				local _repos=${stage_values[repos]:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
+				local _cpu_flags=${stage_values[cpu_flags]:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
+				local _releng_base=${stage_values[releng_base]:-${RELENG_BASES[${_target}]}} # Can be skipped in spec, will be determined automatically from target
+				local _compression_mode=${stage_values[compression_mode]:-${release_compression_mode:-${platform_compression_mode:-pixz}}} # Can be definied in platform, release or stage (spec)
+				local _catalyst_conf=${stage_values[catalyst_conf]:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
 				# Set and sanitize some of variables:
-				local _rel_type=${stage_rel_type:-${platform}/${release}}
-				local _source_subpath=${stage_source_subpath}
-				local _binrepo=${stage_binrepo:-${release_binrepo:-${platform_binrepo:-${binpkgs_cache_path}/local}}}
-				local _binrepo_path=${stage_binrepo_path:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
-				local _version_stamp=${stage_version_stamp:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
+				local _rel_type=${stage_values[rel_type]:-${platform}/${release}}
+				local _source_subpath=${stage_values[source_subpath]}
+				local _binrepo=${stage_values[binrepo]:-${release_binrepo:-${platform_binrepo:-${binpkgs_cache_path}/local}}}
+				local _binrepo_path=${stage_values[binrepo_path]:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
+				local _version_stamp=${stage_values[version_stamp]:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
 				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
-				local _profile=${stage_profile}
+				local _profile=${stage_values[profile]}
 				# Sanitize selected variables
 				local properties_to_sanitize=(version_stamp source_subpath product binrepo binrepo_path rel_type profile)
 				for key in ${properties_to_sanitize[@]}; do
@@ -101,6 +113,13 @@ load_stages() {
 				# Computer after sanitization of dependencies.
 				local _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E $(echo ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
 				local _available_build_timestamp=$( [[ -n ${_available_build} ]] && start_pos=$(expr index "${_product}" "@TIMESTAMP@") && echo "${_available_build:$((start_pos - 1)):16}" )
+				# Load toml file from catalyst
+				load_toml ${platform_basearch} ${_subarch} # Loading some variables directly from matching toml, if not specified in stage configs.
+				# Compute after loading toml.
+				local _chost=${stage_values[chost]:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
+				local _common_flags=${stage_values[common_flags]:-${release_common_flags:-${platform_common_flags:-${TOML_CACHE[${platform_basearch},${_subarch},common_flags]}}}} # Can be definied in platform, release or stage (spec)
+				local _use=$(echo "${platform_use} ${release_use} ${stage_values[use]}" | sed 's/ \{1,\}/ /g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//') # For USE flags, we combine all the values from platform, release and stage. Toml flags are added only for binhost, as for stages, catalyst takes care of that.
+				local _use_toml="${TOML_CACHE[${platform_basearch},${_subarch},use]}"
 
 				# Apply modified properties to stage config entry:
 				# Non modified entries, directly from platform, release or stage settings:
@@ -111,8 +130,8 @@ load_stages() {
 				stages[${stages_count},arch_baseraw]=${platform_baseraw}
 				stages[${stages_count},arch_family]=${platform_family}
 				stages[${stages_count},arch_interpreter]=${platform_interpreter}
-				stages[${stages_count},treeish]=${stage_treeish} # At this point it could be empty. Will be set automatically later.
-				stages[${stages_count},packages]=${stage_packages}
+				stages[${stages_count},treeish]=${stage_values[treeish]} # At this point it could be empty. Will be set automatically later.
+				stages[${stages_count},packages]=${stage_values[packages]}
 				# Modified entries, that can be adjusted by the script:
 				stages[${stages_count},kind]=${_kind}
 				stages[${stages_count},target]=${_target}
@@ -125,6 +144,7 @@ load_stages() {
 				stages[${stages_count},common_flags]=${_common_flags}
 				stages[${stages_count},cpu_flags]=${_cpu_flags}
 				stages[${stages_count},use]=${_use}
+				stages[${stages_count},use_toml]=${_use_toml}
 				stages[${stages_count},releng_base]=${_releng_base}
 				stages[${stages_count},compression_mode]=${_compression_mode}
 				stages[${stages_count},binrepo]=${_binrepo}
@@ -561,9 +581,9 @@ write_stages() {
 
 			[[ -n ${stages[$${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_info_path_work} common_flags "${stages[${i},common_flags]}"
 			[[ ${stages[${i},arch_emulation]} = true ]] && set_spec_variable_if_missing ${stage_info_path_work} interpreter "${stages[${i},arch_interpreter]}"
-			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/overlay ${stage_overlay_path_work}
-			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/root_overlay ${stage_root_overlay_path_work}
-			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/fsscript ${stage_fsscript_path_work}
+			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} overlay ${stage_overlay_path_work}
+			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} root_overlay ${stage_root_overlay_path_work}
+			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} fsscript ${stage_fsscript_path_work}
 			[[ -n ${stages[${i},repos_local_paths]} ]] && set_spec_variable_if_missing ${stage_info_path_work} repos "${stages[${i},repos_local_paths]}"
 
 			# Special variables for only some stages:
@@ -574,9 +594,9 @@ write_stages() {
 				set_spec_variable_if_missing ${stage_info_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg @system @world"
 			fi
 
-			# Binrepo path.
-			if [[ ${stages[${i},target]} = stage4 ]]; then
-				set_spec_variable_if_missing ${stage_info_path_work} binrepo_path ${stages[${i},binrepo_path]}
+			# LiveCD - stage1 specific default values.
+			if [[ ${stages[${i},target]} = livecd-stage1 ]]; then
+				[[ -n ${stages[${i},use]} ]] && set_spec_variable ${stage_info_path_work} use "${stages[${i},use]}"
 			fi
 
 			# LiveCD - stage2 specific default values.
@@ -585,12 +605,13 @@ write_stages() {
 				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo_${stages[${i},platform]}
 				set_spec_variable_if_missing ${stage_info_path_work} fstype squashfs
 				set_spec_variable_if_missing ${stage_info_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp]}.iso
-				[[ -n ${stages[${i},use]} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/use ${stages[${i},use]}
+				[[ -n ${stages[${i},use]} ]] && set_spec_variable ${stage_info_path_work} use "${stages[${i},use]}"
 			fi
 
 			# Stage4 specific keys
 			if [[ ${stages[${i},target]} = stage4 ]]; then
-				[[ -n ${stages[${i},use]} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/use ${stages[${i},use]}
+				set_spec_variable_if_missing ${stage_info_path_work} binrepo_path ${stages[${i},binrepo_path]}
+				[[ -n ${stages[${i},use]} ]] && set_spec_variable ${stage_info_path_work} use "${stages[${i},use]}"
 			fi
 
 			if [[ -n ${stages[${i},chost]} ]] && [[ ${stages[${i},target]} = stage1 ]]; then # Only allow setting chost in stage1 targets.
@@ -660,8 +681,7 @@ EOF
 			# Load common_flags, use flags and chost from toml or from stage if set.
 			local common_flags=${stages[${i},common_flags]}
 			local chost=${stages[${i},chost]}
-			local use="${stages[${i},use]}"
-
+			local use=$(echo ${stages[${i},use_toml]} ${stages[${i},use]} | sed 's/ \{1,\}/ /g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 			# TODO: Make sure that when emerging new packages, default gentoo binrepos.conf is not being used. This can probably be achieved with correct emerge flags. Still local binrepo packages should be used!
 
 			mkdir -p ${build_work_path}
@@ -928,10 +948,14 @@ set_spec_variable() {
 	local spec_path=${1}
 	local key=${2}
 	local new_value="${3}"
+
 	if grep -q "^$key:" ${spec_path}; then
-		sed -i "s|^$key: .*|$key: $new_value|" ${spec_path}
+		sed -i "/^$key:/,/^[^:]*:/ {
+			/^$key:/ s|^$key:.*|$key: $new_value|
+			/^[^:]*:/!d
+		}" ${spec_path}
 	else
-		echo "$key: $new_value" >> ${spec_path}
+		echo "${key}: $new_value" >> ${spec_path}
 	fi
 }
 
@@ -1264,7 +1288,7 @@ declare STAGE_KEYS=( # Variables stored in stages[] for the script.
 
 	treeish      repos        repos_local_paths binrepo     binrepo_local_path
 	binrepo_path binrepo_kind catalyst_conf     releng_base version_stamp
-	compression_mode          packages          use
+	compression_mode          packages          use         use_toml
 
 	selected rebuild takes_part
 
