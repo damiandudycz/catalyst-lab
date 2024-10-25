@@ -78,9 +78,10 @@ load_stages() {
 				local _subarch=${stage_subarch:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
 				load_toml ${platform_basearch} ${_subarch} # Loading some variables directly from matching toml, if not specified in stage configs.
 				local _repos=${stage_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
-				local _chost=${stage_chost:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
 				local _cpu_flags=${stage_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
+				local _chost=${stage_chost:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
 				local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags:-${TOML_CACHE[${platform_basearch},${_subarch},common_flags]}}}} # Can be definied in platform, release or stage (spec)
+				local _use=${stage_use:-${release_use:-${platform_use:-${TOML_CACHE[${platform_basearch},${_subarch},use]}}}}
 				local _releng_base=${stage_releng_base:-${RELENG_BASES[${_target}]}} # Can be skipped in spec, will be determined automatically from target
 				local _compression_mode=${stage_compression_mode:-${release_compression_mode:-${platform_compression_mode:-pixz}}} # Can be definied in platform, release or stage (spec)
 				local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
@@ -583,6 +584,12 @@ write_stages() {
 				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo_${stages[${i},platform]}
 				set_spec_variable_if_missing ${stage_info_path_work} fstype squashfs
 				set_spec_variable_if_missing ${stage_info_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp]}.iso
+				[[ -n ${stages[${i},use]} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/use ${stages[${i},use]}
+			fi
+
+			# Stage4 specific keys
+			if [[ ${stages[${i},target]} = stage4 ]]; then
+				[[ -n ${stages[${i},use]} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/use ${stages[${i},use]}
 			fi
 
 			if [[ -n ${stages[${i},chost]} ]] && [[ ${stages[${i},target]} = stage1 ]]; then # Only allow setting chost in stage1 targets.
@@ -650,11 +657,10 @@ EOF
 			fi
 
 			# Load common_flags, use and chost from toml or from stage if set.
-			local common_flags=${stages[${i},common_flags]} # TODO: LOAD DEFAULTS FROM TOML FILE
-			local chost=${stages[${i},chost]} # TODO: LOAD DEFAULTS FROM TOML FILE
+			local common_flags=${stages[${i},common_flags]}
+			local chost=${stages[${i},chost]}
 			# TODO: Same with use
 
-			# TODO: Setup common_flags, use flags and add bindinst to use. Also copy defaults from corresponding toml file here, to make.conf. Overwrites for CPUFLAGS can still be set with 00cpu-flags.
 			# TODO: Make sure that when emerging new packages, default gentoo binrepos.conf is not being used. This can probably be achieved with correct emerge flags. Still local binrepo packages should be used!
 
 			mkdir -p ${build_work_path}
@@ -1233,10 +1239,12 @@ fi
 declare PLATFORM_KEYS=( # Variables allowed in platform.conf
 	arch      repos            common_flags chost
 	cpu_flags compression_mode binrepo      binrepo_path
+	use
 )
 declare RELEASE_KEYS=( # Variables allowed in release.conf
 	repos            common_flags chost        cpu_flags
 	compression_mode binrepo      binrepo_path
+	use
 )
 declare STAGE_KEYS=( # Variables stored in stages[] for the script.
 	kind profile
@@ -1254,7 +1262,7 @@ declare STAGE_KEYS=( # Variables stored in stages[] for the script.
 
 	treeish      repos        repos_local_paths binrepo     binrepo_local_path
 	binrepo_path binrepo_kind catalyst_conf     releng_base version_stamp
-	compression_mode          packages
+	compression_mode          packages          use
 
 	selected rebuild takes_part
 
