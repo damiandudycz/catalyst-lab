@@ -81,7 +81,7 @@ load_stages() {
 				local _cpu_flags=${stage_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
 				local _chost=${stage_chost:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
 				local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags:-${TOML_CACHE[${platform_basearch},${_subarch},common_flags]}}}} # Can be definied in platform, release or stage (spec)
-				local _use=${stage_use:-${release_use:-${platform_use:-${TOML_CACHE[${platform_basearch},${_subarch},use]}}}}
+				local _use=$(echo "${TOML_CACHE[${platform_basearch},${_subarch},use]} ${platform_use} ${release_use} ${stage_use}") # | sed 's/ \{1,\}/ /g') # For USE flags, we combine all the values from toml, platform, release and stage
 				local _releng_base=${stage_releng_base:-${RELENG_BASES[${_target}]}} # Can be skipped in spec, will be determined automatically from target
 				local _compression_mode=${stage_compression_mode:-${release_compression_mode:-${platform_compression_mode:-pixz}}} # Can be definied in platform, release or stage (spec)
 				local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
@@ -124,6 +124,7 @@ load_stages() {
 				stages[${stages_count},chost]=${_chost}
 				stages[${stages_count},common_flags]=${_common_flags}
 				stages[${stages_count},cpu_flags]=${_cpu_flags}
+				stages[${stages_count},use]=${_use}
 				stages[${stages_count},releng_base]=${_releng_base}
 				stages[${stages_count},compression_mode]=${_compression_mode}
 				stages[${stages_count},binrepo]=${_binrepo}
@@ -656,10 +657,10 @@ EOF
 				echo "*/* "${stages[${i},cpu_flags]} > ${package_use_path_work}/00cpu-flags
 			fi
 
-			# Load common_flags, use and chost from toml or from stage if set.
+			# Load common_flags, use flags and chost from toml or from stage if set.
 			local common_flags=${stages[${i},common_flags]}
 			local chost=${stages[${i},chost]}
-			# TODO: Same with use
+			local use="${stages[${i},use]}"
 
 			# TODO: Make sure that when emerging new packages, default gentoo binrepos.conf is not being used. This can probably be achieved with correct emerge flags. Still local binrepo packages should be used!
 
@@ -686,9 +687,10 @@ EOF
 				echo "Preparing portage directory"
 				cp -ru ${portage_path_work}/* ${build_work_path}/etc/portage/ || exit 1
 
-				# Set common-flags and chost.
-				[[ -n "${common_flags}" ]] && ( sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
-				[[ -n "${chost}" ]] && ( sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
+				# Set common-flags, chost and use flags.
+				[[ -n ${common_flags} ]] && ( sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
+				[[ -n ${chost} ]] && ( sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
+				[[ -n ${use} ]] && echo "\\\${USE} ${use}" >> ${build_work_path}/etc/portage/make.conf
 
 				# Extract portage snapshot.
 				echo "Preparing portage snapshot"
@@ -1217,12 +1219,12 @@ load_toml() {
 	local toml_file=$(grep -rl ${basearch}.${subarch} ${catalyst_usr_path}/arch)
 	unset toml_chost toml_common_flags toml_use
 	[[ -f ${toml_file} ]] || return
-	mapfile -t use_flags < <(tomlq -r ".${basearch}.${subarch}.USE // empty | .[]" ${toml_file})
+	mapfile -t use < <(tomlq -r ".${basearch}.${subarch}.USE // empty | .[]" ${toml_file})
 	mapfile -t common_flags < <(tomlq ".${basearch}.${subarch}.COMMON_FLAGS // empty" ${toml_file})
 	mapfile -t chost < <(tomlq ".${basearch}.${subarch}.CHOST // empty" ${toml_file})
 	TOML_CACHE[${basearch},${subarch},chost]="${chost}"
 	TOML_CACHE[${basearch},${subarch},common_flags]="${common_flags}"
-	TOML_CACHE[${basearch},${subarch},use_flags]="${use_flags[*]:-""}"
+	TOML_CACHE[${basearch},${subarch},use]="${use[*]:-""}"
 }
 
 # ------------------------------------------------------------------------------
@@ -1392,10 +1394,10 @@ if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]]; then
 fi
 
 load_stages
-if [[ ${PREPARE} = true ]] || [[ ${--update-snapshot} = true ]]; then
+if [[ ${PREPARE} = true ]] || [[ ${FETCH_FRESH_SNAPSHOT} = true ]]; then
 	prepare_portage_snapshot
 fi
-if [[ ${PREPARE} = true ]] || [[ ${--update-releng} = true ]]; then
+if [[ ${PREPARE} = true ]] || [[ ${FETCH_FRESH_RELENG} = true ]]; then
 	prepare_releng
 fi
 if [[ ${FETCH_FRESH_REPOS} = true ]] || [[ ${PREPARE} = true ]]; then
