@@ -76,12 +76,8 @@ load_stages() {
 				local _selected=$(is_stage_selected ${platform} ${release} ${stage})
 				local _arch_emulation=$( [[ ${host_arch} = ${platform_basearch} ]] && echo false || echo true )
 				local _subarch=${stage_subarch:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
-				load_toml ${platform_basearch} ${_subarch} # Loading some variables directly from matching toml, if not specified in stage configs.
 				local _repos=${stage_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
 				local _cpu_flags=${stage_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
-				local _chost=${stage_chost:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
-				local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags:-${TOML_CACHE[${platform_basearch},${_subarch},common_flags]}}}} # Can be definied in platform, release or stage (spec)
-				local _use=$(echo "${TOML_CACHE[${platform_basearch},${_subarch},use]} ${platform_use} ${release_use} ${stage_use}") # | sed 's/ \{1,\}/ /g') # For USE flags, we combine all the values from toml, platform, release and stage
 				local _releng_base=${stage_releng_base:-${RELENG_BASES[${_target}]}} # Can be skipped in spec, will be determined automatically from target
 				local _compression_mode=${stage_compression_mode:-${release_compression_mode:-${platform_compression_mode:-pixz}}} # Can be definied in platform, release or stage (spec)
 				local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
@@ -101,6 +97,12 @@ load_stages() {
 				# Computer after sanitization of dependencies.
 				local _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E $(echo ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
 				local _available_build_timestamp=$( [[ -n ${_available_build} ]] && start_pos=$(expr index "${_product}" "@TIMESTAMP@") && echo "${_available_build:$((start_pos - 1)):16}" )
+				# Load toml file from catalyst
+				load_toml ${platform_basearch} ${_subarch} # Loading some variables directly from matching toml, if not specified in stage configs.
+				# Compute after loading toml.
+				local _chost=${stage_chost:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
+				local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags:-${TOML_CACHE[${platform_basearch},${_subarch},common_flags]}}}} # Can be definied in platform, release or stage (spec)
+				local _use=$(echo "${TOML_CACHE[${platform_basearch},${_subarch},use]} ${platform_use} ${release_use} ${stage_use}") # | sed 's/ \{1,\}/ /g') # For USE flags, we combine all the values from toml, platform, release and stage
 
 				# Apply modified properties to stage config entry:
 				# Non modified entries, directly from platform, release or stage settings:
