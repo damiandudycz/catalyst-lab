@@ -581,9 +581,9 @@ write_stages() {
 
 			[[ -n ${stages[$${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_info_path_work} common_flags "${stages[${i},common_flags]}"
 			[[ ${stages[${i},arch_emulation]} = true ]] && set_spec_variable_if_missing ${stage_info_path_work} interpreter "${stages[${i},arch_interpreter]}"
-			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/overlay ${stage_overlay_path_work}
-			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/root_overlay ${stage_root_overlay_path_work}
-			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/fsscript ${stage_fsscript_path_work}
+			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} overlay ${stage_overlay_path_work}
+			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} root_overlay ${stage_root_overlay_path_work}
+			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} fsscript ${stage_fsscript_path_work}
 			[[ -n ${stages[${i},repos_local_paths]} ]] && set_spec_variable_if_missing ${stage_info_path_work} repos "${stages[${i},repos_local_paths]}"
 
 			# Special variables for only some stages:
@@ -594,9 +594,9 @@ write_stages() {
 				set_spec_variable_if_missing ${stage_info_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg @system @world"
 			fi
 
-			# Binrepo path.
-			if [[ ${stages[${i},target]} = stage4 ]]; then
-				set_spec_variable_if_missing ${stage_info_path_work} binrepo_path ${stages[${i},binrepo_path]}
+			# LiveCD - stage1 specific default values.
+			if [[ ${stages[${i},target]} = livecd-stage1 ]]; then
+				[[ -n ${stages[${i},use]} ]] && set_spec_variable ${stage_info_path_work} use "${stages[${i},use]}"
 			fi
 
 			# LiveCD - stage2 specific default values.
@@ -605,12 +605,13 @@ write_stages() {
 				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo_${stages[${i},platform]}
 				set_spec_variable_if_missing ${stage_info_path_work} fstype squashfs
 				set_spec_variable_if_missing ${stage_info_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp]}.iso
-				[[ -n ${stages[${i},use]} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/use ${stages[${i},use]}
+				[[ -n ${stages[${i},use]} ]] && set_spec_variable ${stage_info_path_work} use "${stages[${i},use]}"
 			fi
 
 			# Stage4 specific keys
 			if [[ ${stages[${i},target]} = stage4 ]]; then
-				[[ -n ${stages[${i},use]} ]] && set_spec_variable_if_missing ${stage_info_path_work} ${target_mapping}/use ${stages[${i},use]}
+				set_spec_variable_if_missing ${stage_info_path_work} binrepo_path ${stages[${i},binrepo_path]}
+				[[ -n ${stages[${i},use]} ]] && set_spec_variable ${stage_info_path_work} use "${stages[${i},use]}"
 			fi
 
 			if [[ -n ${stages[${i},chost]} ]] && [[ ${stages[${i},target]} = stage1 ]]; then # Only allow setting chost in stage1 targets.
@@ -947,10 +948,14 @@ set_spec_variable() {
 	local spec_path=${1}
 	local key=${2}
 	local new_value="${3}"
+
 	if grep -q "^$key:" ${spec_path}; then
-		sed -i "s|^$key: .*|$key: $new_value|" ${spec_path}
+		sed -i "/^$key:/,/^[^:]*:/ {
+			/^$key:/ s|^$key:.*|$key: $new_value|
+			/^[^:]*:/!d
+		}" ${spec_path}
 	else
-		echo "$key: $new_value" >> ${spec_path}
+		echo "${key}: $new_value" >> ${spec_path}
 	fi
 }
 
