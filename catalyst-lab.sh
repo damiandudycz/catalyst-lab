@@ -688,9 +688,9 @@ EOF
 				cp -ru ${portage_path_work}/* ${build_work_path}/etc/portage/ || exit 1
 
 				# Set common-flags, chost and use flags.
-				[[ -n ${common_flags} ]] && ( sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
-				[[ -n ${chost} ]] && ( sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
-				[[ -n ${use} ]] && echo "\\\${USE} ${use}" >> ${build_work_path}/etc/portage/make.conf
+				[[ -n "${common_flags}" ]] && ( sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
+				[[ -n "${chost}" ]] && ( sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
+				[[ -n "${use}" ]] && echo "USE=\\"\\\${USE} ${use}\\"" >> ${build_work_path}/etc/portage/make.conf
 
 				# Extract portage snapshot.
 				echo "Preparing portage snapshot"
@@ -1439,3 +1439,4 @@ fi
 # TODO: Storing multiple job types in the same stage directory can cause some issues. If that's the case, enforce using single file in stage directory.
 # TODO: Add validation that parent and children uses the same base architecture
 # TODO: Validating if required tools are installed: catalyst, jq, git, rsync, qemu-*
+# TODO: Store use flags from toml separately and add them only in binhost target. For other targets catalyst takes care of these. Also consider if other use flags, should be included in stage1 and stage3, or should these be left vanilla.
