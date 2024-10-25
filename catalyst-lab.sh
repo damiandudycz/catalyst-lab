@@ -76,10 +76,11 @@ load_stages() {
 				local _selected=$(is_stage_selected ${platform} ${release} ${stage})
 				local _arch_emulation=$( [[ ${host_arch} = ${platform_basearch} ]] && echo false || echo true )
 				local _subarch=${stage_subarch:-${platform_subarch}} # Can be skipped in spec, will be determined from platform.conf
+				load_toml ${platform_basearch} ${_subarch} # Loading some variables directly from matching toml, if not specified in stage configs.
 				local _repos=${stage_repos:-${release_repos:-${platform_repos}}} # Can be definied in platform, release or stage (spec)
-				local _chost=${stage_chost:-${release_chost:-${platform_chost}}} # Can be definied in platform, release or stage (spec)
+				local _chost=${stage_chost:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
 				local _cpu_flags=${stage_cpu_flags:-${release_cpu_flags:-${platform_cpu_flags}}} # Can be definied in platform, release or stage (spec)
-				local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags}}} # Can be definied in platform, release or stage (spec)
+				local _common_flags=${stage_common_flags:-${release_common_flags:-${platform_common_flags:-${TOML_CACHE[${platform_basearch},${_subarch},common_flags]}}}} # Can be definied in platform, release or stage (spec)
 				local _releng_base=${stage_releng_base:-${RELENG_BASES[${_target}]}} # Can be skipped in spec, will be determined automatically from target
 				local _compression_mode=${stage_compression_mode:-${release_compression_mode:-${platform_compression_mode:-pixz}}} # Can be definied in platform, release or stage (spec)
 				local _catalyst_conf=${stage_catalyst_conf:-${release_catalyst_conf:-${platform_catalyst_conf}}} # Can be added in platform, release or stage
@@ -306,7 +307,6 @@ load_stages() {
 	done
 
 }
-
 
 #  Get portage snapshot version and download new if needed.
 prepare_portage_snapshot() {
@@ -1200,6 +1200,25 @@ binrepo_local_path() {
 	esac
 }
 
+# Finds and loads catalyst toml file for specified basearch.subarch
+declare -A TOML_CACHE=()
+load_toml() {
+	local basearch=${1}
+	local subarch=${2}
+	if [[ -n ${TOML_CACHE[${basearch},${subarch},chost]} ]]; then
+		return # Already loaded
+	fi
+	local toml_file=$(grep -rl ${basearch}.${subarch} ${catalyst_usr_path}/arch)
+	unset toml_chost toml_common_flags toml_use
+	[[ -f ${toml_file} ]] || return
+	mapfile -t use_flags < <(tomlq -r ".${basearch}.${subarch}.USE // empty | .[]" ${toml_file})
+	mapfile -t common_flags < <(tomlq ".${basearch}.${subarch}.COMMON_FLAGS // empty" ${toml_file})
+	mapfile -t chost < <(tomlq ".${basearch}.${subarch}.CHOST // empty" ${toml_file})
+	TOML_CACHE[${basearch},${subarch},chost]="${chost}"
+	TOML_CACHE[${basearch},${subarch},common_flags]="${common_flags}"
+	TOML_CACHE[${basearch},${subarch},use_flags]="${use_flags[*]:-""}"
+}
+
 # ------------------------------------------------------------------------------
 # START:
 
@@ -1409,3 +1428,4 @@ fi
 # TODO: Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
 # TODO: Storing multiple job types in the same stage directory can cause some issues. If that's the case, enforce using single file in stage directory.
 # TODO: Add validation that parent and children uses the same base architecture
+# TODO: Validating if required tools are installed: catalyst, jq, git, rsync, qemu-*
