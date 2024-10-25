@@ -315,7 +315,7 @@ prepare_portage_snapshot() {
 	fi
 	if [[ -z ${treeish} ]] || [[ ${FETCH_FRESH_SNAPSHOT} = true ]]; then
 		echo_color ${color_turquoise_bold} "[ Refreshing portage snapshot ]"
-		catalyst -s stable
+		catalyst -s stable || exit 1
 		treeish=$(find ${catalyst_path}/snapshots -type f -name "*.sqfs" -exec ls -t {} + | head -n 1 | xargs -n 1 basename -s .sqfs | cut -d '-' -f 2)
 		echo "" # New line
 	fi
@@ -654,8 +654,6 @@ EOF
 			local chost=${stages[${i},chost]} # TODO: LOAD DEFAULTS FROM TOML FILE
 			# TODO: Same with use
 
-
-			# TODO: Mounting overlay repos.
 			# TODO: Setup common_flags, use flags and add bindinst to use. Also copy defaults from corresponding toml file here, to make.conf. Overwrites for CPUFLAGS can still be set with 00cpu-flags.
 			# TODO: Make sure that when emerging new packages, default gentoo binrepos.conf is not being used. This can probably be achieved with correct emerge flags. Still local binrepo packages should be used!
 
@@ -667,7 +665,7 @@ EOF
 				echo "(This functionality is a work in progress)"
 
 				echo "Extract ${source_tarball_path} to ${build_work_path}"
-				tar -xpf ${source_tarball_path} -C ${build_work_path}
+				tar -xpf ${source_tarball_path} -C ${build_work_path} || exit 1
 
 				# Cleanup build_work_path on exit.
 				trap 'echo "Cleaning: ${build_work_path}"; rm -rf ${build_work_path}' EXIT
@@ -675,33 +673,34 @@ EOF
 				if [[ ${stages[${i},arch_emulation]} = true ]]; then
 					for interpreter in "${stages[${i},arch_interpreter]}"; do
 						echo "Inject interpreter: \${interpreter}"
-						cp \${interpreter} ${build_work_path}/usr/bin/
+						cp \${interpreter} ${build_work_path}/usr/bin/ || exit 1
 					done
 				fi
 
 				echo "Preparing portage directory"
-				cp -ru ${portage_path_work}/* ${build_work_path}/etc/portage/
+				cp -ru ${portage_path_work}/* ${build_work_path}/etc/portage/ || exit 1
 
 				# Set common-flags and chost.
-				[[ -n "${common_flags}" ]] && sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf
-				[[ -n "${chost}" ]] && sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf
+				[[ -n "${common_flags}" ]] && ( sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
+				[[ -n "${chost}" ]] && ( sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
 
 				# Extract portage snapshot.
 				echo "Preparing portage snapshot"
-				unsquashfs -d ${build_work_path}/var/db/repos/gentoo ${catalyst_path}/snapshots/gentoo-${stages[${i},treeish]}.sqfs
+				unsquashfs -d ${build_work_path}/var/db/repos/gentoo ${catalyst_path}/snapshots/gentoo-${stages[${i},treeish]}.sqfs || exit 1
 
 				echo "Entering chroot environment"
 				unshare --mount -- bash -c "
 					# Mount necessary filesystems
-					mkdir -p ${build_work_path}/{dev,dev/pts,proc,sys,run}
-					mount -t proc /proc ${build_work_path}/proc
-					mount -t sysfs /sys ${build_work_path}/sys
-					mount -t tmpfs tmpfs ${build_work_path}/run
-					mount -t devtmpfs devtmpfs ${build_work_path}/dev
-					mount -t devpts devpts ${build_work_path}/dev/pts
+					mkdir -p ${build_work_path}/{dev,dev/pts,proc,sys,run} || exit 1
+					mount -t proc /proc ${build_work_path}/proc || exit 1
+					mount -t sysfs /sys ${build_work_path}/sys || exit 1
+					mount -t tmpfs tmpfs ${build_work_path}/run || exit 1
+					mount -t devtmpfs devtmpfs ${build_work_path}/dev || exit 1
+					mount -t devpts devpts ${build_work_path}/dev/pts || exit 1
 
 					# Bind mount binrepo to /var/cache/binpkgs to allow using and building packages for the binrepo.
-					mount --bind ${binrepo_path} ${build_work_path}/var/cache/binpkgs
+					[[ ! -e ${binrepo_path} ]] && ( mkdir -p ${binrepo_path} || exit 1 ) # If binrepo path doesn't exists, create it
+					mount --bind ${binrepo_path} ${build_work_path}/var/cache/binpkgs || exit 1
 
 					# Bind overlay repos.
 					repo_mount_paths=''
@@ -709,19 +708,19 @@ EOF
 						for repo in '${stages[${i},repos_local_paths]}'; do
 							repo_name=\\\$(basename \\\${repo})
 							repo_mount_path=/var/db/repos/\\\${repo_name}
-							mkdir \\\${repo_mount_path}
-							mount --bind \\\${repo} \\\${repo_mount_path}
+							mkdir -p \\\${repo_mount_path} || exit 1
+							mount --bind \\\${repo} \\\${repo_mount_path} || exit 1
 							repo_mount_paths=\\"\\\${repo_mount_paths},\\\${repo_mount_path}\\"
 						done
 					fi
 
 					if [[ -n '${stages[${i},profile]}' ]]; then
-						eselect profile set ${stages[${i},profile]}
+						eselect profile set ${stages[${i},profile]} || exit 1
 					fi
 
 					# Bind mount resolv.conf for DNS resolution
-					[[ ! -f ${build_work_path}/etc/resolv.conf ]] && touch ${build_work_path}/etc/resolv.conf
-					mount --bind /etc/resolv.conf ${build_work_path}/etc/resolv.conf
+					[[ ! -f ${build_work_path}/etc/resolv.conf ]] && ( touch ${build_work_path}/etc/resolv.conf || exit 1 )
+					mount --bind /etc/resolv.conf ${build_work_path}/etc/resolv.conf || exit 1
 
 					# Trap to ensure cleanup
 					trap 'umount -l ${build_work_path}/{dev/pts,dev,proc,sys,run,var/cache/binpkgs,etc/resolv.conf\\\${repo_mount_paths}}' EXIT
@@ -729,8 +728,8 @@ EOF
 					# Install packages inside chroot environment.
 					chroot ${build_work_path} /bin/bash -c '
 						emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going --quiet ${stages[${i},packages]}
-					'
-				"
+					' || exit 1
+				" || exit 1
 
 				# TODO:
 				# + Extract source archive
@@ -1290,8 +1289,9 @@ readonly RSYNC_OPTIONS="--archive --delete --delete-after --omit-dir-times --del
 
 readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
 readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
-readonly qemu_has_static_user=$(grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE && echo true || echo false)
-readonly qemu_binfmt_is_running=$( { [ -x /etc/init.d/qemu-binfmt ] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
+# TODO: Add check for these requirements:
+#readonly qemu_has_static_user=$( ( [[ -f /var/db/pkg/app-emulation/qemu-*/USE ]] && grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE ) && echo true || echo false)
+#readonly qemu_binfmt_is_running=$( { [ -x /etc/init.d/qemu-binfmt ] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
 
 readonly color_gray='\033[0;90m'
 readonly color_red='\033[0;31m'
@@ -1406,7 +1406,6 @@ fi
 # TODO: Add checking for valid config entries in config files
 # TODO: Detect when profile changes in stage4 and if it does, automtically add rebuilds to fsscript file
 # TODO: Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote if can just specify word remote and automatically find like, it it can specify tarball name or even full URL.
-# TODO: Add support for binhost type jobs
 # TODO: Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
 # TODO: Storing multiple job types in the same stage directory can cause some issues. If that's the case, enforce using single file in stage directory.
 # TODO: Add validation that parent and children uses the same base architecture
