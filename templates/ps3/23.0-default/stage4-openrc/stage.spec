@@ -1,35 +1,30 @@
-profile: default/linux/@BASE_ARCH@/23.0
-source_subpath: @PLATFORM@/@RELEASE@/stage3-@SUB_ARCH@-base-openrc-@TIMESTAMP@
+source_subpath: @PLATFORM@/@RELEASE@/stage3-@SUB_ARCH@-openrc-@TIMESTAMP@
 
-use:
-	networkmanager
-	pulseaudio
-	bluetooth
+use: ps3 dist-kernel
 
 packages:
 	app-admin/sudo
 	app-admin/sysklogd
         app-eselect/eselect-repository
+	app-misc/ps3pf_utils
         app-portage/gentoolkit
         dev-vcs/git
         net-misc/networkmanager
 	net-misc/ntp
+	sys-apps/ps3vram-swap
 	sys-block/zram-init
         sys-devel/distcc
+	sys-kernel/gentoo-kernel-ps3
         sys-kernel/linux-headers
-	dev-embedded/raspberrypi-utils
-	sys-firmware/raspberrypi-wifi-ucode
-	sys-kernel/raspberrypi-image
 
 rcadd:
+	ps3vram-swap|boot
 	zram-init|boot
 	dbus|default
         NetworkManager|default
-	bluetooth|default
 	sysklogd|default
 	ntpd|default
 	ntp-client|default
-	sshd|default
 
 empty: /var/cache/distfiles
 rm: /root/.bash_history

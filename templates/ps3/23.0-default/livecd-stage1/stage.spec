@@ -1,5 +1,4 @@
-profile: default/linux/@BASE_ARCH@/23.0
-source_subpath: @PLATFORM@/@RELEASE@/stage3-@SUB_ARCH@-base-openrc-@TIMESTAMP@
+source_subpath: @PLATFORM@/@RELEASE@/stage3-@SUB_ARCH@-openrc-@TIMESTAMP@
 
 use:
 	ps3

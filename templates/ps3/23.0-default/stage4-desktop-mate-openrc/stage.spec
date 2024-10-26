@@ -1,4 +1,3 @@
-profile: default/linux/@BASE_ARCH@/23.0/desktop
 source_subpath: @PLATFORM@/@RELEASE@/stage4-@SUB_ARCH@-desktop-openrc-@TIMESTAMP@
 
 use:
