@@ -775,8 +775,32 @@ EOF
 				if [[ -n "${stages[${i},profile]}" ]]; then
 					eselect profile set ${stages[${i},profile]} || exit 1
 				fi
+				eselect news read all
 
-				emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going --quiet ${stages[${i},packages]}
+				declare packages_to_emerge=()
+				echo 'Searching for packages to rebuild...'
+
+				for package in ${stages[${i},packages]}; do
+					echo "Analyzing: \${package}"
+					if ! emerge -p --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going --quiet \${package} >/dev/null 2>&1; then
+						echo -e '${color_orange}Warning! '\${package}' fails to emerge. Adjust portage configuration. Skipping.${color_nc}'
+						continue
+					fi
+					packages_to_emerge+=(\$(emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going \${package} -pv 2>/dev/null | grep '\[ebuild.*\]' | sed -E "s/.*] ([^ ]+)(::.*)?/=\\1/"))
+				done
+				packages_to_emerge=(\$(echo \${packages_to_emerge[@]} | tr ' ' '\n' | sort -u | tr '\n' ' '))
+
+				# Emerge only packages that don't have bin packages available
+				if [[ \${#packages_to_emerge[@]} -gt 0 ]]; then
+					echo -e 'Packages to rebuild:'
+					for package in \${packages_to_emerge[@]}; do
+						echo '  '\${package}
+					done
+
+					emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going --quiet \${packages_to_emerge[@]}
+				else
+					echo 'Nothing to rebuild.'
+				fi
 EOF
 			chmod +x ${binhost_script_path_work}-run
 
