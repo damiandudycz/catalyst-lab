@@ -717,7 +717,7 @@ EOF
 				unsquashfs -d ${build_work_path}/var/db/repos/gentoo ${catalyst_path}/snapshots/gentoo-${stages[${i},treeish]}.sqfs || exit 1
 
 				echo "Preparing chroot environment"
-				unshare --mount -- bash -c "${binhost_script_path_work}-unshare" || exit 1
+				unshare --mount -- bash -c ${binhost_script_path_work}-unshare || exit 1
 EOF
 			chmod +x ${binhost_script_path_work}
 
@@ -766,7 +766,7 @@ EOF
 
 				# Insert binhost-run script into chroot and run it
 				cp ${spec_link_work}-run.sh ${build_work_path}/run-binhost.sh || exit 1
-				chroot ${build_work_path} /bin/bash -c "/run-binhost.sh" || exit 1
+				chroot ${build_work_path} /bin/bash -c /run-binhost.sh || exit 1
 EOF
 			chmod +x ${binhost_script_path_work}-unshare
 
@@ -1252,8 +1252,8 @@ load_toml() {
 	unset toml_chost toml_common_flags toml_use
 	[[ -f ${toml_file} ]] || return
 	mapfile -t use < <(tomlq -r ".${basearch}.${subarch}.USE // empty | .[]" ${toml_file})
-	mapfile -t common_flags < <(tomlq ".${basearch}.${subarch}.COMMON_FLAGS // empty" ${toml_file})
-	mapfile -t chost < <(tomlq ".${basearch}.${subarch}.CHOST // empty" ${toml_file})
+	mapfile -t common_flags < <(tomlq ".${basearch}.${subarch}.COMMON_FLAGS // empty" ${toml_file} | sed 's/"//g')
+	mapfile -t chost < <(tomlq ".${basearch}.${subarch}.CHOST // empty" ${toml_file} | sed 's/"//g')
 	TOML_CACHE[${basearch},${subarch},chost]="${chost}"
 	TOML_CACHE[${basearch},${subarch},common_flags]="${common_flags}"
 	TOML_CACHE[${basearch},${subarch},use]="${use[*]:-""}"
