@@ -1,4 +1,4 @@
-source_subpath: @PLATFORM@/@RELEASE@/stage3-@SUB_ARCH@-base-openrc-@TIMESTAMP@
+source_subpath: @PLATFORM@/@RELEASE@/stage3-@SUB_ARCH@-openrc-@TIMESTAMP@
 
 use:
 	ps3
