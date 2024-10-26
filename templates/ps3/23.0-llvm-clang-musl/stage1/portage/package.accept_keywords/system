@@ -1,0 +1,15 @@
+sys-libs/libomp ~ppc64
+sys-devel/lld ~ppc64
+sys-libs/libcxx ~ppc64
+sys-libs/compiler-rt ~ppc64
+sys-devel/clang-toolchain-symlinks ~ppc64
+sys-devel/lld-toolchain-symlinks ~ppc64
+sys-devel/clang-common ~ppc64
+sys-devel/llvm-toolchain-symlinks ~ppc64
+sys-libs/libcxxabi ~ppc64
+sys-devel/llvm ~ppc64
+sys-devel/clang-runtime ~ppc64
+sys-devel/clang ~ppc64
+
+=sys-libs/libcxx-18.1.8 **
+=sys-libs/libcxxabi-18.1.8 **
