@@ -775,18 +775,18 @@ EOF
 				if [[ -n "${stages[${i},profile]}" ]]; then
 					eselect profile set ${stages[${i},profile]} || exit 1
 				fi
-				eselect news read all
 
 				declare packages_to_emerge=()
 				echo 'Searching for packages to rebuild...'
 
 				for package in ${stages[${i},packages]}; do
 					echo "Analyzing: \${package}"
-					if ! emerge -p --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going --quiet \${package} >/dev/null 2>&1; then
+					output=\$(emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going \${package} -pv 2>/dev/null)
+					if [[ \$? -ne 0 ]]; then
 						echo -e '${color_orange}Warning! '\${package}' fails to emerge. Adjust portage configuration. Skipping.${color_nc}'
 						continue
 					fi
-					packages_to_emerge+=(\$(emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going \${package} -pv 2>/dev/null | grep '\[ebuild.*\]' | sed -E "s/.*] ([^ ]+)(::.*)?/=\\1/"))
+					packages_to_emerge+=(\$(echo "\$output" | grep '\[ebuild.*\]' | sed -E "s/.*] ([^ ]+)(::.*)?/=\\1/"))
 				done
 				packages_to_emerge=(\$(echo \${packages_to_emerge[@]} | tr ' ' '\n' | sort -u | tr '\n' ' '))
 
