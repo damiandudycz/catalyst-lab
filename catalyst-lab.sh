@@ -716,66 +716,74 @@ EOF
 				echo "Preparing portage snapshot"
 				unsquashfs -d ${build_work_path}/var/db/repos/gentoo ${catalyst_path}/snapshots/gentoo-${stages[${i},treeish]}.sqfs || exit 1
 
-				echo "Entering chroot environment"
-				unshare --mount -- bash -c "
-					# Mount necessary filesystems
-					mkdir -p ${build_work_path}/{dev,dev/pts,proc,sys,run} || exit 1
-					mount -t proc /proc ${build_work_path}/proc || exit 1
-					mount -t sysfs /sys ${build_work_path}/sys || exit 1
-					mount -t tmpfs tmpfs ${build_work_path}/run || exit 1
-					mount -t devtmpfs devtmpfs ${build_work_path}/dev || exit 1
-					mount -t devpts devpts ${build_work_path}/dev/pts || exit 1
-
-					# Bind mount binrepo to /var/cache/binpkgs to allow using and building packages for the binrepo.
-					[[ ! -e ${binrepo_path} ]] && ( mkdir -p ${binrepo_path} || exit 1 ) # If binrepo path doesn't exists, create it
-					mount --bind ${binrepo_path} ${build_work_path}/var/cache/binpkgs || exit 1
-
-					# Bind overlay repos.
-					repo_mount_paths=''
-					if [[ -n '${stages[${i},repos_local_paths]}' ]]; then
-						for repo in '${stages[${i},repos_local_paths]}'; do
-							repo_name=\\\$(basename \\\${repo})
-							repo_mount_path=/var/db/repos/\\\${repo_name}
-							mkdir -p \\\${repo_mount_path} || exit 1
-							mount --bind \\\${repo} \\\${repo_mount_path} || exit 1
-							repo_mount_paths=\\"\\\${repo_mount_paths},\\\${repo_mount_path}\\"
-						done
-					fi
-
-					if [[ -n '${stages[${i},profile]}' ]]; then
-						eselect profile set ${stages[${i},profile]} || exit 1
-					fi
-
-					# Bind mount resolv.conf for DNS resolution
-					[[ ! -f ${build_work_path}/etc/resolv.conf ]] && ( touch ${build_work_path}/etc/resolv.conf || exit 1 )
-					mount --bind /etc/resolv.conf ${build_work_path}/etc/resolv.conf || exit 1
-
-					# Trap to ensure cleanup
-					trap 'umount -l ${build_work_path}/{dev/pts,dev,proc,sys,run,var/cache/binpkgs,etc/resolv.conf\\\${repo_mount_paths}}' EXIT
-
-					# Install packages inside chroot environment.
-					chroot ${build_work_path} /bin/bash -c '
-						emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going --quiet ${stages[${i},packages]}
-					' || exit 1
-				" || exit 1
-
-				# TODO:
-				# + Extract source archive
-				# + Combine with portage directory (including releng base elements)
-				# + Bind working directories
-				# + Copy interpreters
-				# + Setup profile
-				# + Bind overlays
-				# - Setup common_flags, use flags, etc in portage
-				# + Extract portage snapshot used
-				# + Get the list of packages to build and emerge them with correct flags
-				# + Unmount binded folders
-				# + Cleanup files
+				echo "Preparing chroot environment"
+				unshare --mount -- bash -c "${binhost_script_path_work}-unshare" || exit 1
 EOF
 			chmod +x ${binhost_script_path_work}
 
+			cat <<EOF | sed 's/^[ \t]*//' | tee ${binhost_script_path_work}-unshare > /dev/null || exit 1
+				# Mount necessary filesystems
+				mkdir -p ${build_work_path}/{dev,dev/pts,proc,sys,run} || exit 1
+				mount -t proc /proc ${build_work_path}/proc || exit 1
+				mount -t sysfs /sys ${build_work_path}/sys || exit 1
+				mount -t tmpfs tmpfs ${build_work_path}/run || exit 1
+				mount -t devtmpfs devtmpfs ${build_work_path}/dev || exit 1
+				mount -t devpts devpts ${build_work_path}/dev/pts || exit 1
+
+				# Bind mount binrepo to /var/cache/binpkgs to allow using and building packages for the binrepo.
+				[[ ! -e ${binrepo_path} ]] && ( mkdir -p ${binrepo_path} || exit 1 ) # If binrepo path doesn't exists, create it
+				mkdir -p ${build_work_path}/var/cache/binpkgs || exit 1
+				mount --bind ${binrepo_path} ${build_work_path}/var/cache/binpkgs || exit 1
+				# Bind overlay repos.
+				repo_mount_paths=''
+				if [[ -n "${stages[${i},repos_local_paths]}" ]]; then
+					mkdir -p ${build_work_path}/etc/portage/repos.conf
+					for repo in "${stages[${i},repos_local_paths]}"; do
+						# Bind repo
+						repo_name=\$(basename \${repo})
+						repo_mount_path=${build_work_path}/var/db/repos/\${repo_name}
+						mkdir -p \${repo_mount_path} || exit 1
+						mount --bind \${repo} \${repo_mount_path} || exit 1
+						# Register repo
+						repo_info_path=${build_work_path}/etc/portage/repos.conf/\${repo_name}.conf
+						repo_real_name=\$(cat \${repo}/profiles/repo_name)
+						repo_real_name=\${repo_real_name:-\${repo_name}}
+						echo "[\${repo_real_name}]" > \${repo_info_path}
+						echo "location = /var/db/repos/\${repo_name}" >> \${repo_info_path}
+						echo "masters = gentoo" >> \${repo_info_path}
+						echo "auto-sync = no" >> \${repo_info_path}
+						# Remember repo to unmount
+						repo_mount_paths="\${repo_mount_paths},\${repo_mount_path}"
+					done
+				fi
+
+				# Bind mount resolv.conf for DNS resolution
+				[[ ! -f ${build_work_path}/etc/resolv.conf ]] && ( touch ${build_work_path}/etc/resolv.conf || exit 1 )
+				mount --bind /etc/resolv.conf ${build_work_path}/etc/resolv.conf || exit 1
+
+				# Trap to ensure cleanup
+				trap 'umount -l ${build_work_path}/{dev/pts,dev,proc,sys,run,var/cache/binpkgs,etc/resolv.conf\${repo_mount_paths}}' EXIT
+
+				# Insert binhost-run script into chroot and run it
+				cp ${spec_link_work}-run.sh ${build_work_path}/run-binhost.sh || exit 1
+				chroot ${build_work_path} /bin/bash -c "/run-binhost.sh" || exit 1
+EOF
+			chmod +x ${binhost_script_path_work}-unshare
+
+			cat <<EOF | sed 's/^[ \t]*//' | tee ${binhost_script_path_work}-run > /dev/null || exit 1
+				# Change profile
+				if [[ -n "${stages[${i},profile]}" ]]; then
+					eselect profile set ${stages[${i},profile]} || exit 1
+				fi
+
+				emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going --quiet ${stages[${i},packages]}
+EOF
+			chmod +x ${binhost_script_path_work}-run
+
 			# Create link to build script.
 			ln -s ${binhost_script_path_work} ${spec_link_work}.sh
+			ln -s ${binhost_script_path_work}-unshare ${spec_link_work}-unshare.sh
+			ln -s ${binhost_script_path_work}-run ${spec_link_work}-run.sh
 
 		fi
 	done
