@@ -304,7 +304,7 @@ load_stages() {
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		if [[ -n ${stages[${i},binrepo]} ]]; then
 			# Check if binrepo contains type in [TYPE]: prefix. If it does use it as a type. If not try to infer from the content
-			local repo_kind=$(echo ${stages[${i},binrepo]} | grep -oP '(?<=^\[)[^]]+(?=\]:)')
+			local repo_kind=$(echo ${stages[${i},binrepo]} | grep -oP '(?<=^\[)[^]]+(?=\])')
 			if [[ -z ${repo_kind} ]] && ([[ ${stages[${i},binrepo]} == http://* || ${stages[${i},binrepo]} == https://* || ${stages[${i},binrepo]} == git@* ]]); then
 				# Assume git repo for URLs
 				repo_kind=git
@@ -314,7 +314,7 @@ load_stages() {
 			stages[${i},binrepo_kind]=${repo_kind}
 
 			# Remove type from binrepo value
-			stages[${i},binrepo]=$(echo ${stages[${i},binrepo]} | sed 's/^\[[^]]*\]://')
+			stages[${i},binrepo]=$(echo ${stages[${i},binrepo]} | sed 's/^\[[^]]*\]//')
 
 			# Map remote repositories to local names
 			stages[${i},binrepo_local_path]=$(binrepo_local_path ${stages[${i},binrepo]} ${stages[${i},binrepo_kind]})
