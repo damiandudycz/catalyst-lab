@@ -330,6 +330,28 @@ load_stages() {
 
 }
 
+# Check if tools required for all rebuild stages are installed
+validate_stages() {
+	for ((i=$((stages_count - 1)); i>=0; i--)); do
+		[[ ${stages[${i},rebuild]} = false ]] && continue
+		local required_checks=""
+		[[ ${stages[${i},arch_emulation]} = true ]] && required_checks+="qemu_is_installed "
+		[[ ${stages[${i},kind]} = binhost ]] && required_checks+="squashfs_tools_is_installed "
+		if [[ ${stages[${i},arch_emulation]} = true ]]; then
+			# Create sanity checks for existance of all required interpreters.
+			for interpreter in ${stages[${i},arch_interpreter]}; do
+				local interpreter_var_name=$(echo ${interpreter} | sed 's/[\/-]/_/g')
+				eval "qemu_interpreter_installed${interpreter_var_name}=$( [[ -f ${interpreter} ]] && echo true || echo false )"
+				required_checks+="qemu_interpreter_installed${interpreter_var_name} "
+			done
+		fi
+		# Run checks.
+		if [[ -n ${required_checks[@]} ]]; then
+			validate_sanity_checks "${required_checks}"
+		fi
+	done
+}
+
 #  Get portage snapshot version and download new if needed.
 prepare_portage_snapshot() {
 	if [[ -d ${catalyst_path}/snapshots && $(find ${catalyst_path}/snapshots -type f -name "*.sqfs" | wc -l) -gt 0 ]]; then
@@ -591,7 +613,7 @@ write_stages() {
 			# Update seed.
 			if [[ ${stages[${i},target]} = stage1 ]]; then
 				set_spec_variable_if_missing ${stage_info_path_work} update_seed yes
-				set_spec_variable_if_missing ${stage_info_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg @system @world"
+				set_spec_variable_if_missing ${stage_info_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg --with-bdeps=y @system @world"
 			fi
 
 			# LiveCD - stage1 specific default values.
@@ -691,11 +713,11 @@ EOF
 				#!/bin/bash
 				echo "(This functionality is a work in progress)"
 
-				echo "Extract ${source_tarball_path} to ${build_work_path}"
-				tar -xpf ${source_tarball_path} -C ${build_work_path} || exit 1
-
 				# Cleanup build_work_path on exit.
 				trap 'echo "Cleaning: ${build_work_path}"; rm -rf ${build_work_path}' EXIT
+
+				echo "Extract ${source_tarball_path} to ${build_work_path}"
+				tar -xpf ${source_tarball_path} -C ${build_work_path} || exit 1
 
 				if [[ ${stages[${i},arch_emulation]} = true ]]; then
 					for interpreter in "${stages[${i},arch_interpreter]}"; do
@@ -708,9 +730,9 @@ EOF
 				cp -ru ${portage_path_work}/* ${build_work_path}/etc/portage/ || exit 1
 
 				# Set common-flags, chost and use flags.
-				[[ -n "${common_flags}" ]] && ( sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
-				[[ -n "${chost}" ]] && ( sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
-				[[ -n "${use}" ]] && echo "USE=\\"\\\${USE} ${use}\\"" >> ${build_work_path}/etc/portage/make.conf
+				[[ -n "${common_flags}" ]] && ( echo "Setting COMMON_FLAGS: ${common_flags}" && sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
+				[[ -n "${chost}" ]] && ( echo "Setting CHOST: ${chost}" && sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
+				[[ -n "${use}" ]] && echo "Setting USE flags: ${use}" && echo "USE=\\"\\\${USE} ${use}\\"" >> ${build_work_path}/etc/portage/make.conf
 
 				# Extract portage snapshot.
 				echo "Preparing portage snapshot"
@@ -723,6 +745,7 @@ EOF
 
 			cat <<EOF | sed 's/^[ \t]*//' | tee ${binhost_script_path_work}-unshare > /dev/null || exit 1
 				# Mount necessary filesystems
+				echo "Mounting system directories"
 				mkdir -p ${build_work_path}/{dev,dev/pts,proc,sys,run} || exit 1
 				mount -t proc /proc ${build_work_path}/proc || exit 1
 				mount -t sysfs /sys ${build_work_path}/sys || exit 1
@@ -731,14 +754,16 @@ EOF
 				mount -t devpts devpts ${build_work_path}/dev/pts || exit 1
 
 				# Bind mount binrepo to /var/cache/binpkgs to allow using and building packages for the binrepo.
+				echo "Binding binhost directory: ${binrepo_path}"
 				[[ ! -e ${binrepo_path} ]] && ( mkdir -p ${binrepo_path} || exit 1 ) # If binrepo path doesn't exists, create it
 				mkdir -p ${build_work_path}/var/cache/binpkgs || exit 1
 				mount --bind ${binrepo_path} ${build_work_path}/var/cache/binpkgs || exit 1
 				# Bind overlay repos.
 				repo_mount_paths=''
 				if [[ -n "${stages[${i},repos_local_paths]}" ]]; then
-					mkdir -p ${build_work_path}/etc/portage/repos.conf
+					mkdir -p ${build_work_path}/etc/portage/repos.conf || exit
 					for repo in "${stages[${i},repos_local_paths]}"; do
+						echo "Binding overlay repository: \${repo}"
 						# Bind repo
 						repo_name=\$(basename \${repo})
 						repo_mount_path=${build_work_path}/var/db/repos/\${repo_name}
@@ -758,6 +783,7 @@ EOF
 				fi
 
 				# Bind mount resolv.conf for DNS resolution
+				echo "Binding resolv.conf"
 				[[ ! -f ${build_work_path}/etc/resolv.conf ]] && ( touch ${build_work_path}/etc/resolv.conf || exit 1 )
 				mount --bind /etc/resolv.conf ${build_work_path}/etc/resolv.conf || exit 1
 
@@ -765,6 +791,7 @@ EOF
 				trap 'umount -l ${build_work_path}/{dev/pts,dev,proc,sys,run,var/cache/binpkgs,etc/resolv.conf\${repo_mount_paths}}' EXIT
 
 				# Insert binhost-run script into chroot and run it
+				echo "Entering chroot environment"
 				cp ${spec_link_work}-run.sh ${build_work_path}/run-binhost.sh || exit 1
 				chroot ${build_work_path} /bin/bash -c /run-binhost.sh || exit 1
 EOF
@@ -773,15 +800,25 @@ EOF
 			cat <<EOF | sed 's/^[ \t]*//' | tee ${binhost_script_path_work}-run > /dev/null || exit 1
 				# Change profile
 				if [[ -n "${stages[${i},profile]}" ]]; then
+					echo "Changing profile: ${stages[${i},profile]}"
 					eselect profile set ${stages[${i},profile]} || exit 1
 				fi
 
-				declare packages_to_emerge=()
 				echo 'Searching for packages to rebuild...'
+				declare packages_to_emerge=()
 
 				for package in ${stages[${i},packages]}; do
 					echo "Analyzing: \${package}"
-					output=\$(emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going \${package} -pv 2>/dev/null)
+					emerge_args=(
+						--buildpkg
+						--usepkg
+						--getbinpkg=n
+						--changed-use
+						--update
+						--deep
+						--keep-going
+					)
+					output=\$(emerge \${emerge_args[@]} \${package} -pv 2>/dev/null)
 					if [[ \$? -ne 0 ]]; then
 						echo -e '${color_orange}Warning! '\${package}' fails to emerge. Adjust portage configuration. Skipping.${color_nc}'
 						continue
@@ -796,8 +833,21 @@ EOF
 					for package in \${packages_to_emerge[@]}; do
 						echo '  '\${package}
 					done
-
-					emerge --buildpkg --usepkg --getbinpkg=n --changed-use --update --deep --keep-going --quiet \${packages_to_emerge[@]}
+					emerge_args=(
+						--buildpkg
+						--usepkg
+						--getbinpkg=n
+						--changed-use
+						--update
+						--deep
+						--keep-going
+						--quiet
+						--verbose
+					)
+					echo "Building packages"
+					echo "emerge \${emerge_args[@]} \${packages_to_emerge[@]}"
+					emerge \${emerge_args[@]} \${packages_to_emerge[@]} || exit 1
+					echo "All done"
 				else
 					echo 'Nothing to rebuild.'
 				fi
@@ -1204,6 +1254,7 @@ is_stage_selected() {
 
 print_debug_stack() {
 	# Debug mode
+	echo_color ${color_turquoise_bold} "[ Stages details ]"
 	for ((i=0; i<${stages_count}; i++)); do
 		echo "Stage details at index ${i}:"
 		for key in ${STAGE_KEYS[@]}; do
@@ -1281,6 +1332,26 @@ load_toml() {
 	TOML_CACHE[${basearch},${subarch},chost]="${chost}"
 	TOML_CACHE[${basearch},${subarch},common_flags]="${common_flags}"
 	TOML_CACHE[${basearch},${subarch},use]="${use[*]:-""}"
+}
+
+# Validates if given sanity checks are passed
+validate_sanity_checks() {
+	local checks="${1}"
+	local pass=true
+	local comments=""
+	for check in ${checks}; do
+		if [[ ! ${!check} = true ]]; then
+			comments+="[${color_red}-${color_nc}] ${color_red}${check}${color_nc}\n"
+			pass=false
+		fi
+	done
+	if [[ ! ${pass} = true ]]; then
+		echo "Required sanity checks failed:"
+		echo -e ${comments}
+		echo "Please install and configure required tools first."
+		echo "Exiting."
+		exit 1
+	fi
 }
 
 # ------------------------------------------------------------------------------
@@ -1374,9 +1445,6 @@ readonly RSYNC_OPTIONS="--archive --delete --delete-after --omit-dir-times --del
 
 readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
 readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
-# TODO: Add check for these requirements:
-#readonly qemu_has_static_user=$( ( [[ -f /var/db/pkg/app-emulation/qemu-*/USE ]] && grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE ) && echo true || echo false)
-#readonly qemu_binfmt_is_running=$( { [ -x /etc/init.d/qemu-binfmt ] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
 
 readonly color_gray='\033[0;90m'
 readonly color_red='\033[0;31m'
@@ -1440,6 +1508,34 @@ while [ $# -gt 0 ]; do case ${1} in
 	*) selected_stages_templates+=("${1}");;
 esac; shift; done
 
+# Main sanity check:
+readonly qemu_is_installed=$( which qemu-img >/dev/null 2>&1 && echo true || echo false )
+readonly qemu_has_static_user=$( ( $(ls /var/db/pkg/app-emulation/qemu-*/USE 1> /dev/null 2>&1) && grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE ) && echo true || echo false)
+readonly qemu_binfmt_is_running=$( { [[ -x /etc/init.d/qemu-binfmt ]] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
+readonly catalyst_is_installed=$( which catalyst >/dev/null 2>&1 && echo true || echo false )
+readonly yq_is_installed=$( which yq >/dev/null 2>&1 && echo true || echo false )
+readonly git_is_installed=$( which git >/dev/null 2>&1 && echo true || echo false )
+readonly squashfs_tools_is_installed=$( which mksquashfs >/dev/null 2>&1 && echo true || echo false )
+
+readonly catalyst_path_exists=$( [[ -d ${catalyst_path} ]] && echo true || echo false )
+readonly catalyst_usr_path_exists=$( [[ -d ${catalyst_usr_path} ]] && echo true || echo false )
+readonly templates_path_exists=$( [[ -d ${templates_path} ]] && echo true || echo false )
+
+if [[ ${DEBUG} = true ]]; then
+	echo_color ${color_turquoise_bold} "[ Sanity checks ]"
+	sanity_checks=(qemu_is_installed qemu_has_static_user qemu_binfmt_is_running catalyst_is_installed yq_is_installed git_is_installed squashfs_tools_is_installed catalyst_path_exists catalyst_usr_path_exists templates_path_exists)
+	for key in ${sanity_checks[@]}; do
+		if [[ ${!key} = true ]]; then
+			echo -e "[${color_green}+${color_nc}] ${color_green}${key}${color_nc}"
+		else
+			echo -e "[${color_red}-${color_nc}] ${color_red}${key}${color_nc}"
+		fi
+	done
+	echo ""
+fi
+# Check tests required for overall script capabilities. Customized tests are also performed for stages selected to rebuild later.
+validate_sanity_checks "yq_is_installed git_is_installed catalyst_is_installed catalyst_path_exists catalyst_usr_path_exists templates_path_exists"
+
 # ------------------------------------------------------------------------------
 # Main program:
 
@@ -1450,6 +1546,7 @@ if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]]; then
 fi
 
 load_stages
+validate_stages
 if [[ ${PREPARE} = true ]] || [[ ${FETCH_FRESH_SNAPSHOT} = true ]]; then
 	prepare_portage_snapshot
 fi
@@ -1482,7 +1579,6 @@ else
 	echo ""
 fi
 
-# TODO: Add lock file preventing multiple runs at once, but only if the same builds are involved (maybe).
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
 # TODO: Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs.
 # TODO: Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
@@ -1492,7 +1588,5 @@ fi
 # TODO: Detect when profile changes in stage4 and if it does, automtically add rebuilds to fsscript file
 # TODO: Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote if can just specify word remote and automatically find like, it it can specify tarball name or even full URL.
 # TODO: Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
-# TODO: Storing multiple job types in the same stage directory can cause some issues. If that's the case, enforce using single file in stage directory.
 # TODO: Add validation that parent and children uses the same base architecture
 # TODO: Validating if required tools are installed: catalyst, jq, git, rsync, qemu-*
-# TODO: Store use flags from toml separately and add them only in binhost target. For other targets catalyst takes care of these. Also consider if other use flags, should be included in stage1 and stage3, or should these be left vanilla.
