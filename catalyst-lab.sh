@@ -330,6 +330,28 @@ load_stages() {
 
 }
 
+# Check if tools required for all rebuild stages are installed
+validate_stages() {
+	for ((i=$((stages_count - 1)); i>=0; i--)); do
+		[[ ${stages[${i},rebuild]} = false ]] && continue
+		local required_checks=""
+		[[ ${stages[${i},arch_emulation]} = true ]] && required_checks+="qemu_is_installed "
+		[[ ${stages[${i},kind]} = binhost ]] && required_checks+="squashfs_tools_is_installed "
+		if [[ ${stages[${i},arch_emulation]} = true ]]; then
+			# Create sanity checks for existance of all required interpreters.
+			for interpreter in ${stages[${i},arch_interpreter]}; do
+				local interpreter_var_name=$(echo ${interpreter} | sed 's/[\/-]/_/g')
+				eval "qemu_interpreter_installed${interpreter_var_name}=$( [[ -f ${interpreter} ]] && echo true || echo false )"
+				required_checks+="qemu_interpreter_installed${interpreter_var_name} "
+			done
+		fi
+		# Run checks.
+		if [[ -n ${required_checks[@]} ]]; then
+			validate_sanity_checks "${required_checks}"
+		fi
+	done
+}
+
 #  Get portage snapshot version and download new if needed.
 prepare_portage_snapshot() {
 	if [[ -d ${catalyst_path}/snapshots && $(find ${catalyst_path}/snapshots -type f -name "*.sqfs" | wc -l) -gt 0 ]]; then
@@ -1232,6 +1254,7 @@ is_stage_selected() {
 
 print_debug_stack() {
 	# Debug mode
+	echo_color ${color_turquoise_bold} "[ Stages details ]"
 	for ((i=0; i<${stages_count}; i++)); do
 		echo "Stage details at index ${i}:"
 		for key in ${STAGE_KEYS[@]}; do
@@ -1309,6 +1332,26 @@ load_toml() {
 	TOML_CACHE[${basearch},${subarch},chost]="${chost}"
 	TOML_CACHE[${basearch},${subarch},common_flags]="${common_flags}"
 	TOML_CACHE[${basearch},${subarch},use]="${use[*]:-""}"
+}
+
+# Validates if given sanity checks are passed
+validate_sanity_checks() {
+	local checks="${1}"
+	local pass=true
+	local comments=""
+	for check in ${checks}; do
+		if [[ ! ${!check} = true ]]; then
+			comments+="[${color_red}-${color_nc}] ${color_red}${check}${color_nc}\n"
+			pass=false
+		fi
+	done
+	if [[ ! ${pass} = true ]]; then
+		echo "Required sanity checks failed:"
+		echo -e ${comments}
+		echo "Please install and configure required tools first."
+		echo "Exiting."
+		exit 1
+	fi
 }
 
 # ------------------------------------------------------------------------------
@@ -1402,9 +1445,6 @@ readonly RSYNC_OPTIONS="--archive --delete --delete-after --omit-dir-times --del
 
 readonly host_arch=${ARCH_MAPPINGS[$(arch)]:-$(arch)} # Mapped to release arch
 readonly timestamp=$(date -u +"%Y%m%dT%H%M%SZ") # Current timestamp.
-# TODO: Add check for these requirements:
-#readonly qemu_has_static_user=$( ( [[ -f /var/db/pkg/app-emulation/qemu-*/USE ]] && grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE ) && echo true || echo false)
-#readonly qemu_binfmt_is_running=$( { [ -x /etc/init.d/qemu-binfmt ] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
 
 readonly color_gray='\033[0;90m'
 readonly color_red='\033[0;31m'
@@ -1468,6 +1508,34 @@ while [ $# -gt 0 ]; do case ${1} in
 	*) selected_stages_templates+=("${1}");;
 esac; shift; done
 
+# Main sanity check:
+readonly qemu_is_installed=$( which qemu-img >/dev/null 2>&1 && echo true || echo false )
+readonly qemu_has_static_user=$( ( $(ls /var/db/pkg/app-emulation/qemu-*/USE 1> /dev/null 2>&1) && grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE ) && echo true || echo false)
+readonly qemu_binfmt_is_running=$( { [[ -x /etc/init.d/qemu-binfmt ]] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
+readonly catalyst_is_installed=$( which catalyst >/dev/null 2>&1 && echo true || echo false )
+readonly yq_is_installed=$( which yq >/dev/null 2>&1 && echo true || echo false )
+readonly git_is_installed=$( which git >/dev/null 2>&1 && echo true || echo false )
+readonly squashfs_tools_is_installed=$( which mksquashfs >/dev/null 2>&1 && echo true || echo false )
+
+readonly catalyst_path_exists=$( [[ -d ${catalyst_path} ]] && echo true || echo false )
+readonly catalyst_usr_path_exists=$( [[ -d ${catalyst_usr_path} ]] && echo true || echo false )
+readonly templates_path_exists=$( [[ -d ${templates_path} ]] && echo true || echo false )
+
+if [[ ${DEBUG} = true ]]; then
+	echo_color ${color_turquoise_bold} "[ Sanity checks ]"
+	sanity_checks=(qemu_is_installed qemu_has_static_user qemu_binfmt_is_running catalyst_is_installed yq_is_installed git_is_installed squashfs_tools_is_installed catalyst_path_exists catalyst_usr_path_exists templates_path_exists)
+	for key in ${sanity_checks[@]}; do
+		if [[ ${!key} = true ]]; then
+			echo -e "[${color_green}+${color_nc}] ${color_green}${key}${color_nc}"
+		else
+			echo -e "[${color_red}-${color_nc}] ${color_red}${key}${color_nc}"
+		fi
+	done
+	echo ""
+fi
+# Check tests required for overall script capabilities. Customized tests are also performed for stages selected to rebuild later.
+validate_sanity_checks "yq_is_installed git_is_installed catalyst_is_installed catalyst_path_exists catalyst_usr_path_exists templates_path_exists"
+
 # ------------------------------------------------------------------------------
 # Main program:
 
@@ -1478,6 +1546,7 @@ if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]]; then
 fi
 
 load_stages
+validate_stages
 if [[ ${PREPARE} = true ]] || [[ ${FETCH_FRESH_SNAPSHOT} = true ]]; then
 	prepare_portage_snapshot
 fi
