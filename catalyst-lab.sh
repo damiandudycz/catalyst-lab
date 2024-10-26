@@ -626,7 +626,7 @@ write_stages() {
 				set_spec_variable_if_missing ${stage_info_path_work} type gentoo-release-minimal
 				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo_${stages[${i},platform]}
 				set_spec_variable_if_missing ${stage_info_path_work} fstype squashfs
-				set_spec_variable_if_missing ${stage_info_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp]}.iso
+				set_spec_variable_if_missing ${stage_info_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp_generated]}.iso
 				[[ -n ${stages[${i},use]} ]] && set_spec_variable ${stage_info_path_work} use "${stages[${i},use]}"
 			fi
 
