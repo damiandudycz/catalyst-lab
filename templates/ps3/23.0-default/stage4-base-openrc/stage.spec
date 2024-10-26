@@ -1,4 +1,3 @@
-profile: default/linux/@BASE_ARCH@/23.0
 source_subpath: @PLATFORM@/@RELEASE@/stage3-@SUB_ARCH@-base-openrc-@TIMESTAMP@
 
 use: ps3 dist-kernel

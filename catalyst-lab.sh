@@ -246,6 +246,13 @@ load_stages() {
 	# Refresh parent indexes after sorting array.
 	update_parent_indexes
 
+	# Determine inherited profiles
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		[[ -n ${stages[${i},profile]} ]] && continue
+		[[ -z ${stages[${i},arch_subarch]} ]] && continue
+		stages[${i},profile]=$(sanitize_spec_variable ${stages[${i},platform]} ${stages[${i},release]} ${stages[${i},stage]} ${stages[${i},arch_family]} ${stages[${i},arch_basearch]} ${stages[${i},arch_subarch]} $(inherit_profile ${i}))
+	done
+
 	# Determine stages children array.
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		local j; for (( j=((i+1)); j<${stages_count}; j++ )); do
@@ -574,6 +581,7 @@ write_stages() {
 			set_spec_variable ${stage_info_path_work} source_subpath ${stages[${i},source_subpath]} # source_subpath shoud always be replaced with calculated value, to take into consideration existing old builds usage.
 
 			set_spec_variable_if_missing ${stage_info_path_work} target ${stages[${i},target]}
+			set_spec_variable_if_missing ${stage_info_path_work} profile ${stages[${i},profile]}
 			set_spec_variable_if_missing ${stage_info_path_work} rel_type ${stages[${i},rel_type]}
 			set_spec_variable_if_missing ${stage_info_path_work} subarch ${stages[${i},arch_subarch]}
 			set_spec_variable_if_missing ${stage_info_path_work} version_stamp ${stages[${i},version_stamp]}
@@ -1351,6 +1359,23 @@ validate_sanity_checks() {
 		echo "Please install and configure required tools first."
 		echo "Exiting."
 		exit 1
+	fi
+}
+
+# Get profile from first parent that has it definied.
+# If no parent definies profile yet, assume default/linux/@BASE_ARCH@/23.0.
+inherit_profile() {
+	local index=${1}
+	local parent_index=${stages[${index},parent]}
+	if [[ -z ${parent_index} ]]; then
+		echo "default/linux/@BASE_ARCH@/23.0"
+		return
+	fi
+	local parent_profile=${stages[${parent_index},profile]}
+	if [[ -n ${parent_profile} ]]; then
+		echo ${parent_profile}
+	else
+		inherit_profile ${parent_index}
 	fi
 }
 

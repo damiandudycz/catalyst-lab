@@ -1,4 +1,3 @@
-profile: default/linux/@BASE_ARCH@/23.0
 source_subpath: @PLATFORM@/@RELEASE@/livecd-stage1-@SUB_ARCH@-@TIMESTAMP@
 
 gk_mainargs: --all-ramdisk-modules
