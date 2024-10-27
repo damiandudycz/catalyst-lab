@@ -887,7 +887,7 @@ build_stages() {
 
 			# Setup used paths:
 			local stage_info_path_work=${stage_path_work}/stage.spec
-			local catalyst_conf_work=${stage_work_path}/catalyst.conf
+			local catalyst_conf_work=${stage_path_work}/catalyst.conf
 
 			local args="-af ${stage_info_path_work}"
 			[[ -f ${catalyst_conf_work} ]] && args="${args} -c ${catalyst_conf_work}"
