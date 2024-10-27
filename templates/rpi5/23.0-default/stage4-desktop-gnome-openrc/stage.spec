@@ -1,5 +1,5 @@
 profile: default/linux/@BASE_ARCH@/23.0/desktop/gnome
-source_subpath: @PLATFORM@/@RELEASE@/stage4-@SUB_ARCH@-desktop-openrc-@TIMESTAMP@
+source_subpath: @REL_TYPE@/stage4-@SUB_ARCH@-desktop-openrc-@TIMESTAMP@
 
 use:
 	networkmanager

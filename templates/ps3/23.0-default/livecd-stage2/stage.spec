@@ -1,4 +1,4 @@
-source_subpath: @PLATFORM@/@RELEASE@/livecd-stage1-@SUB_ARCH@-@TIMESTAMP@
+source_subpath: @REL_TYPE@/livecd-stage1-@SUB_ARCH@-@TIMESTAMP@
 
 gk_mainargs: --all-ramdisk-modules
 

@@ -106,9 +106,9 @@ load_stages() {
 				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
 				local _profile=${stage_values[profile]}
 				# Sanitize selected variables
-				local properties_to_sanitize=(version_stamp source_subpath product binrepo binrepo_path rel_type profile)
+				local properties_to_sanitize=(rel_type version_stamp source_subpath product binrepo binrepo_path profile)
 				for key in ${properties_to_sanitize[@]}; do
-					eval "_${key}=\$(sanitize_spec_variable ${platform} ${release} ${stage} ${platform_family} ${platform_basearch} ${_subarch} \${_${key}})"
+					eval "_${key}=\$(sanitize_spec_variable ${platform} ${release} ${stage} ${platform_family} ${platform_basearch} ${_subarch} \"${_rel_type}\" \"\${_${key}}\")"
 				done
 				# Computer after sanitization of dependencies.
 				local _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E $(echo ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
@@ -250,7 +250,7 @@ load_stages() {
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		[[ -n ${stages[${i},profile]} ]] && continue
 		[[ -z ${stages[${i},arch_subarch]} ]] && continue
-		stages[${i},profile]=$(sanitize_spec_variable ${stages[${i},platform]} ${stages[${i},release]} ${stages[${i},stage]} ${stages[${i},arch_family]} ${stages[${i},arch_basearch]} ${stages[${i},arch_subarch]} $(inherit_profile ${i}))
+		stages[${i},profile]=$(sanitize_spec_variable ${stages[${i},platform]} ${stages[${i},release]} ${stages[${i},stage]} ${stages[${i},arch_family]} ${stages[${i},arch_basearch]} ${stages[${i},arch_subarch]} ${stages[${i},rel_type]} $(inherit_profile ${i}))
 	done
 
 	# Determine stages children array.
@@ -1076,8 +1076,9 @@ sanitize_spec_variable() {
 	local family="$4"
 	local base_arch="$5"
 	local sub_arch="$6"
-	local value="$7"
-	echo "${value}" | sed "s/@RELEASE@/${release}/g" | sed "s/@PLATFORM@/${platform}/g" | sed "s/@STAGE@/${stage}/g" | sed "s/@BASE_ARCH@/${base_arch}/g" | sed "s/@SUB_ARCH@/${sub_arch}/g" | sed "s/@FAMILY_ARCH@/${family}/g"
+	local rel_type="$7"
+	local value="$8"
+	echo "${value}" | sed "s|@RELEASE@|${release}|g" | sed "s|@PLATFORM@|${platform}|g" | sed "s|@STAGE@|${stage}|g" | sed "s|@BASE_ARCH@|${base_arch}|g" | sed "s|@SUB_ARCH@|${sub_arch}|g" | sed "s|@FAMILY_ARCH@|${family}|g" | sed "s|@REL_TYPE@|${rel_type}|g"
 }
 
 # Scans local and binhost targets and updates their parent property in stages array.
