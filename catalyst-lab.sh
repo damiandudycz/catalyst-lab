@@ -106,9 +106,9 @@ load_stages() {
 				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
 				local _profile=${stage_values[profile]}
 				# Sanitize selected variables
-				local properties_to_sanitize=(version_stamp source_subpath product binrepo binrepo_path rel_type profile)
+				local properties_to_sanitize=(rel_type version_stamp source_subpath product binrepo binrepo_path profile)
 				for key in ${properties_to_sanitize[@]}; do
-					eval "_${key}=\$(sanitize_spec_variable ${platform} ${release} ${stage} ${platform_family} ${platform_basearch} ${_subarch} \${_${key}})"
+					eval "_${key}=\$(sanitize_spec_variable ${platform} ${release} ${stage} ${platform_family} ${platform_basearch} ${_subarch} \"${_rel_type}\" \"\${_${key}}\")"
 				done
 				# Computer after sanitization of dependencies.
 				local _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E $(echo ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
@@ -116,8 +116,8 @@ load_stages() {
 				# Load toml file from catalyst
 				load_toml ${platform_basearch} ${_subarch} # Loading some variables directly from matching toml, if not specified in stage configs.
 				# Compute after loading toml.
-				local _chost=${stage_values[chost]:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
-				local _common_flags=${stage_values[common_flags]:-${release_common_flags:-${platform_common_flags:-${TOML_CACHE[${platform_basearch},${_subarch},common_flags]}}}} # Can be definied in platform, release or stage (spec)
+				local _chost=${stage_values[chost]:-${release_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
+				local _common_flags=${stage_values[common_flags]:-${release_common_flags:-${TOML_CACHE[${platform_basearch},${_subarch},common_flags]}}} # Can be definied in platform, release or stage (spec)
 				local _use=$(echo "${platform_use} ${release_use} ${stage_values[use]}" | sed 's/ \{1,\}/ /g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//') # For USE flags, we combine all the values from platform, release and stage. Toml flags are added only for binhost, as for stages, catalyst takes care of that.
 				local _use_toml="${TOML_CACHE[${platform_basearch},${_subarch},use]}"
 
@@ -250,7 +250,7 @@ load_stages() {
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		[[ -n ${stages[${i},profile]} ]] && continue
 		[[ -z ${stages[${i},arch_subarch]} ]] && continue
-		stages[${i},profile]=$(sanitize_spec_variable ${stages[${i},platform]} ${stages[${i},release]} ${stages[${i},stage]} ${stages[${i},arch_family]} ${stages[${i},arch_basearch]} ${stages[${i},arch_subarch]} $(inherit_profile ${i}))
+		stages[${i},profile]=$(sanitize_spec_variable ${stages[${i},platform]} ${stages[${i},release]} ${stages[${i},stage]} ${stages[${i},arch_family]} ${stages[${i},arch_basearch]} ${stages[${i},arch_subarch]} ${stages[${i},rel_type]} $(inherit_profile ${i}))
 	done
 
 	# Determine stages children array.
@@ -1076,8 +1076,9 @@ sanitize_spec_variable() {
 	local family="$4"
 	local base_arch="$5"
 	local sub_arch="$6"
-	local value="$7"
-	echo "${value}" | sed "s/@RELEASE@/${release}/g" | sed "s/@PLATFORM@/${platform}/g" | sed "s/@STAGE@/${stage}/g" | sed "s/@BASE_ARCH@/${base_arch}/g" | sed "s/@SUB_ARCH@/${sub_arch}/g" | sed "s/@FAMILY_ARCH@/${family}/g"
+	local rel_type="$7"
+	local value="$8"
+	echo "${value}" | sed "s|@RELEASE@|${release}|g" | sed "s|@PLATFORM@|${platform}|g" | sed "s|@STAGE@|${stage}|g" | sed "s|@BASE_ARCH@|${base_arch}|g" | sed "s|@SUB_ARCH@|${sub_arch}|g" | sed "s|@FAMILY_ARCH@|${family}|g" | sed "s|@REL_TYPE@|${rel_type}|g"
 }
 
 # Scans local and binhost targets and updates their parent property in stages array.
@@ -1391,7 +1392,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 declare PLATFORM_KEYS=( # Variables allowed in platform.conf
-	arch      repos            common_flags chost
+	arch      repos
 	cpu_flags compression_mode binrepo      binrepo_path
 	use
 )
