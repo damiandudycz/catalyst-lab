@@ -10,8 +10,8 @@
 # Insert virtual download stages for missing seeds.
 load_stages() {
 	declare -gA stages # Some details of stages retreived from scanning. (release,stage,target,source,has_parent).
-	available_builds=$(find ${catalyst_builds_path} -type f -name *.tar.xz -printf '%P\n')
 	stages_count=0 # Number of all stages. Script will determine this value automatically.
+	available_builds_files=$(find ${catalyst_builds_path} -type f \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
 
 	# Load basic details from platform.conf, release.conf and stage.spec files:
 	# Find list of platforms. (ps3, rpi5, amd64, ...).
@@ -104,15 +104,19 @@ load_stages() {
 				local _binrepo_path=${stage_values[binrepo_path]:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
 				local _version_stamp=${stage_values[version_stamp]:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
 				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
+				local _product_format=${_product} # Stays the same the whole time, containing "@TIMESTAMP@" string for later comparsions
+				local _product_iso=$([[ ${_target} = livecd-stage2 ]] && echo ${stage_values[iso]:-install-${platform}-@TIMESTAMP@.iso} || echo "")
+				local _product_iso_format=${_product_iso} # Stays the same the whole time, containing "@TIMESTAMP@" string for later comparsions
 				local _profile=${stage_values[profile]}
 				# Sanitize selected variables
-				local properties_to_sanitize=(rel_type version_stamp source_subpath product binrepo binrepo_path profile)
+				local properties_to_sanitize=(rel_type version_stamp source_subpath product product_iso binrepo binrepo_path profile product_format product_iso_format)
 				for key in ${properties_to_sanitize[@]}; do
 					eval "_${key}=\$(sanitize_spec_variable ${platform} ${release} ${stage} ${platform_family} ${platform_basearch} ${_subarch} \"${_rel_type}\" \"\${_${key}}\")"
 				done
 				# Computer after sanitization of dependencies.
-				local _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E $(echo ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
-				local _available_build_timestamp=$( [[ -n ${_available_build} ]] && start_pos=$(expr index "${_product}" "@TIMESTAMP@") && echo "${_available_build:$((start_pos - 1)):16}" )
+				local _available_builds=($(printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort -r))
+				local _latest_build=$(echo "${_available_builds[@]}" | cut -d ' ' -f 1 | sed 's/\.tar\.xz$//') # Newest available
+				local _latest_build_timestamp=$( [[ -n ${_latest_build} ]] && start_pos=$(expr index "${_product}" "@TIMESTAMP@") && echo "${_latest_build:$((start_pos - 1)):16}" )
 				# Load toml file from catalyst
 				load_toml ${platform_basearch} ${_subarch} # Loading some variables directly from matching toml, if not specified in stage configs.
 				# Compute after loading toml.
@@ -153,9 +157,12 @@ load_stages() {
 				stages[${stages_count},catalyst_conf]=${_catalyst_conf}
 				stages[${stages_count},rel_type]=${_rel_type}
 				stages[${stages_count},product]=${_product}
+				stages[${stages_count},product_iso]=${_product_iso}
+				stages[${stages_count},product_format]=${_product_format}
+				stages[${stages_count},product_iso_format]=${_product_iso_format}
 				stages[${stages_count},profile]=${_profile}
-				stages[${stages_count},available_build]=${_available_build}
-				stages[${stages_count},timestamp_available]=${_available_build_timestamp}
+				stages[${stages_count},latest_build]=${_latest_build}
+				stages[${stages_count},timestamp_latest]=${_latest_build_timestamp}
 
 				# Increase processed stages count.
 				stages_count=$((stages_count + 1))
@@ -189,6 +196,7 @@ load_stages() {
 			added_download_stages_indexes[${seed_subpath}]=${stages_count}
 			stages[${stages_count},kind]=download
 			stages[${stages_count},product]=${seed_subpath}
+			stages[${stages_count},product_format]=${seed_subpath}
 			stages[${stages_count},platform]=${stages[${i},arch_family]} # Use arch family as platform for virtual remote jobs
 			stages[${stages_count},release]=gentoo # Use constant name gentoo for virtual download stages
 			stages[${stages_count},stage]=$(echo ${stages[${stages_count},product]} | awk -F '/' '{print $NF}' | sed 's/-@TIMESTAMP@//') # In virtual downloads, stage is determined this way
@@ -196,10 +204,11 @@ load_stages() {
 			local _is_selected=$(is_stage_selected ${stages[${stages_count},platform]} ${stages[${stages_count},release]} ${stages[${stages_count},stage]})
 			stages[${stages_count},selected]=$(is_stage_selected ${stages[${stages_count},platform]} ${stages[${stages_count},release]} ${stages[${stages_count},stage]})
 			# Find available build
-			local _available_build=$(echo ${seed_subpath} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') && _available_build=$(printf "%s\n" "${available_builds[@]}" | grep -E "${_available_build}" | sort -r | head -n 1 | sed 's/\.tar\.xz$//')
-			local _available_build_timestamp=$( [[ -n ${_available_build} ]] && start_pos=$(expr index "${seed_subpath}" "@TIMESTAMP@") && echo "${_available_build:$((start_pos - 1)):16}" )
-			stages[${stages_count},available_build]=${_available_build}
-			stages[${stages_count},timestamp_available]=${_available_build_timestamp}
+			local _available_builds=($(printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${seed_subpath} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort -r))
+			local _latest_build=$(echo "${_available_builds[@]}" | cut -d ' ' -f 1 | sed 's/\.tar\.xz$//')
+			local _latest_build_timestamp=$( [[ -n ${_latest_build} ]] && start_pos=$(expr index "${seed_subpath}" "@TIMESTAMP@") && echo "${_latest_build:$((start_pos - 1)):16}" )
+			stages[${stages_count},latest_build]=${_latest_build}
+			stages[${stages_count},timestamp_latest]=${_latest_build_timestamp}
 			# Save interpreter and basearch as the same as the child that this new seed produces. In theory this could result in 2 or more stages using the same source while haveing different base architecture, but this should not be the case in properly configured templates.
 			stages[${stages_count},arch_interpreter]=${stages[${i},arch_interpreter]}
 			stages[${stages_count},arch_basearch]=${stages[${i},arch_basearch]}
@@ -271,7 +280,7 @@ load_stages() {
 			stages[${i},rebuild]=true
 			# Also mark parent as rebuild, it there's no available previous build for it.
 			local parent_index=${stages[${i},parent]}
-			if [[ -n ${parent_index} ]] && ( [[ -z ${stages[${parent_index},available_build]} ]] || [[ ${CLEAN_BUILD} = true ]] ); then
+			if [[ -n ${parent_index} ]] && ( [[ -z ${stages[${parent_index},latest_build]} ]] || [[ ${CLEAN_BUILD} = true ]] ); then
 				stages[${parent_index},rebuild]=true
 			fi
 			continue
@@ -491,10 +500,11 @@ prepare_stages() {
 		fi
 
 		# Fill timestamps in stages.
-		local stage_timestamp=${stages[${i},timestamp_generated]:-${stages[${i},timestamp_available]}}
+		local stage_timestamp=${stages[${i},timestamp_generated]:-${stages[${i},timestamp_latest]}}
 		if [[ -n ${stage_timestamp} ]]; then
 			# Update stage_timestamp in product and version_stamp of this target
 			stages[${i},product]=$(echo ${stages[${i},product]} | sed "s|@TIMESTAMP@|${stage_timestamp}|")
+			stages[${i},product_iso]=$(echo ${stages[${i},product_iso]} | sed "s|@TIMESTAMP@|${stage_timestamp}|")
 			stages[${i},version_stamp]=$(echo ${stages[${i},version_stamp]} | sed "s|@TIMESTAMP@|${stage_timestamp}|")
 			# Update childrent source_subpath timestamp
 			for child in ${stages[${i},children]}; do
@@ -634,7 +644,7 @@ write_stages() {
 				set_spec_variable_if_missing ${stage_info_path_work} type gentoo-release-minimal
 				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo_${stages[${i},platform]}
 				set_spec_variable_if_missing ${stage_info_path_work} fstype squashfs
-				set_spec_variable_if_missing ${stage_info_path_work} iso install-${stages[${i},platform]}-${stages[${i},timestamp_generated]}.iso
+				set_spec_variable_if_missing ${stage_info_path_work} iso ${stages[${i},product_iso]}
 				[[ -n ${stages[${i},use]} ]] && set_spec_variable ${stage_info_path_work} use "${stages[${i},use]}"
 			fi
 
@@ -1168,11 +1178,11 @@ draw_stages_tree() {
 		if [[ ${stages[${child},kind]} = build ]]; then
 			local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
 			stage_name=${color_gray}${display_name}${color_nc}
-			# If stage is not being rebuild and it has direct children that are being rebuild, display used available_build.
-			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},timestamp_available]} ]]; then
+			# If stage is not being rebuild and it has direct children that are being rebuild, display used latest_build.
+			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},timestamp_latest]} ]]; then
 				for c in ${stages[${child},children]}; do
 					if [[ ${stages[${c},rebuild]} = true ]]; then
-						display_name="${display_name} (${stages[${child},timestamp_available]})"
+						display_name="${display_name} (${stages[${child},timestamp_latest]})"
 						stage_name=${color_gray}${display_name}${color_nc}
 						break
 					fi
@@ -1186,11 +1196,11 @@ draw_stages_tree() {
 			fi
 		elif [[ ${stages[${child},kind]} = download ]]; then
 			local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
-			# If stage is not being rebuild and it has direct children that are being rebuild, display used available_build.
-			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},timestamp_available]} ]]; then
+			# If stage is not being rebuild and it has direct children that are being rebuild, display used latest_build.
+			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},timestamp_latest]} ]]; then
 				for c in ${stages[${child},children]}; do
 					if [[ ${stages[${c},rebuild]} = true ]]; then
-						display_name="${display_name} (${stages[${child},timestamp_available]})"
+						display_name="${display_name} (${stages[${child},timestamp_latest]})"
 						break
 					fi
 				done
@@ -1380,6 +1390,46 @@ inherit_profile() {
 	fi
 }
 
+# Remove old files from previous builds.
+purge_old_builds_and_isos() {
+	echo_color ${color_turquoise_bold} "[ Purge old builds ]"
+	available_builds_files=$(find ${catalyst_builds_path} -type f \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
+	local to_remove=()
+	for ((i=0; i<${stages_count}; i++)); do
+		[[ ! ${stages[${i},selected]} = true ]] && continue
+		local _available_builds=($(printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${stages[${i},product_format]} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/' | sort))) # Sorted from oldest
+		local _available_isos=($([[ -n "${stages[${i},product_iso_format]}" ]] && printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo $(dirname ${stages[${i},product_format]})/${stages[${i},product_iso_format]} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort))
+		for ((j=0; j<((${#_available_builds[*]}-1)); j++)); do
+			# Double check to make sure currently built product is not the same file
+			[[ ${_available_builds[${j}]} == ${stages[${i},product]}* ]] && continue
+			to_remove+=(${_available_builds[${j}]})
+		done
+		for ((j=0; j<((${#_available_isos[*]}-1)); j++)); do
+			# Double check to make sure currently built iso is not the same file
+			[[ ${_available_isos[${j}]} == ${stages[${i},product_iso]}* ]] && continue
+			to_remove+=(${_available_isos[${j}]})
+		done
+	done
+	if [[ -n ${to_remove} ]]; then
+		echo "Will remove old builds:"
+		for file in ${to_remove[@]}; do
+			echo -e " - ${color_gray}${file}${color_nc}"
+		done
+		echo "Use CTRL+C to cancel."
+		echo "Removing in..."
+		for i in {10..0}; do
+			echo -ne "\r${i} "
+			sleep 1
+		done
+		echo ""
+		for file in ${to_remove[@]}; do
+			echo -e "${color_red}Removing: ${color_gray}${catalyst_builds_path}/${color_nc}${file}${color_gray}*${color_nc}"
+		done
+	else
+		echo "No old builds to remove found."
+	fi
+}
+
 # ------------------------------------------------------------------------------
 # START:
 
@@ -1409,8 +1459,8 @@ declare STAGE_KEYS=( # Variables stored in stages[] for the script.
 
 	platform release stage
 
-	rel_type        target              source_subpath      product
-	available_build timestamp_available timestamp_generated parent
+	rel_type     target           source_subpath      product product_format product_iso product_iso_format
+	latest_build timestamp_latest timestamp_generated parent
 	children
 
 	chost common_flags cpu_flags
@@ -1525,6 +1575,7 @@ while [ $# -gt 0 ]; do case ${1} in
 	--update-releng) FETCH_FRESH_RELENG=true;;
 	--update-repos) FETCH_FRESH_REPOS=true;;
 	--upload-binrepos) UPLOAD_BINREPOS=true;; # Try to upload changes in binrepo after build finishes.
+	--purge) PURGE=true;; # Clean all builds and isos but the latest.
 	--clean) CLEAN_BUILD=true;; # Perform clean build - don't use any existing sources even if available (Except for downloaded seeds).
 	--build) BUILD=true; PREPARE=true;; # Prepare is implicit when using --build.
 	--prepare) PREPARE=true;;
@@ -1603,6 +1654,9 @@ else
 	fi
 	echo "To build selected stages use --build flag."
 	echo ""
+fi
+if [[ ${PURGE} = true ]]; then
+	purge_old_builds_and_isos
 fi
 
 # TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
