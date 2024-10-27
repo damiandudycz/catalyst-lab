@@ -116,7 +116,7 @@ load_stages() {
 				# Load toml file from catalyst
 				load_toml ${platform_basearch} ${_subarch} # Loading some variables directly from matching toml, if not specified in stage configs.
 				# Compute after loading toml.
-				local _chost=${stage_values[chost]:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
+				local _chost=${stage_values[chost]:-${release_chost:-${platform_chost:-${TOML_CACHE[${platform_basearch},${_subarch},chost]:-${platform_baseraw}-unknown-linux-gnu}}}} # Can be definied in platform, release or stage (spec). Otherwise it's taken from catalyst toml matching architecture
 				local _common_flags=${stage_values[common_flags]:-${release_common_flags:-${platform_common_flags:-${TOML_CACHE[${platform_basearch},${_subarch},common_flags]}}}} # Can be definied in platform, release or stage (spec)
 				local _use=$(echo "${platform_use} ${release_use} ${stage_values[use]}" | sed 's/ \{1,\}/ /g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//') # For USE flags, we combine all the values from platform, release and stage. Toml flags are added only for binhost, as for stages, catalyst takes care of that.
 				local _use_toml="${TOML_CACHE[${platform_basearch},${_subarch},use]}"
@@ -609,7 +609,7 @@ write_stages() {
 				sed -i "/^${key}:/d" ${stage_info_path_work}
 			done
 
-			[[ -n ${stages[$${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_info_path_work} common_flags "${stages[${i},common_flags]}"
+			[[ -n ${stages[${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_info_path_work} common_flags "${stages[${i},common_flags]}"
 			[[ ${stages[${i},arch_emulation]} = true ]] && set_spec_variable_if_missing ${stage_info_path_work} interpreter "${stages[${i},arch_interpreter]}"
 			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} overlay ${stage_overlay_path_work}
 			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} root_overlay ${stage_root_overlay_path_work}
