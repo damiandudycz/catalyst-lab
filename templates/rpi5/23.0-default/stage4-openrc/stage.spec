@@ -19,9 +19,11 @@ packages:
 	dev-embedded/raspberrypi-utils
 	sys-firmware/raspberrypi-wifi-ucode
 	sys-kernel/raspberrypi-image
+	sys-power/cpupower
 
 rcadd:
 	zram-init|boot
+	cpupower|boot
 	dbus|default
         NetworkManager|default
 	bluetooth|default

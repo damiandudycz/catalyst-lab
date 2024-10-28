@@ -348,24 +348,32 @@ load_stages() {
 
 # Check if tools required for all rebuild stages are installed
 validate_stages() {
+	[[ ${DEBUG} = true ]] && echo_color ${color_turquoise_bold} "[ Stages sanity checks ]"
+
+	# Prepare additional checks
+	local required_checks=""
 	for ((i=$((stages_count - 1)); i>=0; i--)); do
 		[[ ${stages[${i},rebuild]} = false ]] && continue
-		local required_checks=""
-		[[ ${stages[${i},arch_emulation]} = true ]] && required_checks+="qemu_is_installed qemu_has_static_user qemu_binfmt_is_running "
-		[[ ${stages[${i},kind]} = binhost ]] && required_checks+="squashfs_tools_is_installed "
+		[[ ${stages[${i},kind]} = binhost ]] && [[ ! ${required_checks} == *"squashfs_tools_is_installed"* ]] && required_checks+="squashfs_tools_is_installed "
 		if [[ ${stages[${i},arch_emulation]} = true ]]; then
+			if [[ ! ${required_checks} == *"qemu_is_installed"* ]]; then
+				required_checks+="qemu_is_installed qemu_has_static_user qemu_binfmt_is_running "
+			fi
 			# Create sanity checks for existance of all required interpreters.
 			for interpreter in ${stages[${i},arch_interpreter]}; do
 				local interpreter_var_name=$(echo ${interpreter} | sed 's/[\/-]/_/g')
-				eval "qemu_interpreter_installed${interpreter_var_name}=$( [[ -f ${interpreter} ]] && echo true || echo false )"
-				required_checks+="qemu_interpreter_installed${interpreter_var_name} "
+				if [[ ! ${required_checks} == *"qemu_interpreter_installed${interpreter_var_name}"* ]]; then
+					eval "qemu_interpreter_installed${interpreter_var_name}=$( [[ -f ${interpreter} ]] && echo true || echo false )"
+					required_checks+="qemu_interpreter_installed${interpreter_var_name} "
+				fi
 			done
 		fi
-		# Run checks.
-		if [[ -n ${required_checks[@]} ]]; then
-			validate_sanity_checks "${required_checks}"
-		fi
 	done
+
+	# Run checks.
+	if [[ -n ${required_checks[@]} ]]; then
+		validate_sanity_checks false "${DEBUG}" "${required_checks}"
+	fi
 }
 
 #  Get portage snapshot version and download new if needed.
@@ -387,11 +395,11 @@ prepare_releng() {
 	# If it exists and FETCH_FRESH_RELENG is set, pull changes.
 	if [[ ! -d ${releng_path} ]]; then
 		echo_color ${color_turquoise_bold} "[ Downloading releng ]"
-		git clone https://github.com/gentoo/releng.git ${releng_path} || exit 1
+		git clone https://github.com/gentoo/releng.git ${releng_path} || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." exit 1)
 		echo ""
 	elif [[ ${FETCH_FRESH_RELENG} = true ]]; then
 		echo_color ${color_turquoise_bold} "[ Updating releng ]"
-		git -C ${releng_path} pull || exit 1
+		git -C ${releng_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." exit 1)
 		echo ""
 	fi
 }
@@ -416,11 +424,11 @@ fetch_repos() {
 						# If location doesn't exists yet - clone repository
 						echo -e "${color_turquoise}Clonning overlay repo: ${color_yellow}${repo}${color_nc}"
 						mkdir -p ${repo_local_path}
-						git clone ${repo} ${repo_local_path}
+						git clone ${repo} ${repo_local_path} || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." exit 1)
 					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
 						# If it exists - pull repository
 						echo -e "${color_turquoise}Pulling overlay repo: ${color_yellow}${repo}${color_nc}"
-						git -C ${repo_local_path} pull
+						git -C ${repo_local_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." exit 1)
 					fi
 				fi
 			done
@@ -1355,21 +1363,32 @@ load_toml() {
 
 # Validates if given sanity checks are passed
 validate_sanity_checks() {
-	local checks="${1}"
+	local is_optional=${1}
+	local print_success="${2}"
+	local checks="${3}"
 	local pass=true
 	local comments=""
 	for check in ${checks}; do
-		if [[ ! ${!check} = true ]]; then
+		if [[ ${!check} = true ]]; then
+			if [[ ${print_success} = true ]]; then
+				comments+="[${color_green}+${color_nc}] ${color_green}${check}${color_nc}\n"
+			fi
+		elif [[ ${is_optional} = true ]]; then
+			comments+="[${color_orange}-${color_nc}] ${color_orange}${check}${color_nc}\n"
+		else
 			comments+="[${color_red}-${color_nc}] ${color_red}${check}${color_nc}\n"
 			pass=false
 		fi
 	done
+	[[ -n ${comments} ]] && comments=${comments::-2} # Remove last new line
 	if [[ ! ${pass} = true ]]; then
 		echo "Required sanity checks failed:"
 		echo -e ${comments}
 		echo "Please install and configure required tools first."
 		echo "Exiting."
 		exit 1
+	elif [[ -n ${comments} ]]; then
+		echo -e ${comments}
 	fi
 }
 
@@ -1598,20 +1617,14 @@ readonly yq_is_installed=$( which yq >/dev/null 2>&1 && echo true || echo false 
 readonly git_is_installed=$( which git >/dev/null 2>&1 && echo true || echo false )
 readonly squashfs_tools_is_installed=$( which mksquashfs >/dev/null 2>&1 && echo true || echo false )
 readonly templates_path_exists=$( [[ -d ${templates_path} ]] && echo true || echo false )
+sanity_checks_required="catalyst_is_installed yq_is_installed"
+sanity_checks_optional="templates_path_exists qemu_is_installed qemu_has_static_user qemu_binfmt_is_running squashfs_tools_is_installed"
 if [[ ${DEBUG} = true ]]; then
-	echo_color ${color_turquoise_bold} "[ Sanity checks ]"
-	sanity_checks=(catalyst_is_installed qemu_is_installed qemu_has_static_user qemu_binfmt_is_running yq_is_installed git_is_installed squashfs_tools_is_installed templates_path_exists)
-	for key in ${sanity_checks[@]}; do
-		if [[ ${!key} = true ]]; then
-			echo -e "[${color_green}+${color_nc}] ${color_green}${key}${color_nc}"
-		else
-			echo -e "[${color_red}-${color_nc}] ${color_red}${key}${color_nc}"
-		fi
-	done
-	echo ""
+	echo_color ${color_turquoise_bold} "[ Global sanity checks ]"
 fi
 # Check tests required for overall script capabilities. Customized tests are also performed for stages selected to rebuild later.
-validate_sanity_checks "catalyst_is_installed yq_is_installed git_is_installed templates_path_exists"
+validate_sanity_checks false "${DEBUG}" "${sanity_checks_required[@]}"
+validate_sanity_checks true "${DEBUG}" "${sanity_checks_optional[@]}"
 
 # ------------------------------------------------------------------------------
 # Main program:
@@ -1670,3 +1683,4 @@ fi
 # TODO: Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
 # TODO: Add validation that parent and children uses the same base architecture
 # TODO: Validating if required tools are installed: catalyst, jq, git, rsync, qemu-*
+# TODO: When one of builds fails, mark it's children as not to build instead of breaking the whole script.
