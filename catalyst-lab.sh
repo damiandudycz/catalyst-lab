@@ -351,7 +351,7 @@ validate_stages() {
 	for ((i=$((stages_count - 1)); i>=0; i--)); do
 		[[ ${stages[${i},rebuild]} = false ]] && continue
 		local required_checks=""
-		[[ ${stages[${i},arch_emulation]} = true ]] && required_checks+="qemu_is_installed "
+		[[ ${stages[${i},arch_emulation]} = true ]] && required_checks+="qemu_is_installed qemu_has_static_user qemu_binfmt_is_running "
 		[[ ${stages[${i},kind]} = binhost ]] && required_checks+="squashfs_tools_is_installed "
 		if [[ ${stages[${i},arch_emulation]} = true ]]; then
 			# Create sanity checks for existance of all required interpreters.
@@ -1593,14 +1593,10 @@ readonly catalyst_is_installed=$( which catalyst >/dev/null 2>&1 && echo true ||
 readonly yq_is_installed=$( which yq >/dev/null 2>&1 && echo true || echo false )
 readonly git_is_installed=$( which git >/dev/null 2>&1 && echo true || echo false )
 readonly squashfs_tools_is_installed=$( which mksquashfs >/dev/null 2>&1 && echo true || echo false )
-
-readonly catalyst_path_exists=$( [[ -d ${catalyst_path} ]] && echo true || echo false )
-readonly catalyst_usr_path_exists=$( [[ -d ${catalyst_usr_path} ]] && echo true || echo false )
 readonly templates_path_exists=$( [[ -d ${templates_path} ]] && echo true || echo false )
-
 if [[ ${DEBUG} = true ]]; then
 	echo_color ${color_turquoise_bold} "[ Sanity checks ]"
-	sanity_checks=(qemu_is_installed qemu_has_static_user qemu_binfmt_is_running catalyst_is_installed yq_is_installed git_is_installed squashfs_tools_is_installed catalyst_path_exists catalyst_usr_path_exists templates_path_exists)
+	sanity_checks=(catalyst_is_installed qemu_is_installed qemu_has_static_user qemu_binfmt_is_running yq_is_installed git_is_installed squashfs_tools_is_installed templates_path_exists)
 	for key in ${sanity_checks[@]}; do
 		if [[ ${!key} = true ]]; then
 			echo -e "[${color_green}+${color_nc}] ${color_green}${key}${color_nc}"
@@ -1611,7 +1607,7 @@ if [[ ${DEBUG} = true ]]; then
 	echo ""
 fi
 # Check tests required for overall script capabilities. Customized tests are also performed for stages selected to rebuild later.
-validate_sanity_checks "yq_is_installed git_is_installed catalyst_is_installed catalyst_path_exists catalyst_usr_path_exists templates_path_exists"
+validate_sanity_checks "catalyst_is_installed yq_is_installed git_is_installed templates_path_exists"
 
 # ------------------------------------------------------------------------------
 # Main program:
