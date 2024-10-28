@@ -351,7 +351,7 @@ validate_stages() {
 	for ((i=$((stages_count - 1)); i>=0; i--)); do
 		[[ ${stages[${i},rebuild]} = false ]] && continue
 		local required_checks=""
-		[[ ${stages[${i},arch_emulation]} = true ]] && required_checks+="qemu_is_installed "
+		[[ ${stages[${i},arch_emulation]} = true ]] && required_checks+="qemu_is_installed qemu_has_static_user qemu_binfmt_is_running "
 		[[ ${stages[${i},kind]} = binhost ]] && required_checks+="squashfs_tools_is_installed "
 		if [[ ${stages[${i},arch_emulation]} = true ]]; then
 			# Create sanity checks for existance of all required interpreters.
@@ -1424,6 +1424,7 @@ purge_old_builds_and_isos() {
 		echo ""
 		for file in ${to_remove[@]}; do
 			echo -e "${color_red}Removing: ${color_gray}${catalyst_builds_path}/${color_nc}${file}${color_gray}*${color_nc}"
+			rm -f ${catalyst_builds_path}/${file}*
 		done
 	else
 		echo "No old builds to remove found."
@@ -1541,17 +1542,10 @@ if [[ ! -f /etc/catalyst-lab/catalyst-lab.conf ]]; then
 	mkdir -p /etc/catalyst-lab
 	mkdir -p /etc/catalyst-lab/templates
 	cat <<EOF | sed 's/^[ \t]*//' | tee /etc/catalyst-lab/catalyst-lab.conf > /dev/null || exit 1
-		# Main configuration for catalyst-lab.
-		seeds_url=https://gentoo.osuosl.org/releases/@ARCH_FAMILY@/autobuilds
-		templates_path=/etc/catalyst-lab/templates
-		releng_path=/opt/releng
-		catalyst_path=/var/tmp/catalyst
-		catalyst_usr_path=/usr/share/catalyst
-		binpkgs_cache_path=/var/cache/catalyst-lab/binpkgs
-		repos_cache_path=/var/cache/catalyst-lab/repos
-		tmp_path=/tmp/catalyst-lab
+		# Important! Replace with your username. This value is used when downloading/uploading rsync binrepos.
+		ssh_username=catalyst-lab
+
 		tmpfs_size=6
-		ssh_username=catalyst-lab # Important! Replace with your username. This value is used when downloading/uploading rsync binrepos.
 		jobs=$(nproc)
 		load_average=$(nproc).0
 EOF
@@ -1560,8 +1554,18 @@ EOF
 fi
 source /etc/catalyst-lab/catalyst-lab.conf
 
-readonly work_path=${tmp_path}/${timestamp}
+# URL for downloading missing seed files.
+readonly tmp_path=/tmp/catalyst-lab
+readonly cache_path=/var/cache/catalyst-lab
+readonly releng_path=/opt/releng
+readonly seeds_url=https://gentoo.osuosl.org/releases/@ARCH_FAMILY@/autobuilds
+readonly templates_path=/etc/catalyst-lab/templates
+readonly binpkgs_cache_path=${cache_path}/binpkgs
+readonly repos_cache_path=${cache_path}/repos
+readonly catalyst_path=/var/tmp/catalyst
 readonly catalyst_builds_path=${catalyst_path}/builds
+readonly catalyst_usr_path=/usr/share/catalyst
+readonly work_path=${tmp_path}/${timestamp}
 
 # Create required folders if don't exists
 if [[ ! -d ${catalyst_builds_path} ]]; then
@@ -1593,14 +1597,10 @@ readonly catalyst_is_installed=$( which catalyst >/dev/null 2>&1 && echo true ||
 readonly yq_is_installed=$( which yq >/dev/null 2>&1 && echo true || echo false )
 readonly git_is_installed=$( which git >/dev/null 2>&1 && echo true || echo false )
 readonly squashfs_tools_is_installed=$( which mksquashfs >/dev/null 2>&1 && echo true || echo false )
-
-readonly catalyst_path_exists=$( [[ -d ${catalyst_path} ]] && echo true || echo false )
-readonly catalyst_usr_path_exists=$( [[ -d ${catalyst_usr_path} ]] && echo true || echo false )
 readonly templates_path_exists=$( [[ -d ${templates_path} ]] && echo true || echo false )
-
 if [[ ${DEBUG} = true ]]; then
 	echo_color ${color_turquoise_bold} "[ Sanity checks ]"
-	sanity_checks=(qemu_is_installed qemu_has_static_user qemu_binfmt_is_running catalyst_is_installed yq_is_installed git_is_installed squashfs_tools_is_installed catalyst_path_exists catalyst_usr_path_exists templates_path_exists)
+	sanity_checks=(catalyst_is_installed qemu_is_installed qemu_has_static_user qemu_binfmt_is_running yq_is_installed git_is_installed squashfs_tools_is_installed templates_path_exists)
 	for key in ${sanity_checks[@]}; do
 		if [[ ${!key} = true ]]; then
 			echo -e "[${color_green}+${color_nc}] ${color_green}${key}${color_nc}"
@@ -1611,7 +1611,7 @@ if [[ ${DEBUG} = true ]]; then
 	echo ""
 fi
 # Check tests required for overall script capabilities. Customized tests are also performed for stages selected to rebuild later.
-validate_sanity_checks "yq_is_installed git_is_installed catalyst_is_installed catalyst_path_exists catalyst_usr_path_exists templates_path_exists"
+validate_sanity_checks "catalyst_is_installed yq_is_installed git_is_installed templates_path_exists"
 
 # ------------------------------------------------------------------------------
 # Main program:
