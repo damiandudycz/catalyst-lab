@@ -627,6 +627,17 @@ write_stages() {
 				sed -i "/^${key}:/d" ${stage_info_path_work}
 			done
 
+			# Create customized fsscript if parent used different profile.
+			if [[ ! ${stages[${stages[${i},parent]},profile]} = ${stages[${i},profile]} ]] && [[ -n ${stages[${stages[${i},parent]},profile]} ]]; then
+				[[ ! -f ${stage_fsscript_path_work} ]] && touch ${stage_fsscript_path_work} # Create if doesnt exists
+				cat <<EOF | sed 's/^[ \t]*//g' | tee -a ${stage_fsscript_path_work} > /dev/null
+					# Rebuild @world to make sure profile changes are included
+					emerge --changed-use --update --deep --usepkg --buildpkg --with-bdeps=y --quiet @world
+					emerge --depclean
+					revdep-rebuild
+EOF
+			fi
+
 			[[ -n ${stages[${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_info_path_work} common_flags "${stages[${i},common_flags]}"
 			[[ ${stages[${i},arch_emulation]} = true ]] && set_spec_variable_if_missing ${stage_info_path_work} interpreter "${stages[${i},arch_interpreter]}"
 			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} overlay ${stage_overlay_path_work}
@@ -1478,16 +1489,20 @@ declare STAGE_KEYS=( # Variables stored in stages[] for the script.
 	arch_family   arch_interpreter arch_emulation
 
 	platform release stage
-
-	rel_type     target           source_subpath      product product_format product_iso product_iso_format
-	latest_build timestamp_latest timestamp_generated parent
-	children
+	rel_type target version_stamp releng_base
 
 	chost common_flags cpu_flags
 
-	treeish      repos        repos_local_paths binrepo     binrepo_local_path
-	binrepo_path binrepo_kind catalyst_conf     releng_base version_stamp
-	compression_mode          packages          use         use_toml
+	source_subpath
+	parent children
+	product product_format product_iso product_iso_format
+	latest_build timestamp_latest timestamp_generated
+
+	treeish
+	repos    repos_local_paths
+	binrepo  binrepo_local_path binrepo_path binrepo_kind
+	catalyst_conf compression_mode
+	packages use use_toml
 
 	selected rebuild takes_part
 
