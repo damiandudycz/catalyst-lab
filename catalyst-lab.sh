@@ -1424,6 +1424,7 @@ purge_old_builds_and_isos() {
 		echo ""
 		for file in ${to_remove[@]}; do
 			echo -e "${color_red}Removing: ${color_gray}${catalyst_builds_path}/${color_nc}${file}${color_gray}*${color_nc}"
+			rm -f ${catalyst_builds_path}/${file}*
 		done
 	else
 		echo "No old builds to remove found."
@@ -1541,17 +1542,10 @@ if [[ ! -f /etc/catalyst-lab/catalyst-lab.conf ]]; then
 	mkdir -p /etc/catalyst-lab
 	mkdir -p /etc/catalyst-lab/templates
 	cat <<EOF | sed 's/^[ \t]*//' | tee /etc/catalyst-lab/catalyst-lab.conf > /dev/null || exit 1
-		# Main configuration for catalyst-lab.
-		seeds_url=https://gentoo.osuosl.org/releases/@ARCH_FAMILY@/autobuilds
-		templates_path=/etc/catalyst-lab/templates
-		releng_path=/opt/releng
-		catalyst_path=/var/tmp/catalyst
-		catalyst_usr_path=/usr/share/catalyst
-		binpkgs_cache_path=/var/cache/catalyst-lab/binpkgs
-		repos_cache_path=/var/cache/catalyst-lab/repos
-		tmp_path=/tmp/catalyst-lab
+		# Important! Replace with your username. This value is used when downloading/uploading rsync binrepos.
+		ssh_username=catalyst-lab
+
 		tmpfs_size=6
-		ssh_username=catalyst-lab # Important! Replace with your username. This value is used when downloading/uploading rsync binrepos.
 		jobs=$(nproc)
 		load_average=$(nproc).0
 EOF
@@ -1560,8 +1554,18 @@ EOF
 fi
 source /etc/catalyst-lab/catalyst-lab.conf
 
-readonly work_path=${tmp_path}/${timestamp}
+# URL for downloading missing seed files.
+readonly tmp_path=/tmp/catalyst-lab
+readonly cache_path=/var/cache/catalyst-lab
+readonly releng_path=/opt/releng
+readonly seeds_url=https://gentoo.osuosl.org/releases/@ARCH_FAMILY@/autobuilds
+readonly templates_path=/etc/catalyst-lab/templates
+readonly binpkgs_cache_path=${cache_path}/binpkgs
+readonly repos_cache_path=${cache_path}/repos
+readonly catalyst_path=/var/tmp/catalyst
 readonly catalyst_builds_path=${catalyst_path}/builds
+readonly catalyst_usr_path=/usr/share/catalyst
+readonly work_path=${tmp_path}/${timestamp}
 
 # Create required folders if don't exists
 if [[ ! -d ${catalyst_builds_path} ]]; then
