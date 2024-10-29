@@ -166,14 +166,6 @@ load_stages() {
 
 				# Increase processed stages count.
 				stages_count=$((stages_count + 1))
-
-				# TODO: Download jobs loading.
-				#if [[ ${_stage_kind} = download ]]; then
-				#	# Create download job for ${stage_info_path}
-				#	stages[${stages_count},kind]=${_kind}
-				#	stages_count=$((stages_count + 1))
-				#fi
-
 			done
 		done
 	done
@@ -482,7 +474,6 @@ fetch_repos() {
 # Setup additional information for stages:
 # Final download URL's.
 # Real seed names, with timestamp replaced.
-# Refresh remote repos.
 prepare_stages() {
 	echo_color ${color_turquoise_bold} "[ Preparing stages ]"
 
@@ -918,7 +909,7 @@ build_stages() {
 			local stage_info_path_work=${stage_path_work}/stage.spec
 			local catalyst_conf_work=${stage_path_work}/catalyst.conf
 
-			local args="-af ${stage_info_path_work}"
+			local args="-apf ${stage_info_path_work}"
 			[[ -f ${catalyst_conf_work} ]] && args="${args} -c ${catalyst_conf_work}"
 
 			# Perform build
@@ -980,7 +971,7 @@ upload_binrepos() {
 			# Check if there are changes to commit
 			local changes=false
 			if [[ -n $(git -C ${stages[${i},binrepo_local_path]} status --porcelain) ]]; then
-				git -C ${stages[${i},binrepo_local_path]} add -A
+				git -C ${stages[${i},binrepo_local_path]} add -A # TODO: Only send path of binrepo_path
 				git -C ${stages[${i},binrepo_local_path]} commit -m "Automatic update: ${timestamp}"
 				changes=true
 			fi
@@ -1693,9 +1684,7 @@ fi
 # TODO: Check if settings common_flags is also only allowed in stage1
 # TODO: Working with distcc (including local)
 # TODO: Add checking for valid config entries in config files
-# TODO: Detect when profile changes in stage4 and if it does, automtically add rebuilds to fsscript file
-# TODO: Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote if can just specify word remote and automatically find like, it it can specify tarball name or even full URL.
+# TODO: Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote it can just specify word remote and automatically find version, it it can specify tarball name or even full URL.
 # TODO: Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
 # TODO: Add validation that parent and children uses the same base architecture
-# TODO: Validating if required tools are installed: catalyst, jq, git, rsync, qemu-*
 # TODO: When one of builds fails, mark it's children as not to build instead of breaking the whole script.
