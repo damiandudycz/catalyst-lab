@@ -1,4 +1,4 @@
-source_subpath: @REL_TYPE@/stage3-@SUB_ARCH@-desktop-openrc-@TIMESTAMP@
+source_subpath: @REL_TYPE@/stage3-@SUB_ARCH@-desktop-systemd-@TIMESTAMP@
 
 use:
 	ps3
