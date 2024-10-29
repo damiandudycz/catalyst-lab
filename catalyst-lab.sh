@@ -1184,54 +1184,37 @@ draw_stages_tree() {
 
 	local i=0; for child in ${child_array[@]}; do
 		((i++))
-		local stage_name="?"
 		if [[ ${stages[${child},kind]} = build ]]; then
-			local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
-			stage_name=${color_gray}${display_name}${color_nc}
-			# If stage is not being rebuild and it has direct children that are being rebuild, display used latest_build.
-			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},timestamp_latest]} ]]; then
-				for c in ${stages[${child},children]}; do
-					if [[ ${stages[${c},rebuild]} = true ]]; then
-						display_name="${display_name} (${stages[${child},timestamp_latest]})"
-						stage_name=${color_gray}${display_name}${color_nc}
-						break
-					fi
-				done
-			fi
-			if [[ ${stages[${child},rebuild]} = true ]]; then
-				stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_turquoise}${stages[${child},stage]}${color_nc}
-			fi
-			if [[ ${stages[${child},selected]} = true ]]; then
-				stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_turquoise_bold}${stages[${child},stage]}${color_nc}
-			fi
+			local color=${color_turquoise}
+			local color_bold=${color_turquoise_bold}
 		elif [[ ${stages[${child},kind]} = download ]]; then
-			local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
-			# If stage is not being rebuild and it has direct children that are being rebuild, display used latest_build.
-			if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},timestamp_latest]} ]]; then
-				for c in ${stages[${child},children]}; do
-					if [[ ${stages[${c},rebuild]} = true ]]; then
-						display_name="${display_name} (${stages[${child},timestamp_latest]})"
-						break
-					fi
-				done
-			fi
-			stage_name="${color_gray}download: ${display_name}${color_nc}"
-			if [[ ${stages[${child},rebuild]} = true ]]; then
-				stage_name="download: ${color_yellow}${display_name}${color_nc}"
-			fi
-			if [[ ${stages[${child},selected]} = true ]]; then
-				stage_name="download: ${color_yellow_bold}${display_name}${color_nc}"
-			fi
+			local color=${color_yellow}
+			local color_bold=${color_yellow_bold}
 		elif [[ ${stages[${child},kind]} = binhost ]]; then
-                        local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
-                        stage_name="${color_gray}binhost: ${display_name}${color_nc}"
-                        if [[ ${stages[${child},rebuild]} = true ]]; then
-                                stage_name="binhost: ${color_purple}${display_name}${color_nc}"
-                        fi
-                        if [[ ${stages[${child},selected]} = true ]]; then
-                                stage_name="binhost: ${color_purple_bold}${display_name}${color_nc}"
-                        fi
+			local color=${color_purple}
+			local color_bold=${color_purple_bold}
 		fi
+
+		local display_name=${stages[${child},platform]}/${stages[${child},release]}/${stages[${child},stage]}
+		local stage_name=${color_gray}${display_name}${color_nc}
+		# If stage is not being rebuild and it has direct children that are being rebuild, display used latest_build.
+		if [[ ${stages[${child},rebuild]} == false ]] && [[ -n ${stages[${child},timestamp_latest]} ]]; then
+			for c in ${stages[${child},children]}; do
+				if [[ ${stages[${c},rebuild]} = true ]]; then
+					display_name="${display_name} (${stages[${child},timestamp_latest]})"
+					stage_name=${color_gray}${display_name}${color_nc}
+					break
+				fi
+			done
+		fi
+		if [[ ${stages[${child},rebuild]} = true ]]; then
+			stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color}${stages[${child},stage]}${color_nc}
+		fi
+		if [[ ${stages[${child},selected]} = true ]]; then
+			stage_name=${stages[${child},platform]}/${stages[${child},release]}/${color_bold}${stages[${child},stage]}${color_nc}
+		fi
+
+
 		new_prefix="${prefix}├── "
 		if [[ -n ${stages[${child},children]} ]]; then
 			new_prefix="${prefix}│   "
