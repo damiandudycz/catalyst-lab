@@ -387,11 +387,11 @@ prepare_releng() {
 	# If it exists and FETCH_FRESH_RELENG is set, pull changes.
 	if [[ ! -d ${releng_path} ]]; then
 		echo_color ${color_turquoise_bold} "[ Downloading releng ]"
-		git clone https://github.com/gentoo/releng.git ${releng_path} || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." exit 1)
+		git clone https://github.com/gentoo/releng.git ${releng_path} --depth 1 || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." && exit 1)
 		echo ""
 	elif [[ ${FETCH_FRESH_RELENG} = true ]]; then
 		echo_color ${color_turquoise_bold} "[ Updating releng ]"
-		git -C ${releng_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." exit 1)
+		git -C ${releng_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." && exit 1)
 		echo ""
 	fi
 }
@@ -416,11 +416,11 @@ fetch_repos() {
 						# If location doesn't exists yet - clone repository
 						echo -e "${color_turquoise}Clonning overlay repo: ${color_yellow}${repo}${color_nc}"
 						mkdir -p ${repo_local_path}
-						git clone ${repo} ${repo_local_path} || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." exit 1)
+						git clone ${repo} ${repo_local_path} --depth 1 || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." && exit 1)
 					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
 						# If it exists - pull repository
 						echo -e "${color_turquoise}Pulling overlay repo: ${color_yellow}${repo}${color_nc}"
-						git -C ${repo_local_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." exit 1)
+						git -C ${repo_local_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." && exit 1)
 					fi
 				fi
 			done
@@ -444,7 +444,7 @@ fetch_repos() {
 							# If location doesn't exists yet - clone repository
 							echo -e "${color_turquoise}Clonning binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
 							mkdir -p ${stages[${i},binrepo_local_path]}
-							git clone ${stages[${i},binrepo]} ${stages[${i},binrepo_local_path]} || BINREPOS_FETCH_FAILURES+=(${stages[${i},binrepo]})
+							git clone ${stages[${i},binrepo]} ${stages[${i},binrepo_local_path]} --depth 1 || BINREPOS_FETCH_FAILURES+=(${stages[${i},binrepo]})
 						elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
 							# If it exists - pull repository
 							echo -e "${color_turquoise}Pulling binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
