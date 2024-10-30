@@ -909,7 +909,7 @@ build_stages() {
 			local stage_info_path_work=${stage_path_work}/stage.spec
 			local catalyst_conf_work=${stage_path_work}/catalyst.conf
 
-			local args="-apf ${stage_info_path_work}"
+			local args="-af ${stage_info_path_work}"
 			[[ -f ${catalyst_conf_work} ]] && args="${args} -c ${catalyst_conf_work}"
 
 			# Perform build
@@ -1562,7 +1562,7 @@ EOF
 fi
 source /etc/catalyst-lab/catalyst-lab.conf
 
-# URL for downloading missing seed files.
+# Constants:
 readonly tmp_path=/tmp/catalyst-lab
 readonly cache_path=/var/cache/catalyst-lab
 readonly releng_path=/opt/releng
@@ -1661,13 +1661,13 @@ if [[ ${PURGE} = true ]]; then
 	purge_old_builds_and_isos
 fi
 
-# TODO: Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
-# TODO: Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs.
-# TODO: Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
-# TODO: Check if settings common_flags is also only allowed in stage1
-# TODO: Working with distcc (including local)
-# TODO: Add checking for valid config entries in config files
-# TODO: Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote it can just specify word remote and automatically find version, it it can specify tarball name or even full URL.
-# TODO: Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
-# TODO: Add validation that parent and children uses the same base architecture
-# TODO: When one of builds fails, mark it's children as not to build instead of breaking the whole script.
+# TODO: (H) When one of builds fails, mark it's children as not to build instead of breaking the whole script.
+# TODO: (H) Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs.
+# TODO: (H) Check if settings common_flags is also only allowed in stage1
+# TODO: (H) Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote it can just specify word remote and automatically find version, it it can specify tarball name or even full URL.
+# TODO: (H) Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
+# TODO: (N) Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
+# TODO: (N) Working with distcc (including local)
+# TODO: (N) Add checking for valid config entries in config files
+# TODO: (N) Add validation that parent and children uses the same base architecture
+# TODO: (L) Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
