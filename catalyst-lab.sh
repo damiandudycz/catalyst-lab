@@ -619,14 +619,16 @@ write_stages() {
 			done
 
 			# Create customized fsscript if parent used different profile.
-			if [[ ! ${stages[${stages[${i},parent]},profile]} = ${stages[${i},profile]} ]] && [[ -n ${stages[${stages[${i},parent]},profile]} ]]; then
-				[[ ! -f ${stage_fsscript_path_work} ]] && touch ${stage_fsscript_path_work} # Create if doesnt exists
-				cat <<EOF | sed 's/^[ \t]*//g' | tee -a ${stage_fsscript_path_work} > /dev/null
-					# Rebuild @world to make sure profile changes are included
-					emerge --changed-use --update --deep --usepkg --buildpkg --with-bdeps=y --quiet @world
-					emerge --depclean
-					revdep-rebuild
+			if [[ ${stages[${i},target]} = stage4 ]]; then
+				if [[ ! ${stages[${stages[${i},parent]},profile]} = ${stages[${i},profile]} ]] && [[ -n ${stages[${stages[${i},parent]},profile]} ]]; then
+					[[ ! -f ${stage_fsscript_path_work} ]] && touch ${stage_fsscript_path_work} # Create if doesnt exists
+					cat <<EOF | sed 's/^[ \t]*//g' | tee -a ${stage_fsscript_path_work} > /dev/null
+						# Rebuild @world to make sure profile changes are included
+						emerge --changed-use --update --deep --usepkg --buildpkg --with-bdeps=y --quiet @world
+						emerge --depclean
+						revdep-rebuild
 EOF
+				fi
 			fi
 
 			[[ -n ${stages[${i},common_flags]} ]] && set_spec_variable_if_missing ${stage_info_path_work} common_flags "${stages[${i},common_flags]}"
