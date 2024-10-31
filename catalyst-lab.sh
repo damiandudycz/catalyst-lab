@@ -387,11 +387,11 @@ prepare_releng() {
 	# If it exists and FETCH_FRESH_RELENG is set, pull changes.
 	if [[ ! -d ${releng_path} ]]; then
 		echo_color ${color_turquoise_bold} "[ Downloading releng ]"
-		git clone https://github.com/gentoo/releng.git ${releng_path} || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." exit 1)
+		git clone https://github.com/gentoo/releng.git ${releng_path} --depth 1 || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." && exit 1)
 		echo ""
 	elif [[ ${FETCH_FRESH_RELENG} = true ]]; then
 		echo_color ${color_turquoise_bold} "[ Updating releng ]"
-		git -C ${releng_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." exit 1)
+		git -C ${releng_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." && exit 1)
 		echo ""
 	fi
 }
@@ -416,11 +416,11 @@ fetch_repos() {
 						# If location doesn't exists yet - clone repository
 						echo -e "${color_turquoise}Clonning overlay repo: ${color_yellow}${repo}${color_nc}"
 						mkdir -p ${repo_local_path}
-						git clone ${repo} ${repo_local_path} || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." exit 1)
+						git clone ${repo} ${repo_local_path} --depth 1 || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." && exit 1)
 					elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
 						# If it exists - pull repository
 						echo -e "${color_turquoise}Pulling overlay repo: ${color_yellow}${repo}${color_nc}"
-						git -C ${repo_local_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." exit 1)
+						git -C ${repo_local_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." && exit 1)
 					fi
 				fi
 			done
@@ -444,7 +444,7 @@ fetch_repos() {
 							# If location doesn't exists yet - clone repository
 							echo -e "${color_turquoise}Clonning binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
 							mkdir -p ${stages[${i},binrepo_local_path]}
-							git clone ${stages[${i},binrepo]} ${stages[${i},binrepo_local_path]} || BINREPOS_FETCH_FAILURES+=(${stages[${i},binrepo]})
+							git clone ${stages[${i},binrepo]} ${stages[${i},binrepo_local_path]} --depth 1 || BINREPOS_FETCH_FAILURES+=(${stages[${i},binrepo]})
 						elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
 							# If it exists - pull repository
 							echo -e "${color_turquoise}Pulling binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
@@ -1602,7 +1602,7 @@ esac; shift; done
 # Main sanity check:
 readonly qemu_is_installed=$( which qemu-img >/dev/null 2>&1 && echo true || echo false )
 readonly qemu_has_static_user=$( ( $(ls /var/db/pkg/app-emulation/qemu-*/USE 1> /dev/null 2>&1) && grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE ) && echo true || echo false)
-readonly qemu_binfmt_is_running=$( { [[ -x /etc/init.d/qemu-binfmt ]] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
+readonly qemu_binfmt_is_running=$( { pidof systemd >/dev/null && systemctl is-active --quiet systemd-binfmt; } || { [[ -x /etc/init.d/qemu-binfmt ]] && /etc/init.d/qemu-binfmt status | grep -q started; } && echo true || echo false )
 readonly catalyst_is_installed=$( which catalyst >/dev/null 2>&1 && echo true || echo false )
 readonly yq_is_installed=$( which yq >/dev/null 2>&1 && echo true || echo false )
 readonly git_is_installed=$( which git >/dev/null 2>&1 && echo true || echo false )
