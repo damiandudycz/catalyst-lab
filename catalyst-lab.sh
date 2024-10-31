@@ -1602,7 +1602,7 @@ esac; shift; done
 # Main sanity check:
 readonly qemu_is_installed=$( which qemu-img >/dev/null 2>&1 && echo true || echo false )
 readonly qemu_has_static_user=$( ( $(ls /var/db/pkg/app-emulation/qemu-*/USE 1> /dev/null 2>&1) && grep -q static-user /var/db/pkg/app-emulation/qemu-*/USE ) && echo true || echo false)
-readonly qemu_binfmt_is_running=$( { [[ -x /etc/init.d/qemu-binfmt ]] && /etc/init.d/qemu-binfmt status | grep -q started; } || { pidof systemd >/dev/null && systemctl is-active --quiet qemu-binfmt; } && echo true || echo false )
+readonly qemu_binfmt_is_running=$( { pidof systemd >/dev/null && systemctl is-active --quiet systemd-binfmt; } || { [[ -x /etc/init.d/qemu-binfmt ]] && /etc/init.d/qemu-binfmt status | grep -q started; } && echo true || echo false )
 readonly catalyst_is_installed=$( which catalyst >/dev/null 2>&1 && echo true || echo false )
 readonly yq_is_installed=$( which yq >/dev/null 2>&1 && echo true || echo false )
 readonly git_is_installed=$( which git >/dev/null 2>&1 && echo true || echo false )
