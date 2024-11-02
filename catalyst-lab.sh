@@ -981,7 +981,7 @@ contains_string() {
 # Get list of directories in given directory.
 get_directories() {
 	local path=${1}
-	local directories=($(find ${path}/ -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort))
+	local directories=($(find ${path}/ -mindepth 1 -maxdepth 1 \( -type d -o -type l -xtype d \) -exec basename {} \; | sort))
 	echo ${directories[@]}
 }
 
