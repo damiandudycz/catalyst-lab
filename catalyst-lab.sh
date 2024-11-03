@@ -9,6 +9,8 @@
 # Determine which stages to build.
 # Insert virtual download stages for missing seeds.
 load_stages() {
+	[[ ${DEBUG} = true ]] && echo_color ${color_turquoise_bold} "[ Analizying stages ]" || echo -ne "# Analyzing stages...\r"
+
 	declare -gA stages # Some details of stages retreived from scanning. (release,stage,target,source,has_parent).
 	stages_count=0 # Number of all stages. Script will determine this value automatically.
 	available_builds_files=$(find ${catalyst_builds_path} -type f \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
@@ -49,6 +51,8 @@ load_stages() {
 			# Find list of stages in current releass. (stage1-cell-base-openrc stage3-cell-base-openrc, ...)
 			RL_VAL_RELEASE_STAGES=$(get_directories ${release_path})
 			for stage in ${RL_VAL_RELEASE_STAGES[@]}; do
+				[[ ${DEBUG} = true ]] && echo ${platform}/${release}/${stage}
+
 				local stage_path=${templates_path}/${platform}/${release}/${stage}
 				local stage_info_path=${stage_path}/stage.spec
 
@@ -102,7 +106,7 @@ load_stages() {
 				local _source_subpath=${stage_values[source_subpath]}
 				local _binrepo=${stage_values[binrepo]:-${release_binrepo:-${platform_binrepo:-[local]${repos_cache_path}/local}}}
 				local _binrepo_path=${stage_values[binrepo_path]:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
-				local _version_stamp=${stage_values[version_stamp]:-$(echo ${stage} | sed -E 's/.*stage[0-9]+-(.*)/\1-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
+				local _version_stamp=${stage_values[version_stamp]:-$(echo ${stage} | sed -E 's/.*(^stage[1-4]|^livecd-stage[1-2]|^binhost)-(.*)/\2-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
 				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
 				local _product_format=${_product} # Stays the same the whole time, containing "@TIMESTAMP@" string for later comparsions
 				local _product_iso=$([[ ${_target} = livecd-stage2 ]] && echo ${stage_values[iso]:-install-${platform}-@TIMESTAMP@.iso} || echo "")
@@ -290,6 +294,8 @@ load_stages() {
 		fi
 	done
 
+	[[ ${DEBUG} = true ]] && echo ""
+
 	# List stages to build
 	echo_color ${color_turquoise_bold} "[ Stages taking part in this process ]"
 	draw_stages_tree
@@ -332,6 +338,8 @@ validate_stages() {
 	if [[ -n ${required_checks[@]} ]]; then
 		validate_sanity_checks false "${DEBUG}" "${required_checks}"
 	fi
+
+	[[ ${DEBUG} = true ]] && echo ""
 }
 
 #  Get portage snapshot version and download new if needed.
@@ -981,7 +989,7 @@ contains_string() {
 # Get list of directories in given directory.
 get_directories() {
 	local path=${1}
-	local directories=($(find ${path}/ -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort))
+	local directories=($(find ${path}/ -mindepth 1 -maxdepth 1 \( -type d -o -type l -xtype d \) -exec basename {} \; | sort))
 	echo ${directories[@]}
 }
 
@@ -1568,6 +1576,7 @@ fi
 # Check tests required for overall script capabilities. Customized tests are also performed for stages selected to rebuild later.
 validate_sanity_checks false "${DEBUG}" "${sanity_checks_required[@]}"
 validate_sanity_checks true "${DEBUG}" "${sanity_checks_optional[@]}"
+[[ ${DEBUG} = true ]] && echo ""
 
 # ------------------------------------------------------------------------------
 # Main program:
@@ -1625,3 +1634,4 @@ fi
 # TODO: (N) Add checking for valid config entries in config files
 # TODO: (N) Add validation that parent and children uses the same base architecture
 # TODO: (L) Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
+# TODO: (L) Validate if stage name starts with one of: stage[1-4], livecd-stage[1-2], binhost. Other names should be considered incorrect. Custom version stamp can still be set in stage.spec if needed.
