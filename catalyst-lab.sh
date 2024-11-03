@@ -9,6 +9,8 @@
 # Determine which stages to build.
 # Insert virtual download stages for missing seeds.
 load_stages() {
+	[[ ${DEBUG} = true ]] && echo_color ${color_turquoise_bold} "[ Analizying stages ]" || echo -ne "# Analyzing stages...\r"
+
 	declare -gA stages # Some details of stages retreived from scanning. (release,stage,target,source,has_parent).
 	stages_count=0 # Number of all stages. Script will determine this value automatically.
 	available_builds_files=$(find ${catalyst_builds_path} -type f \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
@@ -49,6 +51,8 @@ load_stages() {
 			# Find list of stages in current releass. (stage1-cell-base-openrc stage3-cell-base-openrc, ...)
 			RL_VAL_RELEASE_STAGES=$(get_directories ${release_path})
 			for stage in ${RL_VAL_RELEASE_STAGES[@]}; do
+				[[ ${DEBUG} = true ]] && echo ${platform}/${release}/${stage}
+
 				local stage_path=${templates_path}/${platform}/${release}/${stage}
 				local stage_info_path=${stage_path}/stage.spec
 
@@ -290,6 +294,8 @@ load_stages() {
 		fi
 	done
 
+	[[ ${DEBUG} = true ]] && echo ""
+
 	# List stages to build
 	echo_color ${color_turquoise_bold} "[ Stages taking part in this process ]"
 	draw_stages_tree
@@ -332,6 +338,8 @@ validate_stages() {
 	if [[ -n ${required_checks[@]} ]]; then
 		validate_sanity_checks false "${DEBUG}" "${required_checks}"
 	fi
+
+	[[ ${DEBUG} = true ]] && echo ""
 }
 
 #  Get portage snapshot version and download new if needed.
@@ -1568,6 +1576,7 @@ fi
 # Check tests required for overall script capabilities. Customized tests are also performed for stages selected to rebuild later.
 validate_sanity_checks false "${DEBUG}" "${sanity_checks_required[@]}"
 validate_sanity_checks true "${DEBUG}" "${sanity_checks_optional[@]}"
+[[ ${DEBUG} = true ]] && echo ""
 
 # ------------------------------------------------------------------------------
 # Main program:
