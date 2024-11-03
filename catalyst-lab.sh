@@ -102,7 +102,7 @@ load_stages() {
 				local _source_subpath=${stage_values[source_subpath]}
 				local _binrepo=${stage_values[binrepo]:-${release_binrepo:-${platform_binrepo:-[local]${repos_cache_path}/local}}}
 				local _binrepo_path=${stage_values[binrepo_path]:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
-				local _version_stamp=${stage_values[version_stamp]:-$(echo ${stage} | sed -E 's/.*(stage[0-9]+|binhost)-(.*)/\2-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
+				local _version_stamp=${stage_values[version_stamp]:-$(echo ${stage} | sed -E 's/.*(^stage[1-4]|^livecd-stage[1-2]|^binhost)-(.*)/\2-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
 				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
 				local _product_format=${_product} # Stays the same the whole time, containing "@TIMESTAMP@" string for later comparsions
 				local _product_iso=$([[ ${_target} = livecd-stage2 ]] && echo ${stage_values[iso]:-install-${platform}-@TIMESTAMP@.iso} || echo "")
@@ -1625,3 +1625,4 @@ fi
 # TODO: (N) Add checking for valid config entries in config files
 # TODO: (N) Add validation that parent and children uses the same base architecture
 # TODO: (L) Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
+# TODO: (L) Validate if stage name starts with one of: stage[1-4], livecd-stage[1-2], binhost. Other names should be considered incorrect. Custom version stamp can still be set in stage.spec if needed.
