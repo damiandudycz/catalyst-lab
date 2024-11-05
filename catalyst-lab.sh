@@ -927,17 +927,12 @@ upload_binrepos() {
 		case ${binrepo_kind} in
 		git)
 			[[ -d ${binrepo_local_path}/.git ]] || continue # Skip if this repo doesnt yet exists
-			echo ""
 			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}/${stages[${i},binrepo_path]}${color_nc}"
 			# Check if there are changes to commit
 			local changes=false
 			if [[ -n $(git -C ${binrepo_local_path} status --porcelain ${binrepo_full_path}) ]]; then
 				git -C ${binrepo_local_path} add ${binrepo_full_path}
 				git -C ${binrepo_local_path} commit -m "Automatic update: ${timestamp}" --only ${binrepo_full_path}
-			#	changes=true
-			#fi
-			## Check if there are some commits to push
-			#if ! git -C ${binrepo_local_path} diff --exit-code origin/$(git -C ${binrepo_local_path} rev-parse --abbrev-ref HEAD) --quiet; then
 				# Check for write access.
 				if repo_url=$(git -C ${binrepo_local_path} config --get remote.origin.url) && [[ ! ${repo_url} =~ ^https:// ]] && git -C ${binrepo_local_path} ls-remote &>/dev/null && git -C ${binrepo_local_path} push --dry-run &>/dev/null; then
 					git -C ${binrepo_local_path} push
@@ -949,12 +944,12 @@ upload_binrepos() {
 			if [[ ${changes} = false ]]; then
 				echo "No local changes detected"
 			fi
+			echo ""
 			;;
 		rsync)
-# TODO: Only send binrepo_full_path
+			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}/${stages[${i},binrepo_path]}${color_nc}"
+			rsync ${RSYNC_OPTIONS} ${binrepo_full_path}/ ${ssh_username}@${binrepo_url}/${stages[${i},binrepo_path]}/
 			echo ""
-			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}${color_nc}"
-			rsync ${RSYNC_OPTIONS} ${binrepo_local_path}/ ${ssh_username}@${binrepo_url}/
 			;;
 		esac
 
@@ -1547,18 +1542,18 @@ fi
 # Script arguments:
 declare -a selected_stages_templates
 while [ $# -gt 0 ]; do case ${1} in
-	--update-snapshot) FETCH_FRESH_SNAPSHOT=true;;
-	--update-releng) FETCH_FRESH_RELENG=true;;
-	--update-repos) FETCH_FRESH_REPOS=true;;
-	--upload-binrepos) UPLOAD_BINREPOS=true;; # Try to upload changes in binrepo after build finishes.
-	--purge) PURGE=true;; # Clean all builds and isos but the latest.
-	--clean) CLEAN_BUILD=true;; # Perform clean build - don't use any existing sources even if available (Except for downloaded seeds).
-	--build) BUILD=true; PREPARE=true;; # Prepare is implicit when using --build.
-	--prepare) PREPARE=true;;
-	--debug) DEBUG=true;;
+	--update-snapshot) FETCH_FRESH_SNAPSHOT=true;; # Update portage snapshot.
+	--update-releng) FETCH_FRESH_RELENG=true;;     # Update releng repository.
+	--update-repos) FETCH_FRESH_REPOS=true;;       # Update remote repos for releases and binhosts.
+	--upload-binrepos) UPLOAD_BINREPOS=true;;      # Upload changes in binrepos.
+	--purge) PURGE=true;;                          # Clean all builds and isos except the latest.
+	--clean) CLEAN_BUILD=true;;                    # Don't use any existing sources even if available (Except for downloaded seeds).
+	--build) BUILD=true; PREPARE=true;;            # Prepare is implicit when using --build.
+	--prepare) PREPARE=true;;                      # Create build files.
+	--debug) DEBUG=true;;                          # Display additional debug information.
 	--*) echo "Unknown option ${1}"; exit;;
 	-*) echo "Unknown option ${1}"; exit;;
-	*) selected_stages_templates+=("${1}");;
+	*) selected_stages_templates+=("${1}");;       # Add selected stages.
 esac; shift; done
 
 # Main sanity check:
