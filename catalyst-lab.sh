@@ -9,7 +9,7 @@
 # Determine which stages to build.
 # Insert virtual download stages for missing seeds.
 load_stages() {
-	[[ ${DEBUG} = true ]] && echo_color ${color_turquoise_bold} "[ Analizying stages ]" || echo -ne "# Analyzing stages...\r"
+	[[ ${DEBUG} = true ]] && echo_color ${color_turquoise_bold} "[ Analizying stages ]" || echo -ne "# Analyzing stages..."
 
 	declare -gA stages # Some details of stages retreived from scanning. (release,stage,target,source,has_parent).
 	stages_count=0 # Number of all stages. Script will determine this value automatically.
@@ -55,6 +55,7 @@ load_stages() {
 
 				local stage_path=${templates_path}/${platform}/${release}/${stage}
 				local stage_info_path=${stage_path}/stage.spec
+				local stage_info_content=$(< ${stage_info_path})
 
 				# Set stage_catalyst_conf variable for stage based on file existance.
 				[[ -f ${stage_path}/catalyst.conf ]] && stage_catalyst_conf=${stage_path}/catalyst.conf || unset stage_catalyst_conf
@@ -73,7 +74,7 @@ load_stages() {
 					elif [[ -n ${key} ]]; then
 						stage_values[${key}]+=" $(echo ${line} | xargs)"
 					fi
-				done < ${stage_info_path}
+				done <<< ${stage_info_content}
 				# Trim leading/trailing spaces:
 				for key in ${!stage_values[@]}; do
 					local value=$(echo ${stage_values[${key}]} | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
@@ -294,7 +295,7 @@ load_stages() {
 		fi
 	done
 
-	[[ ${DEBUG} = true ]] && echo ""
+	[[ ${DEBUG} = true ]] && echo "" || echo -ne "\r"
 
 	# List stages to build
 	echo_color ${color_turquoise_bold} "[ Stages taking part in this process ]"
@@ -618,7 +619,6 @@ EOF
 				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo_${stages[${i},platform]}
 				set_spec_variable_if_missing ${stage_info_path_work} fstype squashfs
 				set_spec_variable_if_missing ${stage_info_path_work} iso ${stages[${i},product_iso]}
-				[[ -n ${stages[${i},use]} ]] && set_spec_variable ${stage_info_path_work} use "${stages[${i},use]}"
 			fi
 
 			# Stage4 specific keys
@@ -917,8 +917,9 @@ upload_binrepos() {
 	local handled_repos=()
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		[[ ${stages[${i},selected]} = true ]] || ( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) || continue # Only upload selected repos or rebild if building now
-		contains_string handled_repos[@] ${stages[${i},binrepo]} && continue
-		handled_repos+=(${stages[${i},binrepo]})
+		local binrepo_full_path=$(repo_local_path ${stages[${i},binrepo]})/${stages[${i},binrepo_path]}
+		contains_string handled_repos[@] ${binrepo_full_path} && continue
+		handled_repos+=(${binrepo_full_path})
 		local binrepo_kind=$(repo_kind ${stages[${i},binrepo]})
 		local binrepo_local_path=$(repo_local_path ${stages[${i},binrepo]})
 		local binrepo_url=$(repo_url ${stages[${i},binrepo]})
@@ -927,16 +928,16 @@ upload_binrepos() {
 		git)
 			[[ -d ${binrepo_local_path}/.git ]] || continue # Skip if this repo doesnt yet exists
 			echo ""
-			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${stages[${i},binrepo]}${color_nc}"
+			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}/${stages[${i},binrepo_path]}${color_nc}"
 			# Check if there are changes to commit
 			local changes=false
-			if [[ -n $(git -C ${binrepo_local_path} status --porcelain) ]]; then
-				git -C ${binrepo_local_path} add -A # TODO: Only send path of binrepo_path
-				git -C ${binrepo_local_path} commit -m "Automatic update: ${timestamp}"
-				changes=true
-			fi
-			# Check if there are some commits to push
-			if ! git -C ${binrepo_local_path} diff --exit-code origin/$(git -C ${binrepo_local_path} rev-parse --abbrev-ref HEAD) --quiet; then
+			if [[ -n $(git -C ${binrepo_local_path} status --porcelain ${binrepo_full_path}) ]]; then
+				git -C ${binrepo_local_path} add ${binrepo_full_path}
+				git -C ${binrepo_local_path} commit -m "Automatic update: ${timestamp}" --only ${binrepo_full_path}
+			#	changes=true
+			#fi
+			## Check if there are some commits to push
+			#if ! git -C ${binrepo_local_path} diff --exit-code origin/$(git -C ${binrepo_local_path} rev-parse --abbrev-ref HEAD) --quiet; then
 				# Check for write access.
 				if repo_url=$(git -C ${binrepo_local_path} config --get remote.origin.url) && [[ ! ${repo_url} =~ ^https:// ]] && git -C ${binrepo_local_path} ls-remote &>/dev/null && git -C ${binrepo_local_path} push --dry-run &>/dev/null; then
 					git -C ${binrepo_local_path} push
@@ -950,6 +951,7 @@ upload_binrepos() {
 			fi
 			;;
 		rsync)
+# TODO: Only send binrepo_full_path
 			echo ""
 			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}${color_nc}"
 			rsync ${RSYNC_OPTIONS} ${binrepo_local_path}/ ${ssh_username}@${binrepo_url}/
