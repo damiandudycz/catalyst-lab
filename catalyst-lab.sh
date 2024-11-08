@@ -588,7 +588,6 @@ write_stages() {
 						# Rebuild @world to make sure profile changes are included
 						emerge --changed-use --update --deep --usepkg --buildpkg --with-bdeps=y --quiet @world
 						emerge --depclean
-						revdep-rebuild
 EOF
 				fi
 			fi
