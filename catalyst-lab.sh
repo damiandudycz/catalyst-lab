@@ -308,7 +308,6 @@ load_stages() {
 		( [[ ${stages[${i},rebuild]} = false ]] || [[ ${stages[${i},kind]} = download ]] ) && continue
 		stages[${i},timestamp_generated]=${timestamp}
 	done
-
 }
 
 # Check if tools required for all rebuild stages are installed
@@ -424,13 +423,13 @@ fetch_repos() {
 		esac
 	done
 
-	echo_color ${color_green} "Remote repositories prepared"
-	echo ""
+	echo_color ${color_green} "Remote repositories prepared" && echo ""
 }
 
 # Setup additional information for stages:
 # Final download URL's.
 # Real seed names, with timestamp replaced.
+# Write files stages to tmp.
 prepare_stages() {
 	echo_color ${color_turquoise_bold} "[ Preparing stages ]"
 
@@ -467,14 +466,6 @@ prepare_stages() {
 			done
 		fi
 	done
-
-	echo_color ${color_green} "Stage templates prepared"
-	echo ""
-}
-
-# Save and update templates in work directory
-write_stages() {
-	echo_color ${color_turquoise_bold} "[ Writing stages ]"
 
 	mkdir -p ${work_path}
 	mkdir -p ${work_path}/jobs
@@ -852,8 +843,7 @@ EOF
 		fi
 	done
 
-	echo_color ${color_green} "Stage templates saved in: ${work_path}"
-	echo ""
+	echo_color ${color_green} "Stage templates prepared: ${work_path}" && echo ""
 }
 
 # Build stages.
@@ -875,10 +865,9 @@ build_stages() {
 			[[ -f ${catalyst_conf_work} ]] && args="${args} -c ${catalyst_conf_work}"
 
 			# Perform build
-			catalyst $args || exit 1
+			catalyst $args || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
 
-			echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
-			echo ""
+			echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
 
 		elif [[ ${stages[${i},kind]} = download ]]; then
 			echo -e "${color_turquoise}Downloading stage: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
@@ -889,8 +878,7 @@ build_stages() {
 			# Perform build
 			${download_script_path_work} || exit 1
 
-			echo -e "${color_green}Stage download completed: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
-			echo ""
+			echo -e "${color_green}Stage download completed: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
 
 		elif [[ ${stages[${i},kind]} = binhost ]]; then
 			echo -e "${color_turquoise}Building packages in stage: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
@@ -901,14 +889,12 @@ build_stages() {
 			# Perform build
 			${binhost_script_path_work} || exit 1
 
-                        echo -e "${color_green}Stage build completed: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
-			echo ""
+                        echo -e "${color_green}Stage build completed: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
 		fi
 
 	done
 
-	echo_color ${color_green} "Stage builds completed"
-	echo ""
+	echo_color ${color_green} "Stage builds completed" && echo ""
 }
 
 upload_binrepos() {
@@ -1357,6 +1343,17 @@ inherit_profile() {
 	fi
 }
 
+# Marks selected stage and all it's children branch as rebuild=false.
+disable_branch() {
+	local index=${1}
+	local children="${stages[${index},children]}"
+	echo_color ${color_orange} "Disable: ${stages[${index},platform]}/${stages[${index},release]}/${stages[${index},stage]}"
+	stages[${index},rebuild]=false
+	for child in ${children}; do
+		disable_branch ${child}
+	done
+}
+
 # Remove old files from previous builds.
 purge_old_builds_and_isos() {
 	echo_color ${color_turquoise_bold} "[ Purge old builds ]"
@@ -1516,8 +1513,7 @@ if [[ ! -f /etc/catalyst-lab/catalyst-lab.conf ]]; then
 		jobs=$(nproc)
 		load_average=$(nproc).0
 EOF
-	echo "Default config file created: /etc/catalyst-lab/catalyst-lab.conf"
-	echo ""
+	echo "Default config file created: /etc/catalyst-lab/catalyst-lab.conf" && echo ""
 fi
 source /etc/catalyst-lab/catalyst-lab.conf
 
@@ -1585,42 +1581,17 @@ fi
 
 load_stages
 validate_stages
-if [[ ${PREPARE} = true ]] || [[ ${FETCH_FRESH_SNAPSHOT} = true ]]; then
-	prepare_portage_snapshot
-fi
-if [[ ${PREPARE} = true ]] || [[ ${FETCH_FRESH_RELENG} = true ]]; then
-	prepare_releng
-fi
-if [[ ${FETCH_FRESH_REPOS} = true ]] || [[ ${PREPARE} = true ]]; then
-	fetch_repos
-fi
-if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${PREPARE} = true ]]; then
-	upload_binrepos
-fi
-if [[ ${PREPARE} = true ]]; then
-	prepare_stages
-	write_stages
-fi
-if [[ ${DEBUG} = true ]]; then
-	print_debug_stack
-fi
-if [[ ${BUILD} = true ]]; then
-	build_stages
-	if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ${PREPARE} = true ]]; then
-		upload_binrepos
-	fi
-else
-	if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ${PREPARE} = true ]]; then
-		upload_binrepos
-	fi
-	echo "To build selected stages use --build flag."
-	echo ""
-fi
-if [[ ${PURGE} = true ]]; then
-	purge_old_builds_and_isos
-fi
+[[ ${PREPARE} = true ]] || [[ ${FETCH_FRESH_SNAPSHOT} = true ]] && prepare_portage_snapshot
+[[ ${PREPARE} = true ]] || [[ ${FETCH_FRESH_RELENG} = true ]] && prepare_releng
+[[ ${FETCH_FRESH_REPOS} = true ]] || [[ ${PREPARE} = true ]] && fetch_repos
+[[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${PREPARE} = true ]] && upload_binrepos
+[[ ${PREPARE} = true ]] && prepare_stages
+[[ ${DEBUG} = true ]] && print_debug_stack
+[[ ${BUILD} = true ]] && build_stages
+[[ ${UPLOAD_BINREPOS} = true ]] && [[ ${PREPARE} = true ]] && upload_binrepos
+[[ ${PURGE} = true ]] && purge_old_builds_and_isos
+[[ ! ${BUILD} = true ]] && echo "To build selected stages use --build flag."
 
-# TODO: (H) When one of builds fails, mark it's children as not to build instead of breaking the whole script.
 # TODO: (H) Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs.
 # TODO: (H) Check if settings common_flags is also only allowed in stage1
 # TODO: (H) Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote it can just specify word remote and automatically find version, it it can specify tarball name or even full URL.
