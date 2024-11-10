@@ -107,6 +107,7 @@ load_stages() {
 				local _source_subpath=${stage_values[source_subpath]}
 				local _binrepo=${stage_values[binrepo]:-${release_binrepo:-${platform_binrepo:-[local]${repos_cache_path}/local}}}
 				local _binrepo_path=${stage_values[binrepo_path]:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
+				local _binrepo_fslimit=${stage_values[binrepo_fslimit]:-${release_binrepo_fslimit:-${platform_binrepo_fslimit}}}
 				local _version_stamp=${stage_values[version_stamp]:-$(echo ${stage} | sed -E 's/.*(^stage[1-4]|^livecd-stage[1-2]|^binhost)-(.*)/\2-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
 				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
 				local _product_format=${_product} # Stays the same the whole time, containing "@TIMESTAMP@" string for later comparsions
@@ -158,6 +159,7 @@ load_stages() {
 				stages[${stages_count},compression_mode]=${_compression_mode}
 				stages[${stages_count},binrepo]=${_binrepo}
 				stages[${stages_count},binrepo_path]=${_binrepo_path}
+				stages[${stages_count},binrepo_fslimit]=${_binrepo_fslimit}
 				stages[${stages_count},version_stamp]=${_version_stamp}
 				stages[${stages_count},catalyst_conf]=${_catalyst_conf}
 				stages[${stages_count},rel_type]=${_rel_type}
@@ -846,6 +848,62 @@ EOF
 	echo_color ${color_green} "Stage templates prepared: ${work_path}" && echo ""
 }
 
+# Function used to purge binrepos from too big entries.
+# TODO: When purgind too big packages, copy them somewhere else and restore after repo was uploaded.
+binrepo_purge() {
+	local index=${1}
+
+	[[ -z ${stages[${index},binrepo]} ]] && return
+	local pkgcache_dir=$(repo_local_path ${stages[${index},binrepo]})/${stages[${index},binrepo_path]}
+	local size_limit=${stages[${index},binrepo_fslimit]}
+	[[ -z ${size_limit} ]] && return # No limit specified
+	size_limit=$((size_limit * 1024 * 1024)) # Convert to B
+
+	# Process metadata file
+	local pkgcache_metadata=${pkgcache_dir}/Packages
+	[[ -f ${pkgcache_metadata} ]] || return
+	local packages_count=$(grep -oP '^PACKAGES: \K[0-9]+' ${pkgcache_metadata})
+	local var_metadata_new=""
+	local entry=""
+	local entry_delete
+	local metadata_modified
+	while IFS= read -r LINE || [[ -n ${LINE} ]]; do
+		if [[ -z ${LINE} ]]; then
+			local entry_package=$(awk -F'/' '{print $1"/"$2}' <<< ${entry_path})
+			local entry_version=${entry_cpv#$entry_package-}
+			local entry_package_versioned=${entry_package}-${entry_version}
+			if [[ -n ${entry_cpv} ]] && [[ ${entry_size} -gt ${size_limit} ]]; then
+				entry_delete=true
+			fi
+			if [[ -n ${entry_delete} ]]; then
+				echo "Purging ${entry_cpv}"
+				((packages_count--)) || packages_count=0
+				metadata_modified=true
+				rm -f "${pkgcache_dir}/${entry_path}"
+			else
+				var_metadata_new+="${entry}\n"
+			fi
+			entry=""; entry_cpv=""; entry_path=""; entry_size=0; unset entry_delete
+		else
+			entry+="${LINE}\n"
+			local key=${LINE%% *}
+			if [[ ${key} == "CPV:" ]]; then
+				entry_cpv=${LINE#* }
+			elif [[ ${key} == "PATH:" ]]; then
+				entry_path=${LINE#* }
+			elif [[ ${key} == "SIZE:" ]]; then
+				entry_size=${LINE#* }
+			fi
+		fi
+	done < ${pkgcache_metadata}
+
+	# Save changes
+	if [[ ${metadata_modified} = true ]]; then
+		echo -e "${var_metadata_new}" > "${pkgcache_metadata}"
+		sed -i "s/^PACKAGES: .*/PACKAGES: $packages_count/" "${pkgcache_metadata}"
+	fi
+}
+
 # Build stages.
 build_stages() {
 	echo_color ${color_turquoise_bold} "[ Building stages ]"
@@ -914,7 +972,8 @@ upload_binrepos() {
 	local handled_repos=()
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		[[ ${stages[${i},selected]} = true ]] || ( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) || continue # Only upload selected repos or rebild if building now
-		[[ -n ${index} ]] || [[ ${index} = ${i} ]] || continue
+		[[ -n ${stages[${i},binrepo]} ]] || continue # Ignore remote download jobs (or other jobs without binrepo)
+		[[ -z ${index} ]] || [[ ${index} = ${i} ]] || continue # Filter index if provided
 		local binrepo_full_path=$(repo_local_path ${stages[${i},binrepo]})/${stages[${i},binrepo_path]}
 		contains_string handled_repos[@] ${binrepo_full_path} && continue
 		handled_repos+=(${binrepo_full_path})
@@ -926,6 +985,8 @@ upload_binrepos() {
 		git)
 			[[ -d ${binrepo_local_path}/.git ]] || continue # Skip if this repo doesnt yet exists
 			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}/${stages[${i},binrepo_path]}${color_nc}"
+			binrepo_purge ${i}
+
 			# Check if there are changes to commit
 			local changes=false
 			if [[ -n $(git -C ${binrepo_local_path} status --porcelain ${binrepo_full_path}) ]]; then
@@ -946,6 +1007,7 @@ upload_binrepos() {
 			;;
 		rsync)
 			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}/${stages[${i},binrepo_path]}${color_nc}"
+			binrepo_purge ${i}
 			rsync ${RSYNC_OPTIONS} ${binrepo_full_path}/ ${ssh_username}@${binrepo_url}/${stages[${i},binrepo_path]}/
 			echo ""
 			;;
@@ -1421,12 +1483,12 @@ fi
 
 declare PLATFORM_KEYS=( # Variables allowed in platform.conf
 	arch      repos
-	cpu_flags compression_mode binrepo      binrepo_path
+	cpu_flags compression_mode binrepo binrepo_path binrepo_fslimit
 	use
 )
 declare RELEASE_KEYS=( # Variables allowed in release.conf
 	repos            common_flags chost        cpu_flags
-	compression_mode binrepo      binrepo_path
+	compression_mode binrepo      binrepo_path binrepo_fslimit
 	use
 )
 declare STAGE_KEYS=( # Variables stored in stages[] for the script.
@@ -1447,7 +1509,7 @@ declare STAGE_KEYS=( # Variables stored in stages[] for the script.
 
 	treeish
 	repos
-	binrepo  binrepo_path
+	binrepo  binrepo_path binrepo_fslimit
 	catalyst_conf compression_mode
 	packages use use_toml
 
@@ -1541,6 +1603,7 @@ readonly catalyst_path=/var/tmp/catalyst
 readonly catalyst_builds_path=${catalyst_path}/builds
 readonly catalyst_usr_path=/usr/share/catalyst
 readonly work_path=${tmp_path}/${timestamp}
+readonly binrepo_purge_script_path=${work_path}/binrepo_purge.sh
 
 # Create required folders if don't exists
 if [[ ! -d ${catalyst_builds_path} ]]; then
@@ -1601,7 +1664,8 @@ validate_stages
 [[ ${PREPARE} = true ]] && prepare_stages
 [[ ${DEBUG} = true ]] && print_debug_stack
 [[ ${BUILD} = true ]] && build_stages
-[[ ${UPLOAD_BINREPOS} = true ]] && [[ ${PREPARE} = true ]] && upload_binrepos
+# Binrepos will be uploaded after each build from now
+#[[ ${UPLOAD_BINREPOS} = true ]] && [[ ${PREPARE} = true ]] && upload_binrepos
 [[ ${PURGE} = true ]] && purge_old_builds_and_isos
 [[ ! ${BUILD} = true ]] && echo "To build selected stages use --build flag."
 
@@ -1615,3 +1679,4 @@ validate_stages
 # TODO: (N) Add validation that parent and children uses the same base architecture
 # TODO: (L) Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
 # TODO: (L) Validate if stage name starts with one of: stage[1-4], livecd-stage[1-2], binhost. Other names should be considered incorrect. Custom version stamp can still be set in stage.spec if needed.
+
