@@ -853,6 +853,7 @@ build_stages() {
 		[[ ${stages[${i},rebuild]} = false ]] && continue
 
 		local stage_path_work=${work_path}/${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}
+		local build_completed=false
 
 		if [[ ${stages[${i},kind]} = build ]]; then
 			echo -e "${color_turquoise}Building stage: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
@@ -865,9 +866,12 @@ build_stages() {
 			[[ -f ${catalyst_conf_work} ]] && args="${args} -c ${catalyst_conf_work}"
 
 			# Perform build
-			catalyst $args || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
+			(
+				catalyst $args &&
+				build_completed=true &&
+				echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
+			) || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
 
-			echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
 
 		elif [[ ${stages[${i},kind]} = download ]]; then
 			echo -e "${color_turquoise}Downloading stage: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
@@ -876,9 +880,11 @@ build_stages() {
 			local download_script_path_work=${stage_path_work}/download.sh
 
 			# Perform build
-			${download_script_path_work} || exit 1
-
-			echo -e "${color_green}Stage download completed: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
+			(
+				${download_script_path_work} &&
+				build_completed=true &&
+				echo -e "${color_green}Stage download completed: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
+			) || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
 
 		elif [[ ${stages[${i},kind]} = binhost ]]; then
 			echo -e "${color_turquoise}Building packages in stage: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
@@ -887,10 +893,14 @@ build_stages() {
 			local binhost_script_path_work=${stage_path_work}/build-binpkgs.sh
 
 			# Perform build
-			${binhost_script_path_work} || exit 1
-
-                        echo -e "${color_green}Stage build completed: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
+			(
+				${binhost_script_path_work} &&
+				build_completed=true &&
+				echo -e "${color_green}Stage build completed: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
+			) || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
 		fi
+
+		[[ ${build_completed} = true ]] && [[ ${UPLOAD_BINREPOS} = true ]] && upload_binrepos ${i}
 
 	done
 
@@ -898,10 +908,13 @@ build_stages() {
 }
 
 upload_binrepos() {
-	echo_color ${color_turquoise_bold} "[ Uploading binrepos ]"
+	local index=${1} # If no index, all repos are uploaded.
+
+	[[ -z ${index} ]] && echo_color ${color_turquoise_bold} "[ Uploading binrepos ]"
 	local handled_repos=()
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		[[ ${stages[${i},selected]} = true ]] || ( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) || continue # Only upload selected repos or rebild if building now
+		[[ -n ${index} ]] || [[ ${index} = ${i} ]] || continue
 		local binrepo_full_path=$(repo_local_path ${stages[${i},binrepo]})/${stages[${i},binrepo_path]}
 		contains_string handled_repos[@] ${binrepo_full_path} && continue
 		handled_repos+=(${binrepo_full_path})
