@@ -345,6 +345,7 @@ validate_stages() {
 				fi
 			done
 		fi
+		# TODO: Add checks for git and git-lfs if using remote repos
 	done
 
 	# Run checks.
@@ -1802,10 +1803,11 @@ readonly qemu_binfmt_is_running=$( { pidof systemd >/dev/null && systemctl is-ac
 readonly catalyst_is_installed=$( which catalyst >/dev/null 2>&1 && echo true || echo false )
 readonly yq_is_installed=$( which yq >/dev/null 2>&1 && echo true || echo false )
 readonly git_is_installed=$( which git >/dev/null 2>&1 && echo true || echo false )
+readonly git_lfs_is_installed=$( which git-lfs >/dev/null 2>&1 && echo true || echo false )
 readonly squashfs_tools_is_installed=$( which mksquashfs >/dev/null 2>&1 && echo true || echo false )
 readonly templates_path_exists=$( [[ -d ${templates_path} ]] && echo true || echo false )
 sanity_checks_required="catalyst_is_installed yq_is_installed"
-sanity_checks_optional="templates_path_exists qemu_is_installed qemu_has_static_user qemu_binfmt_is_running squashfs_tools_is_installed"
+sanity_checks_optional="templates_path_exists qemu_is_installed qemu_has_static_user qemu_binfmt_is_running squashfs_tools_is_installed git_is_installed git_lfs_is_installed"
 if [[ ${DEBUG} = true ]]; then
 	echo_color ${color_turquoise_bold} "[ Global sanity checks ]"
 fi
