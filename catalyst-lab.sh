@@ -13,7 +13,7 @@ load_stages() {
 
 	declare -gA stages # Some details of stages retreived from scanning. (release,stage,target,source,has_parent).
 	stages_count=0 # Number of all stages. Script will determine this value automatically.
-	available_builds_files=$(find ${catalyst_builds_path} -type f \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
+	available_builds_files=$(find ${catalyst_builds_path} \( -type f -o -type l \) \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
 
 	# Load basic details from platform.conf, release.conf and stage.spec files:
 	# Find list of platforms. (ps3, rpi5, amd64, ...).
@@ -108,21 +108,27 @@ load_stages() {
 				local _binrepo=${stage_values[binrepo]:-${release_binrepo:-${platform_binrepo:-[local]${repos_cache_path}/local}}}
 				local _binrepo_path=${stage_values[binrepo_path]:-${release_binrepo_path:-${platform_binrepo_path:-${_rel_type}}}}
 				local _binrepo_fslimit=${stage_values[binrepo_fslimit]:-${release_binrepo_fslimit:-${platform_binrepo_fslimit}}}
+				local _relrepo=${stage_values[relrepo]:-${release_relrepo:-${platform_relrepo}}}
+				local _relrepo_path=${stage_values[relrepo_path]:-${release_relrepo_path:-${platform_relrepo_path:-${_rel_type}/@TIMESTAMP@}}}
+				local _relrepo_fslimit=${stage_values[relrepo_fslimit]:-${release_relrepo_fslimit:-${platform_relrepo_fslimit}}}
 				local _version_stamp=${stage_values[version_stamp]:-$(echo ${stage} | sed -E 's/.*(^stage[1-4]|^livecd-stage[1-2]|^binhost)-(.*)/\2-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
 				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
 				local _product_format=${_product} # Stays the same the whole time, containing "@TIMESTAMP@" string for later comparsions
-				local _product_iso=$([[ ${_target} = livecd-stage2 ]] && echo ${stage_values[iso]:-install-${platform}-@TIMESTAMP@.iso} || echo "")
+				local _product_iso=$([[ ${_target} = livecd-stage2 ]] && echo ${_rel_type}/${stage_values[iso]:-install-${platform}-@TIMESTAMP@.iso} || echo "") # TODO: Use value from spec if set
 				local _product_iso_format=${_product_iso} # Stays the same the whole time, containing "@TIMESTAMP@" string for later comparsions
 				local _profile=${stage_values[profile]}
 				# Sanitize selected variables
-				local properties_to_sanitize=(rel_type version_stamp source_subpath product product_iso binrepo binrepo_path profile product_format product_iso_format)
+				local properties_to_sanitize=(rel_type version_stamp source_subpath product product_iso binrepo binrepo_path relrepo relrepo_path profile product_format product_iso_format)
 				for key in ${properties_to_sanitize[@]}; do
 					eval "_${key}=\$(sanitize_spec_variable ${platform} ${release} ${stage} ${platform_family} ${platform_basearch} ${_subarch} \"${_rel_type}\" \"\${_${key}}\")"
 				done
-				# Computer after sanitization of dependencies.
+				# Computed after sanitization of dependencies.
 				local _available_builds=($(printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${_product} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort -r))
+				local _available_isos=($( [[ -n ${_product_iso} ]] && printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${_product_iso} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort -r ))
 				local _latest_build=$(echo "${_available_builds[@]}" | cut -d ' ' -f 1 | sed 's/\.tar\.xz$//') # Newest available
+				local _latest_iso=$(echo "${_available_isos[@]}" | cut -d ' ' -f 1 | sed 's/\.iso$//') # Newest available
 				local _latest_build_timestamp=$( [[ -n ${_latest_build} ]] && start_pos=$(expr index "${_product}" "@TIMESTAMP@") && echo "${_latest_build:$((start_pos - 1)):16}" )
+				local _latest_iso_timestamp=$( [[ -n ${_latest_iso} ]] && start_pos=$(expr index "${_product_iso}" "@TIMESTAMP@") && echo "${_latest_iso:$((start_pos - 1)):16}" )
 				# Load toml file from catalyst
 				load_toml ${platform_basearch} ${_subarch} # Loading some variables directly from matching toml, if not specified in stage configs.
 				# Compute after loading toml.
@@ -160,16 +166,21 @@ load_stages() {
 				stages[${stages_count},binrepo]=${_binrepo}
 				stages[${stages_count},binrepo_path]=${_binrepo_path}
 				stages[${stages_count},binrepo_fslimit]=${_binrepo_fslimit}
+				stages[${stages_count},relrepo]=${_relrepo}
+				stages[${stages_count},relrepo_path]=${_relrepo_path}
+				stages[${stages_count},relrepo_fslimit]=${_relrepo_fslimit}
 				stages[${stages_count},version_stamp]=${_version_stamp}
 				stages[${stages_count},catalyst_conf]=${_catalyst_conf}
 				stages[${stages_count},rel_type]=${_rel_type}
 				stages[${stages_count},product]=${_product}
-				stages[${stages_count},product_iso]=${_product_iso}
 				stages[${stages_count},product_format]=${_product_format}
+				stages[${stages_count},product_iso]=${_product_iso}
 				stages[${stages_count},product_iso_format]=${_product_iso_format}
 				stages[${stages_count},profile]=${_profile}
 				stages[${stages_count},latest_build]=${_latest_build}
 				stages[${stages_count},timestamp_latest]=${_latest_build_timestamp}
+				stages[${stages_count},latest_iso]=${_latest_iso}
+				stages[${stages_count},timestamp_iso_latest]=${_latest_iso_timestamp}
 
 				# Increase processed stages count.
 				stages_count=$((stages_count + 1))
@@ -379,7 +390,7 @@ fetch_repos() {
 	local all_repos=()
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		[[ ${stages[${i},rebuild]} = false ]] && continue
-		local stage_repos=(${stages[${i},repos]} ${stages[${i},binrepo]})
+		local stage_repos=(${stages[${i},repos]} ${stages[${i},binrepo]} ${stages[${i},relrepo]})
 		for repo in ${stage_repos[@]}; do
 			if ! contains_string all_repos[@] ${repo}; then
 				all_repos+=(${repo})
@@ -610,7 +621,7 @@ EOF
 				set_spec_variable_if_missing ${stage_info_path_work} type gentoo-release-minimal
 				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo_${stages[${i},platform]}
 				set_spec_variable_if_missing ${stage_info_path_work} fstype squashfs
-				set_spec_variable_if_missing ${stage_info_path_work} iso ${stages[${i},product_iso]}
+				set_spec_variable_if_missing ${stage_info_path_work} iso $(basename ${stages[${i},product_iso]})
 			fi
 
 			# Stage4 specific keys
@@ -694,7 +705,6 @@ EOF
 			# Prepare build script for binhost job.
 			cat <<EOF | sed 's/^[ \t]*//' | tee ${binhost_script_path_work} > /dev/null || exit 1
 				#!/bin/bash
-				echo "(This functionality is a work in progress)"
 
 				# Cleanup build_work_path on exit.
 				trap 'echo "Cleaning: ${build_work_path}"; rm -rf ${build_work_path}' EXIT
@@ -849,7 +859,6 @@ EOF
 }
 
 # Function used to purge binrepos from too big entries.
-# TODO: When purgind too big packages, copy them somewhere else and restore after repo was uploaded.
 binrepo_purge() {
 	local index=${1}
 
@@ -904,6 +913,33 @@ binrepo_purge() {
 	fi
 }
 
+# Mark files that are too big as GIT-LFS
+relrepo_purge() {
+	local index=${1}
+	[[ -n ${stages[${index},relrepo]} ]] || continue # Ignore remote download jobs (or other jobs without relrepo)
+	local size_limit=${stages[${index},relrepo_fslimit]} # in MB
+	[[ -z ${size_limit} ]] && return # No limit specified
+
+	local relrepo_local_path=$(repo_local_path ${stages[${index},relrepo]})
+	local relrepo_kind=$(repo_kind ${stages[${index},relrepo]})
+	local relrepo_url=$(repo_url ${stages[${index},relrepo]})
+	local relrepo_new_directories=$(echo "${relrepos_new_files[${index}]}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+
+	pushd ${relrepo_local_path}
+	for dir in ${relrepo_new_directories}; do
+		local relrepo_full_path=${relrepo_local_path}/${dir}
+			case ${relrepo_kind} in
+			git)
+				local files=$(find ${relrepo_full_path} -type f -size +${size_limit}M)
+				for file in ${files}; do
+					git-lfs track ${file}
+				done
+				;;
+			esac
+	done
+	popd
+}
+
 # Build stages.
 build_stages() {
 	echo_color ${color_turquoise_bold} "[ Building stages ]"
@@ -924,11 +960,11 @@ build_stages() {
 			[[ -f ${catalyst_conf_work} ]] && args="${args} -c ${catalyst_conf_work}"
 
 			# Perform build
-			(
+			{
 				catalyst $args &&
 				build_completed=true &&
 				echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
-			) || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
+			} || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
 
 
 		elif [[ ${stages[${i},kind]} = download ]]; then
@@ -938,11 +974,11 @@ build_stages() {
 			local download_script_path_work=${stage_path_work}/download.sh
 
 			# Perform build
-			(
+			{
 				${download_script_path_work} &&
 				build_completed=true &&
 				echo -e "${color_green}Stage download completed: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
-			) || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
+			} || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
 
 		elif [[ ${stages[${i},kind]} = binhost ]]; then
 			echo -e "${color_turquoise}Building packages in stage: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
@@ -951,14 +987,17 @@ build_stages() {
 			local binhost_script_path_work=${stage_path_work}/build-binpkgs.sh
 
 			# Perform build
-			(
+			{
 				${binhost_script_path_work} &&
 				build_completed=true &&
 				echo -e "${color_green}Stage build completed: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
-			) || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
+			} || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
 		fi
 
+		move_relrepos ${i}
+
 		[[ ${build_completed} = true ]] && [[ ${UPLOAD_BINREPOS} = true ]] && upload_binrepos ${i}
+		[[ ${build_completed} = true ]] && [[ ${UPLOAD_RELREPOS} = true ]] && upload_relrepos ${i}
 
 	done
 
@@ -971,9 +1010,9 @@ upload_binrepos() {
 	[[ -z ${index} ]] && echo_color ${color_turquoise_bold} "[ Uploading binrepos ]"
 	local handled_repos=()
 	local i; for (( i=0; i<${stages_count}; i++ )); do
+		[[ -z ${index} ]] || [[ ${index} = ${i} ]] || continue # Filter index if provided
 		[[ ${stages[${i},selected]} = true ]] || ( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) || continue # Only upload selected repos or rebild if building now
 		[[ -n ${stages[${i},binrepo]} ]] || continue # Ignore remote download jobs (or other jobs without binrepo)
-		[[ -z ${index} ]] || [[ ${index} = ${i} ]] || continue # Filter index if provided
 		local binrepo_full_path=$(repo_local_path ${stages[${i},binrepo]})/${stages[${i},binrepo_path]}
 		contains_string handled_repos[@] ${binrepo_full_path} && continue
 		handled_repos+=(${binrepo_full_path})
@@ -1013,6 +1052,112 @@ upload_binrepos() {
 			;;
 		esac
 
+	done
+	echo ""
+}
+
+# Move release files to relrepos.
+declare -A relrepos_new_files=()
+move_relrepos() {
+	local index=${1} # If no index, all repos are uploaded.
+
+	[[ -z ${index} ]] && echo_color ${color_turquoise_bold} "[ Collecting latest releases ]"
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		[[ -z ${index} ]] || [[ ${index} = ${i} ]] || continue # Filter index if provided
+		[[ ${stages[${i},selected]} = true ]] || ( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) || continue # Only upload selected repos or rebild if building now
+		[[ -n ${stages[${i},relrepo]} ]] || continue # Ignore remote download jobs (or other jobs without relrepo)
+		local relrepo_local_path=$(repo_local_path ${stages[${i},relrepo]})
+		local relrepo_path=${stages[${i},relrepo_path]}
+		# Determine if using new build or existing
+		( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) && local used_product=${stages[${i},product]} || local used_product=${stages[${i},latest_build]}
+		( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) && local used_timestamp=${stages[${i},timestamp_generated]} || local used_timestamp=${stages[${i},timestamp_latest]}
+		if [[ -n ${used_product} ]] && [[ -n ${used_timestamp} ]]; then # Skip if no timestamp determined to upload
+			local relrepo_subpath=$(echo ${relrepo_path} | sed "s|@TIMESTAMP@|${used_timestamp}|")
+			local relrepo_full_path=${relrepo_local_path}/${relrepo_subpath}
+			local include=false
+			for file in ${catalyst_builds_path}/${used_product}*; do
+				local fname=$(basename ${file})
+				local dest=${relrepo_full_path}/${fname}
+				if [[ ! -f ${dest} ]] && [[ -f ${file} ]]; then
+					include=true
+					echo "Moving ${fname} to releases repository"
+					# Move file and link back to catalyst
+					mkdir -p ${relrepo_full_path}
+					mv ${catalyst_builds_path}/${stages[${i},rel_type]}/${fname} ${dest} || exit 1
+					ln -s ${dest} ${catalyst_builds_path}/${stages[${i},rel_type]}/${fname} || exit 1
+				fi
+			done
+			[[ ${include} = true ]] && relrepos_new_files[${i}]="${relrepos_new_files[${i}]} ${relrepo_subpath}"
+		fi
+		( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) && local used_product_iso=${stages[${i},product_iso]} || local used_product_iso=${stages[${i},latest_iso]}
+		( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) && local used_timestamp_iso=${stages[${i},timestamp_generated]} || local used_timestamp_iso=${stages[${i},timestamp_iso_latest]}
+		if [[ -n ${used_product_iso} ]] && [[ -n ${used_timestamp_iso} ]]; then # Skip if no timestamp determined to upload
+			local relrepo_subpath=$(echo ${relrepo_path} | sed "s|@TIMESTAMP@|${used_timestamp_iso}|")
+			local relrepo_full_path=${relrepo_local_path}/${relrepo_subpath}
+			local include=false
+			for file in ${catalyst_builds_path}/${used_product_iso}*; do
+				local fname=$(basename ${file})
+				local dest=${relrepo_full_path}/${fname}
+				if [[ ! -f ${dest} ]] && [[ -f ${file} ]]; then
+					include=true
+					echo "Moving ${fname} to releases repository"
+					# Move file and link back to catalyst
+					mkdir -p ${relrepo_full_path}
+					mv ${catalyst_builds_path}/${stages[${i},rel_type]}/${fname} ${dest} || exit 1
+					ln -s ${dest} ${catalyst_builds_path}/${stages[${i},rel_type]}/${fname} || exit 1
+				fi
+			done
+			[[ ${include} = true ]] && relrepos_new_files[${i}]="${relrepos_new_files[${i}]} ${relrepo_subpath}"
+		fi
+	done
+	echo ""
+}
+
+# Upload releases to release repos.
+upload_relrepos() {
+	local index=${1}
+
+	[[ -z ${index} ]] && echo_color ${color_turquoise_bold} "[ Uploading releases ]"
+	local i; for (( i=0; i<${stages_count}; i++ )); do
+		[[ -z ${index} ]] || [[ ${index} = ${i} ]] || continue # Filter index if provided
+		local relrepo_local_path=$(repo_local_path ${stages[${i},relrepo]})
+		local relrepo_kind=$(repo_kind ${stages[${i},relrepo]})
+		local relrepo_url=$(repo_url ${stages[${i},relrepo]})
+		local relrepo_new_directories=$(echo "${relrepos_new_files[${i}]}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+		for dir in ${relrepo_new_directories}; do
+			local relrepo_full_path=${relrepo_local_path}/${dir}
+			case ${relrepo_kind} in
+			git)
+				[[ -d ${relrepo_local_path}/.git ]] || continue # Skip if this repo doesnt yet exists
+				echo -e "${color_turquoise}Uploading release: ${color_yellow}${relrepo_url}/${dir}${color_nc}"
+				relrepo_purge ${i}
+
+				# Check if there are changes to commit
+				local changes=false
+				if [[ -n $(git -C ${relrepo_local_path} status --porcelain ${relrepo_full_path}) ]]; then
+					git -C ${relrepo_local_path} add ${relrepo_full_path}
+					git -C ${relrepo_local_path} commit -m "Automatic update: ${timestamp}" --only ${relrepo_full_path}
+					# Check for write access.
+					if repo_url=$(git -C ${relrepo_local_path} config --get remote.origin.url) && [[ ! ${repo_url} =~ ^https:// ]] && git -C ${relrepo_local_path} ls-remote &>/dev/null && git -C ${relrepo_local_path} push --dry-run &>/dev/null; then
+						git -C ${relrepo_local_path} push
+					else
+						echo -e "${color_orange}Warning! No write access to release repo: ${color_yellow}${relrepo_url}${color_nc}"
+					fi
+					changes=true
+				fi
+				if [[ ${changes} = false ]]; then
+					echo "No local changes detected"
+				fi
+				echo ""
+				;;
+			rsync)
+				echo -e "${color_turquoise}Uploading release: ${color_yellow}${relrepo_url}/${dir}${color_nc}"
+				relrepo_purge ${i}
+				rsync ${RSYNC_OPTIONS} ${relrepo_full_path}/ ${ssh_username}@${relrepo_url}/${dir}/
+				echo ""
+				;;
+			esac
+		done
 	done
 	echo ""
 }
@@ -1285,11 +1430,13 @@ print_debug_stack() {
 	# Debug mode
 	echo_color ${color_turquoise_bold} "[ Stages details ]"
 	for ((i=0; i<${stages_count}; i++)); do
+		[[ ${stages[${i},takes_part]} = false ]] && echo -ne "${color_gray}\r"
 		echo "Stage details at index ${i}:"
 		for key in ${STAGE_KEYS[@]}; do
 			printf "%-22s%s\n" "${key}:" "${stages[$i,$key]}"
 		done
 		echo "--------------------------------------------------------------------------------"
+		echo -ne "${color_nc}\r"
 	done
 }
 
@@ -1432,12 +1579,12 @@ disable_branch() {
 # Remove old files from previous builds.
 purge_old_builds_and_isos() {
 	echo_color ${color_turquoise_bold} "[ Purge old builds ]"
-	available_builds_files=$(find ${catalyst_builds_path} -type f \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
+	available_builds_files=$(find ${catalyst_builds_path} \( -type f -o -type l \) \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
 	local to_remove=()
 	for ((i=0; i<${stages_count}; i++)); do
 		[[ ! ${stages[${i},selected]} = true ]] && continue
-		local _available_builds=($(printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${stages[${i},product_format]} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/' | sort))) # Sorted from oldest
-		local _available_isos=($([[ -n "${stages[${i},product_iso_format]}" ]] && printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo $(dirname ${stages[${i},product_format]})/${stages[${i},product_iso_format]} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort))
+		local _available_builds=($(printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${stages[${i},product_format]} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort)) # Sorted from oldest
+		local _available_isos=($([[ -n "${stages[${i},product_iso_format]}" ]] && printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${stages[${i},product_iso_format]} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort))
 		for ((j=0; j<((${#_available_builds[*]}-1)); j++)); do
 			# Double check to make sure currently built product is not the same file
 			[[ ${_available_builds[${j}]} == ${stages[${i},product]}* ]] && continue
@@ -1463,7 +1610,17 @@ purge_old_builds_and_isos() {
 		echo ""
 		for file in ${to_remove[@]}; do
 			echo -e "${color_red}Removing: ${color_gray}${catalyst_builds_path}/${color_nc}${file}${color_gray}*${color_nc}"
-			rm -f ${catalyst_builds_path}/${file}*
+			for file in ${catalyst_builds_path}/${file}*; do
+				# If it's a link, delete also source file
+				# TODO: After deleting from relrepo, also publish this change to git/rsync
+				if [[ -L ${file} ]]; then
+					local target=$(readlink ${file})
+					if [[ -f ${target} ]]; then
+						rm -f ${target}
+					fi
+				fi
+				rm -f ${file}
+			done
 		done
 	else
 		echo "No old builds to remove found."
@@ -1483,12 +1640,17 @@ fi
 
 declare PLATFORM_KEYS=( # Variables allowed in platform.conf
 	arch      repos
-	cpu_flags compression_mode binrepo binrepo_path binrepo_fslimit
+	cpu_flags compression_mode
+	binrepo binrepo_path binrepo_fslimit
+	relrepo relrepo_path relrepo_fslimit
 	use
 )
 declare RELEASE_KEYS=( # Variables allowed in release.conf
-	repos            common_flags chost        cpu_flags
-	compression_mode binrepo      binrepo_path binrepo_fslimit
+	repos
+        common_flags chost
+        cpu_flags compression_mode
+        binrepo binrepo_path binrepo_fslimit
+	relrepo relrepo_path relrepo_fslimit
 	use
 )
 declare STAGE_KEYS=( # Variables stored in stages[] for the script.
@@ -1504,12 +1666,15 @@ declare STAGE_KEYS=( # Variables stored in stages[] for the script.
 
 	source_subpath
 	parent children
-	product product_format product_iso product_iso_format
-	latest_build timestamp_latest timestamp_generated
+	product product_format
+	product_iso product_iso_format
+	latest_build latest_iso
+	timestamp_latest timestamp_iso_latest timestamp_generated
 
 	treeish
 	repos
-	binrepo  binrepo_path binrepo_fslimit
+	binrepo binrepo_path binrepo_fslimit
+	relrepo relrepo_path relrepo_fslimit
 	catalyst_conf compression_mode
 	packages use use_toml
 
@@ -1617,6 +1782,7 @@ while [ $# -gt 0 ]; do case ${1} in
 	--update-releng) FETCH_FRESH_RELENG=true;;     # Update releng repository.
 	--update-repos) FETCH_FRESH_REPOS=true;;       # Update remote repos for releases and binhosts.
 	--upload-binrepos) UPLOAD_BINREPOS=true;;      # Upload changes in binrepos.
+	--upload-releases) UPLOAD_RELREPOS=true;;      # Upload changes in releases.
 	--purge) PURGE=true;;                          # Clean all builds and isos except the latest.
 	--clean) CLEAN_BUILD=true;;                    # Don't use any existing sources even if available (Except for downloaded seeds).
 	--build) BUILD=true; PREPARE=true;;            # Prepare is implicit when using --build.
@@ -1626,6 +1792,8 @@ while [ $# -gt 0 ]; do case ${1} in
 	-*) echo "Unknown option ${1}"; exit;;
 	*) selected_stages_templates+=("${1}");;       # Add selected stages.
 esac; shift; done
+
+trap "exit 1" SIGINT
 
 # Main sanity check:
 readonly qemu_is_installed=$( which qemu-img >/dev/null 2>&1 && echo true || echo false )
@@ -1651,8 +1819,10 @@ validate_sanity_checks true "${DEBUG}" "${sanity_checks_optional[@]}"
 
 # Validate parameters
 if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]]; then
-	echo "If using --upload-binrepos, it is mandatory to also use --update-repos. Exiting."
-	exit 1
+	echo "When using --upload-binrepos, it is mandatory to also use --update-repos. Exiting." && exit 1
+fi
+if [[ ${UPLOAD_RELREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]]; then
+	echo "When using --upload-releases, it is mandatory to also use --update-repos. Exiting." && exit 1
 fi
 
 load_stages
@@ -1661,22 +1831,21 @@ validate_stages
 [[ ${PREPARE} = true ]] || [[ ${FETCH_FRESH_RELENG} = true ]] && prepare_releng
 [[ ${FETCH_FRESH_REPOS} = true ]] || [[ ${PREPARE} = true ]] && fetch_repos
 [[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${PREPARE} = true ]] && upload_binrepos
+[[ ${UPLOAD_RELREPOS} = true ]] && [[ ! ${PREPARE} = true ]] && move_relrepos && upload_relrepos
 [[ ${PREPARE} = true ]] && prepare_stages
 [[ ${DEBUG} = true ]] && print_debug_stack
 [[ ${BUILD} = true ]] && build_stages
-# Binrepos will be uploaded after each build from now
-#[[ ${UPLOAD_BINREPOS} = true ]] && [[ ${PREPARE} = true ]] && upload_binrepos
-[[ ${PURGE} = true ]] && purge_old_builds_and_isos
+[[ ${PURGE} = true ]] && purge_old_builds_and_isos # TODO: Purge also from relrepo
 [[ ! ${BUILD} = true ]] && echo "To build selected stages use --build flag."
 
 # TODO: (H) Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs.
 # TODO: (H) Check if settings common_flags is also only allowed in stage1
 # TODO: (H) Define parent property for setting source_subpath. Parent can be name of stage, full name of stage (including platform and release) or remote. With remote it can just specify word remote and automatically find version, it it can specify tarball name or even full URL.
 # TODO: (H) Add possibility to define remote jobs in templates. Automatically added remote jobs are considered "virtual"
+# TODO: (N) When purging too big packages, copy them somewhere else and restore after repo was uploaded.
 # TODO: (N) Add functions to manage platforms, releases and stages - add new, edit config, print config, etc.
 # TODO: (N) Working with distcc (including local)
 # TODO: (N) Add checking for valid config entries in config files
 # TODO: (N) Add validation that parent and children uses the same base architecture
 # TODO: (L) Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
 # TODO: (L) Validate if stage name starts with one of: stage[1-4], livecd-stage[1-2], binhost. Other names should be considered incorrect. Custom version stamp can still be set in stage.spec if needed.
-
