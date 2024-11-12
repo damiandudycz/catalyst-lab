@@ -359,7 +359,6 @@ validate_stages() {
 				fi
 			fi
 		done
-		# TODO: Add checks for git and git-lfs if using remote repos
 	done
 
 	# Run checks.
@@ -713,7 +712,6 @@ EOF
 			local common_flags=${stages[${i},common_flags]}
 			local chost=${stages[${i},chost]}
 			local use=$(echo ${stages[${i},use_toml]} ${stages[${i},use]} | sed 's/ \{1,\}/ /g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-			# TODO: Make sure that when emerging new packages, default gentoo binrepos.conf is not being used. This can probably be achieved with correct emerge flags. Still local binrepo packages should be used!
 
 			mkdir -p ${build_work_path}
 
@@ -928,9 +926,10 @@ binrepo_purge() {
 	fi
 }
 
-# Mark files that are too big as GIT-LFS
-relrepo_purge() {
+# Mark files that are too big as GIT-LFS (in given relrepo's subpath)
+relrepo_mark_lfs() {
 	local index=${1}
+	local dir_to_check=${2}
 	[[ -n ${stages[${index},relrepo]} ]] || continue # Ignore remote download jobs (or other jobs without relrepo)
 	local size_limit=${stages[${index},relrepo_fslimit]} # in MB
 	[[ -z ${size_limit} ]] && return # No limit specified
@@ -938,22 +937,20 @@ relrepo_purge() {
 	local relrepo_local_path=$(repo_local_path ${stages[${index},relrepo]})
 	local relrepo_kind=$(repo_kind ${stages[${index},relrepo]})
 	local relrepo_url=$(repo_url ${stages[${index},relrepo]})
-	local relrepo_new_directories=$(echo "${relrepos_new_files[${index}]}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+	local relrepo_new_directories=$(echo "${relrepo_changed_directories[${index}]}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 
-	pushd ${relrepo_local_path}
-	for dir in ${relrepo_new_directories}; do
-		local relrepo_full_path=${relrepo_local_path}/${dir}
-			case ${relrepo_kind} in
-			git)
-				git lfs install # Install GIT LFS if not setup already
-				local files=$(find ${relrepo_full_path} -type f -size +${size_limit}M)
-				for file in ${files}; do
-					git-lfs track --relative ${file}
-				done
-				;;
-			esac
-	done
-	popd
+	pushd ${relrepo_local_path} > /dev/null
+	local relrepo_full_path=${relrepo_local_path}/${dir_to_check}
+	case ${relrepo_kind} in
+		git)
+			git lfs install > /dev/null # Install GIT LFS if not setup already
+			local files=$(find ${relrepo_full_path} -type f -size +${size_limit}M)
+			for file in ${files}; do
+				git-lfs track --relative ${file}
+			done
+			;;
+	esac
+	popd > /dev/null
 }
 
 # Build stages.
@@ -1076,7 +1073,7 @@ upload_binrepos() {
 }
 
 # Move release files to relrepos.
-declare -A relrepos_new_files=()
+declare -A relrepo_changed_directories=()
 move_relrepos() {
 	local index=${1} # If no index, all repos are uploaded.
 
@@ -1106,7 +1103,7 @@ move_relrepos() {
 					ln -s ${dest} ${catalyst_builds_path}/${stages[${i},rel_type]}/${fname} || exit 1
 				fi
 			done
-			[[ ${include} = true ]] && relrepos_new_files[${i}]="${relrepos_new_files[${i}]} ${relrepo_subpath}"
+			[[ ${include} = true ]] && relrepo_changed_directories[${i}]="${relrepo_changed_directories[${i}]} ${relrepo_subpath}"
 		fi
 		( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) && local used_product_iso=${stages[${i},product_iso]} || local used_product_iso=${stages[${i},latest_iso]}
 		( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) && local used_timestamp_iso=${stages[${i},timestamp_generated]} || local used_timestamp_iso=${stages[${i},timestamp_iso_latest]}
@@ -1126,7 +1123,7 @@ move_relrepos() {
 					ln -s ${dest} ${catalyst_builds_path}/${stages[${i},rel_type]}/${fname} || exit 1
 				fi
 			done
-			[[ ${include} = true ]] && relrepos_new_files[${i}]="${relrepos_new_files[${i}]} ${relrepo_subpath}"
+			[[ ${include} = true ]] && relrepo_changed_directories[${i}]="${relrepo_changed_directories[${i}]} ${relrepo_subpath}"
 		fi
 	done
 	echo ""
@@ -1142,14 +1139,14 @@ upload_relrepos() {
 		local relrepo_local_path=$(repo_local_path ${stages[${i},relrepo]})
 		local relrepo_kind=$(repo_kind ${stages[${i},relrepo]})
 		local relrepo_url=$(repo_url ${stages[${i},relrepo]})
-		local relrepo_new_directories=$(echo "${relrepos_new_files[${i}]}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+		local relrepo_new_directories=$(echo "${relrepo_changed_directories[${i}]}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 		for dir in ${relrepo_new_directories}; do
 			local relrepo_full_path=${relrepo_local_path}/${dir}
 			case ${relrepo_kind} in
 			git)
 				[[ -d ${relrepo_local_path}/.git ]] || continue # Skip if this repo doesnt yet exists
 				echo -e "${color_turquoise}Uploading release: ${color_yellow}${relrepo_url}/${dir}${color_nc}"
-				relrepo_purge ${i}
+				relrepo_mark_lfs ${i} ${dir}
 
 				# Check if there are changes to commit
 				local changes=false
@@ -1171,7 +1168,7 @@ upload_relrepos() {
 				;;
 			rsync)
 				echo -e "${color_turquoise}Uploading release: ${color_yellow}${relrepo_url}/${dir}${color_nc}"
-				relrepo_purge ${i}
+				relrepo_mark_lfs ${i} ${dir}
 				rsync ${RSYNC_OPTIONS} ${relrepo_full_path}/ ${ssh_username}@${relrepo_url}/${dir}/
 				echo ""
 				;;
@@ -1599,12 +1596,15 @@ disable_branch() {
 # Remove old files from previous builds.
 purge_old_builds_and_isos() {
 	echo_color ${color_turquoise_bold} "[ Purge old builds ]"
-	available_builds_files=$(find ${catalyst_builds_path} \( -type f -o -type l \) \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
+	local available_builds_files=$(find ${catalyst_builds_path} \( -type f -o -type l \) \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
 	local to_remove=()
+	local to_remove_in_relrepo=()
+	relrepo_changed_directories=() # Empty at this step, as it will be performed after previous changes were already uploaded.
 	for ((i=0; i<${stages_count}; i++)); do
 		[[ ! ${stages[${i},selected]} = true ]] && continue
-		local _available_builds=($(printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${stages[${i},product_format]} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort)) # Sorted from oldest
-		local _available_isos=($([[ -n "${stages[${i},product_iso_format]}" ]] && printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${stages[${i},product_iso_format]} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/') | sort))
+		# Collect files from catalyst
+		local _available_builds=($(printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${stages[${i},product_format]} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/g') | sort)) # Sorted from oldest
+		local _available_isos=($([[ -n "${stages[${i},product_iso_format]}" ]] && printf "%s\n" "${available_builds_files[@]}" | grep -E $(echo ${stages[${i},product_iso_format]} | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/g') | sort))
 		for ((j=0; j<((${#_available_builds[*]}-1)); j++)); do
 			# Double check to make sure currently built product is not the same file
 			[[ ${_available_builds[${j}]} == ${stages[${i},product]}* ]] && continue
@@ -1615,10 +1615,40 @@ purge_old_builds_and_isos() {
 			[[ ${_available_isos[${j}]} == ${stages[${i},product_iso]}* ]] && continue
 			to_remove+=(${_available_isos[${j}]})
 		done
+		# Collect files from relrepo that are not in catalyst
+		local relrepo_path=$(repo_local_path ${stages[${i},relrepo]})
+		if [[ -n ${relrepo_path} ]]; then
+			local available_builds_files_in_relrepo=$(find ${relrepo_path} -type f \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
+			local product_in_relrepo=$(echo ${stages[${i},relrepo_path]}/$(basename ${stages[${i},product]}) | sed 's/@TIMESTAMP@/${stages[${i},timestamp_generated]}/g') # Format of release in relrepo (including subpath and timestamp folder
+			local product_iso_in_relrepo=$([[ -n ${stages[${i},product_iso_format]} ]] && echo ${stages[${i},relrepo_path]}/$(basename ${stages[${i},product_iso]}) | sed 's/@TIMESTAMP@/${stages[${i},timestamp_generated]}/g')
+			local product_format_in_relrepo=$(echo ${stages[${i},relrepo_path]}/$(basename ${stages[${i},product_format]}) | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/g') # Format of release in relrepo (including subpath and timestamp folder
+			local product_iso_format_in_relrepo=$([[ -n ${stages[${i},product_iso_format]} ]] && echo ${stages[${i},relrepo_path]}/$(basename ${stages[${i},product_iso_format]}) | sed 's/@TIMESTAMP@/[0-9]{8}T[0-9]{6}Z/g')
+			local _available_builds_in_relrepo=($(printf "%s\n" "${available_builds_files_in_relrepo[@]}" | grep -E ${product_format_in_relrepo} | sort)) # Sorted from oldest
+			local _available_isos_in_relrepo=($([[ -n "${product_iso_format_in_relrepo}" ]] && printf "%s\n" "${available_builds_files_in_relrepo[@]}" | grep -E ${product_iso_format_in_relrepo} | sort))
+			for ((j=0; j<((${#_available_builds_in_relrepo[*]}-1)); j++)); do
+				# Double check to make sure currently built product is not the same file
+				[[ ${_available_builds_in_relrepo[${j}]} == ${product_in_relrepo}* ]] && continue
+				to_remove_in_relrepo+=(${relrepo_path}/${_available_builds_in_relrepo[${j}]})
+				# Mark relrepo dir to upload changes
+				local relrepo_subdir=$(dirname ${_available_builds_in_relrepo[${j}]})
+				relrepo_changed_directories[${i}]="${relrepo_changed_directories[${i}]} ${relrepo_subdir}"
+			done
+			for ((j=0; j<((${#_available_isos_in_relrepo[*]}-1)); j++)); do
+				# Double check to make sure currently built iso is not the same file
+				[[ ${_available_isos_in_relrepo[${j}]} == ${product_iso_in_relrepo}* ]] && continue
+				to_remove_in_relrepo+=(${relrepo_path}/${_available_isos_in_relrepo[${j}]})
+				# Mark relrepo dir to upload changes
+				local relrepo_subdir=$(dirname ${_available_isos_in_relrepo[${j}]})
+				relrepo_changed_directories[${i}]="${relrepo_changed_directories[${i}]} ${relrepo_subdir}"
+			done
+		fi
 	done
-	if [[ -n ${to_remove} ]]; then
+	if [[ -n ${to_remove} ]] || [[ -n ${to_remove_in_relrepo} ]]; then
 		echo "Will remove old builds:"
 		for file in ${to_remove[@]}; do
+			echo -e " - ${color_gray}${file}${color_nc}"
+		done
+		for file in ${to_remove_in_relrepo[@]}; do
 			echo -e " - ${color_gray}${file}${color_nc}"
 		done
 		echo "Use CTRL+C to cancel."
@@ -1632,7 +1662,6 @@ purge_old_builds_and_isos() {
 			echo -e "${color_red}Removing: ${color_gray}${catalyst_builds_path}/${color_nc}${file}${color_gray}*${color_nc}"
 			for file in ${catalyst_builds_path}/${file}*; do
 				# If it's a link, delete also source file
-				# TODO: After deleting from relrepo, also publish this change to git/rsync
 				if [[ -L ${file} ]]; then
 					local target=$(readlink ${file})
 					if [[ -f ${target} ]]; then
@@ -1642,9 +1671,19 @@ purge_old_builds_and_isos() {
 				rm -f ${file}
 			done
 		done
+		for file in ${to_remove_in_relrepo[@]}; do
+			echo -e "${color_red}Removing: ${color_gray}${color_nc}${file}${color_gray}*${color_nc}"
+			for file in ${file}*; do
+				[[ -f ${file} ]] && rm -f ${file}
+			done
+			# TODO: If release directory if left empty, remove this directory too
+			# Warning. This could case issues with later rsync if the folder doesnt exists anymore.
+			# Git should remove remote empty folders automatically.
+		done
 	else
 		echo "No old builds to remove found."
 	fi
+	echo ""
 }
 
 # Display status of builds after finished.
@@ -1872,12 +1911,8 @@ validate_sanity_checks true "${DEBUG}" "${sanity_checks_optional[@]}"
 declare -A builds_status=() # Contains status of stages marked to build. success,failure,disabled
 
 # Validate parameters
-if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]]; then
-	echo "When using --upload-binrepos, it is mandatory to also use --update-repos. Exiting." && exit 1
-fi
-if [[ ${UPLOAD_RELREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]]; then
-	echo "When using --upload-releases, it is mandatory to also use --update-repos. Exiting." && exit 1
-fi
+[[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]] && echo "When using --upload-binrepos, it is mandatory to also use --update-repos. Exiting." && exit 1
+[[ ${UPLOAD_RELREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]] && echo "When using --upload-releases, it is mandatory to also use --update-repos. Exiting." && exit 1
 
 load_stages
 validate_stages
@@ -1890,6 +1925,7 @@ validate_stages
 [[ ${DEBUG} = true ]] && print_debug_stack
 [[ ${BUILD} = true ]] && build_stages
 [[ ${PURGE} = true ]] && purge_old_builds_and_isos
+[[ ${PURGE} = true ]] && [[ ${UPLOAD_RELREPOS} = true ]] && upload_relrepos # Uploads changes after purge_old_builds_and_isos
 [[ ${BUILD} = true ]] && report_status
 [[ ! ${BUILD} = true ]] && echo "To build selected stages use --build flag."
 
