@@ -979,6 +979,7 @@ build_stages() {
 			{
 				catalyst $args &&
 				build_completed=true &&
+				builds_status[${i}]=success &&
 				echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
 			} || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
 
@@ -993,6 +994,7 @@ build_stages() {
 			{
 				${download_script_path_work} &&
 				build_completed=true &&
+				builds_status[${i}]=success &&
 				echo -e "${color_green}Stage download completed: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
 			} || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
 
@@ -1006,6 +1008,7 @@ build_stages() {
 			{
 				${binhost_script_path_work} &&
 				build_completed=true &&
+				builds_status[${i}]=success &&
 				echo -e "${color_green}Stage build completed: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
 			} || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
 		fi
@@ -1587,6 +1590,7 @@ disable_branch() {
 	local children="${stages[${index},children]}"
 	echo_color ${color_orange} "Disable: ${stages[${index},platform]}/${stages[${index},release]}/${stages[${index},stage]}"
 	stages[${index},rebuild]=false
+	[[ -z ${builds_status[${index}]} ]] && builds_status[${index}]=disabled
 	for child in ${children}; do
 		disable_branch ${child}
 	done
@@ -1641,6 +1645,37 @@ purge_old_builds_and_isos() {
 	else
 		echo "No old builds to remove found."
 	fi
+}
+
+# Display status of builds after finished.
+report_status() {
+	echo_color ${color_turquoise_bold} "[ Build report ]"
+	for index in ${!builds_status[@]}; do
+
+		local status=${builds_status[${index}]}
+
+		if [[ ${stages[${index},kind]} = build ]]; then
+			local color=${color_turquoise}
+		elif [[ ${stages[${index},kind]} = download ]]; then
+			local color=${color_yellow}
+		elif [[ ${stages[${index},kind]} = binhost ]]; then
+			local color=${color_purple}
+		fi
+
+		if [[ ${status} = success ]]; then
+			local color_status=${color_green}
+		elif [[ ${status} = failure ]]; then
+			local color_status=${color_red}
+		elif [[ ${status} = disabled ]]; then
+			local color_status=${color_orange}
+		else
+			local color_status=${color_nc}
+		fi
+
+		local display_name="${stages[${index},platform]}/${stages[${index},release]}/${color}${stages[${index},stage]} ${color_gray}${stages[${index},timestamp_generated]} ${color_nc}[${color_status}${status}${color_nc}]"
+		echo -e "${displa_name}"
+	done
+	echo ""
 }
 
 # ------------------------------------------------------------------------------
@@ -1809,7 +1844,7 @@ while [ $# -gt 0 ]; do case ${1} in
 	*) selected_stages_templates+=("${1}");;       # Add selected stages.
 esac; shift; done
 
-trap "exit 1" SIGINT
+trap "echo ''; report_status; exit 1" SIGINT
 
 # Main sanity check:
 readonly qemu_is_installed=$( which qemu-img >/dev/null 2>&1 && echo true || echo false )
@@ -1834,6 +1869,8 @@ validate_sanity_checks true "${DEBUG}" "${sanity_checks_optional[@]}"
 # ------------------------------------------------------------------------------
 # Main program:
 
+declare -A builds_status=() # Contains status of stages marked to build. success,failure,disabled
+
 # Validate parameters
 if [[ ${UPLOAD_BINREPOS} = true ]] && [[ ! ${FETCH_FRESH_REPOS} = true ]]; then
 	echo "When using --upload-binrepos, it is mandatory to also use --update-repos. Exiting." && exit 1
@@ -1852,7 +1889,8 @@ validate_stages
 [[ ${PREPARE} = true ]] && prepare_stages
 [[ ${DEBUG} = true ]] && print_debug_stack
 [[ ${BUILD} = true ]] && build_stages
-[[ ${PURGE} = true ]] && purge_old_builds_and_isos # TODO: Purge also from relrepo
+[[ ${PURGE} = true ]] && purge_old_builds_and_isos
+[[ ${BUILD} = true ]] && report_status
 [[ ! ${BUILD} = true ]] && echo "To build selected stages use --build flag."
 
 # TODO: (H) Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs.
