@@ -1,0 +1,3 @@
+sys-firmware/raspberrypi-wifi-ucode *
+sys-kernel/raspberrypi-image *
+sys-boot/raspberrypi-firmware *

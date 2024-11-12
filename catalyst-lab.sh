@@ -345,6 +345,20 @@ validate_stages() {
 				fi
 			done
 		fi
+		if [[ $(repo_kind ${stages[${i},relrepo]}) = git ]]; then
+			if [[ ! ${required_checks} == *"git_lfs_is_installed"* ]]; then
+				required_checks+="git_lfs_is_installed "
+			fi
+		fi
+		# Check if some of repos require git
+		local repos=(${stages[${i},repos]} ${stages[${i},relrepo]} ${stages[${i},binrepo]})
+		for repo in ${repos[@]}; do
+			if [[ $(repo_kind ${repo}) = git ]]; then
+				if [[ ! ${required_checks} == *"git_is_installed"* ]]; then
+					required_checks+="git_is_installed "
+				fi
+			fi
+		done
 		# TODO: Add checks for git and git-lfs if using remote repos
 	done
 
@@ -931,9 +945,10 @@ relrepo_purge() {
 		local relrepo_full_path=${relrepo_local_path}/${dir}
 			case ${relrepo_kind} in
 			git)
+				git lfs install # Install GIT LFS if not setup already
 				local files=$(find ${relrepo_full_path} -type f -size +${size_limit}M)
 				for file in ${files}; do
-					git-lfs track ${file}
+					git-lfs track --relative ${file}
 				done
 				;;
 			esac
