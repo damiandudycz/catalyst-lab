@@ -974,11 +974,16 @@ build_stages() {
 
 			# Perform build
 			{
+jdaslkj &&
 				catalyst $args &&
 				build_completed=true &&
 				builds_status[${i}]=success &&
 				echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
-			} || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
+			} || {
+				echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." &&
+				builds_status[${i}]=failure &&
+				disable_branch ${i}
+			}
 
 
 		elif [[ ${stages[${i},kind]} = download ]]; then
@@ -993,7 +998,11 @@ build_stages() {
 				build_completed=true &&
 				builds_status[${i}]=success &&
 				echo -e "${color_green}Stage download completed: ${color_yellow}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
-			} || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
+			} || {
+				echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." &&
+				builds_status[${i}]=failure &&
+				disable_branch ${i}
+			}
 
 		elif [[ ${stages[${i},kind]} = binhost ]]; then
 			echo -e "${color_turquoise}Building packages in stage: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}"
@@ -1007,7 +1016,11 @@ build_stages() {
 				build_completed=true &&
 				builds_status[${i}]=success &&
 				echo -e "${color_green}Stage build completed: ${color_purple}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
-			} || (echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." && disable_branch ${i})
+			} || {
+				echo_color ${color_orange_bold} "Warning! Stage /${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} failed. Disabling branch." &&
+				builds_status[${i}]=failure &&
+				disable_branch ${i}
+			}
 		fi
 
 		move_relrepos ${i}
@@ -1689,9 +1702,11 @@ purge_old_builds_and_isos() {
 # Display status of builds after finished.
 report_status() {
 	echo_color ${color_turquoise_bold} "[ Build report ]"
-	for index in ${!builds_status[@]}; do
 
+	local index; for (( index=0; index<${stages_count}; index++ )); do
 		local status=${builds_status[${index}]}
+		[[ -z ${status} ]] && [[ ${stages[${index},rebuild]} = true ]] && status=disabled # Mark not started jobs as disabled
+		[[ -z ${status} ]] && continue
 
 		if [[ ${stages[${index},kind]} = build ]]; then
 			local color=${color_turquoise}
@@ -1711,8 +1726,9 @@ report_status() {
 			local color_status=${color_nc}
 		fi
 
-		local display_name="${stages[${index},platform]}/${stages[${index},release]}/${color}${stages[${index},stage]} ${color_gray}${stages[${index},timestamp_generated]} ${color_nc}[${color_status}${status}${color_nc}]"
-		echo -e "${displa_name}"
+		local status_padded="[${color_status}$(printf "%-8s" "${status}")${color_nc}]"
+		local display_name="${status_padded} ${stages[${index},platform]}/${stages[${index},release]}/${color}${stages[${index},stage]} ${color_nc}"
+		echo -e "${display_name}"
 	done
 	echo ""
 }
