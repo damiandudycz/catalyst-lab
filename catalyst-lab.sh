@@ -974,7 +974,6 @@ build_stages() {
 
 			# Perform build
 			{
-jdaslkj &&
 				catalyst $args &&
 				build_completed=true &&
 				builds_status[${i}]=success &&
