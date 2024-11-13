@@ -1703,6 +1703,7 @@ purge_old_builds_and_isos() {
 report_status() {
 	echo_color ${color_turquoise_bold} "[ Build report ]"
 
+	local message=""
 	local index; for (( index=0; index<${stages_count}; index++ )); do
 		local status=${builds_status[${index}]}
 		[[ -z ${status} ]] && [[ ${stages[${index},rebuild]} = true ]] && status=disabled # Mark not started jobs as disabled
@@ -1728,8 +1729,9 @@ report_status() {
 
 		local status_padded="[${color_status}$(printf "%-8s" "${status}")${color_nc}]"
 		local display_name="${status_padded} ${stages[${index},platform]}/${stages[${index},release]}/${color}${stages[${index},stage]} ${color_nc}"
-		echo -e "${display_name}"
+		[[ -n ${message} ]] && message="${message}\n${display_name}" || message="${display_name}"
 	done
+	echo -e "${message}"
 	echo ""
 }
 
