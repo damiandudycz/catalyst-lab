@@ -944,9 +944,9 @@ relrepo_mark_lfs() {
 	case ${relrepo_kind} in
 		git)
 			git lfs install > /dev/null # Install GIT LFS if not setup already
-			local files=$(find ${relrepo_full_path} -type f -size +${size_limit}M)
+			local files=$(find ${relrepo_full_path} -type f -size +${size_limit}M -printf '%P\n')
 			for file in ${files}; do
-				git-lfs track --relative ${file}
+				git-lfs track ${file}
 			done
 			;;
 	esac
