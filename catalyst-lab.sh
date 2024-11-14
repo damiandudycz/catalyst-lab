@@ -949,6 +949,7 @@ relrepo_mark_lfs() {
 			local files=$(find ${relrepo_full_path} -type f -size +${size_limit}M -printf '%P\n')
 			for file in ${files}; do
 				git-lfs track ${file}
+				git add .gitattributes > /dev/null
 			done
 			;;
 	esac
