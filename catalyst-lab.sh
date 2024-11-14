@@ -388,11 +388,11 @@ prepare_releng() {
 	# If it exists and FETCH_FRESH_RELENG is set, pull changes.
 	if [[ ! -d ${releng_path} ]]; then
 		echo_color ${color_turquoise_bold} "[ Downloading releng ]"
-		git clone https://github.com/gentoo/releng.git ${releng_path} --depth 1 || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." && exit 1)
+		git clone https://github.com/gentoo/releng.git ${releng_path} --depth 1 || echo_color ${color_red} "Failed to clone repository. Check if you have required access." && return 1
 		echo ""
 	elif [[ ${FETCH_FRESH_RELENG} = true ]]; then
 		echo_color ${color_turquoise_bold} "[ Updating releng ]"
-		git -C ${releng_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." && exit 1)
+		git -C ${releng_path} pull || echo_color ${color_red} "Failed to pull repository. Check if you have required access." && return 1
 		echo ""
 	fi
 }
@@ -427,19 +427,19 @@ fetch_repos() {
 					# If location doesn't exists yet - clone repository
 					echo -e "${color_turquoise}Clonning repo: ${color_yellow}${repo_url}${color_nc}"
 					mkdir -p ${repo_local_path}
-					git clone ${repo_url} ${repo_local_path} --depth 1 || (echo_color ${color_red} "Failed to clone repository. Check if you have required access." && exit 1)
+					git clone ${repo_url} ${repo_local_path} --depth 1 || echo_color ${color_red} "Failed to clone repository. Check if you have required access." && exit 1
 					echo ""
 				elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
 					# If it exists - pull repository
 					echo -e "${color_turquoise}Pulling repo: ${color_yellow}${repo_url}${color_nc}"
-					git -C ${repo_local_path} pull || (echo_color ${color_red} "Failed to pull repository. Check if you have required access." && exit 1)
+					git -C ${repo_local_path} pull || echo_color ${color_red} "Failed to pull repository. Check if you have required access." && exit 1
 					echo ""
 				fi
 				;;
 			rsync)
 				echo -e "${color_turquoise}Syncing repo: ${color_yellow}${repo_url}${color_nc}"
 				[[ ! -d ${repo_local_path} ]] && mkdir -p ${repo_local_path}
-				rsync ${RSYNC_OPTIONS} ${ssh_username}@${repo_url}/ ${repo_local_path}/ || (echo_color ${color_red} "Failed to sync repository. Check if you have required access." && exit 1)
+				rsync ${RSYNC_OPTIONS} ${ssh_username}@${repo_url}/ ${repo_local_path}/ || echo_color ${color_red} "Failed to sync repository. Check if you have required access." && exit 1
 				echo ""
 				;;
 			local) ;; # Skip local binrepos
@@ -674,7 +674,7 @@ EOF
 				file=${download_path}
 				[[ -f \${file} ]] && echo 'File already exists' && exit
 				mkdir -p ${download_dir}
-				trap '[[ -f \${file} ]] && rm -f \${file}' EXIT INT
+				trap '[[ -f \${file} ]] && rm -f \${file}' EXIT SIGINT
 				wget ${stages[${i},url]} -O \${file} --progress=dot:mega || exit 1
 				trap - EXIT
 EOF
@@ -736,8 +736,8 @@ EOF
 				cp -ru ${portage_path_work}/* ${build_work_path}/etc/portage/ || exit 1
 
 				# Set common-flags, chost and use flags.
-				[[ -n "${common_flags}" ]] && ( echo "Setting COMMON_FLAGS: ${common_flags}" && sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
-				[[ -n "${chost}" ]] && ( echo "Setting CHOST: ${chost}" && sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf || exit 1 )
+				[[ -n "${common_flags}" ]] && { echo "Setting COMMON_FLAGS: ${common_flags}" && sed -i 's|^COMMON_FLAGS=.*$|COMMON_FLAGS="${common_flags}"|' ${build_work_path}/etc/portage/make.conf || exit 1; }
+				[[ -n "${chost}" ]] && { echo "Setting CHOST: ${chost}" && sed -i 's|^CHOST=.*$|CHOST="${chost}"|' ${build_work_path}/etc/portage/make.conf || exit 1; }
 				[[ -n "${use}" ]] && echo "Setting USE flags: ${use}" && echo "USE=\\"\\\${USE} ${use}\\"" >> ${build_work_path}/etc/portage/make.conf
 
 				# Extract portage snapshot.
@@ -761,7 +761,7 @@ EOF
 
 				# Bind mount binrepo to /var/cache/binpkgs to allow using and building packages for the binrepo.
 				echo "Binding binhost directory: ${binrepo_path}"
-				[[ ! -e ${binrepo_path} ]] && ( mkdir -p ${binrepo_path} || exit 1 ) # If binrepo path doesn't exists, create it
+				[[ ! -e ${binrepo_path} ]] && { mkdir -p ${binrepo_path} || exit 1; } # If binrepo path doesn't exists, create it
 				mkdir -p ${build_work_path}/var/cache/binpkgs || exit 1
 				mount --bind ${binrepo_path} ${build_work_path}/var/cache/binpkgs || exit 1
 				# Bind overlay repos.
@@ -790,7 +790,7 @@ EOF
 
 				# Bind mount resolv.conf for DNS resolution
 				echo "Binding resolv.conf"
-				[[ ! -f ${build_work_path}/etc/resolv.conf ]] && ( touch ${build_work_path}/etc/resolv.conf || exit 1 )
+				[[ ! -f ${build_work_path}/etc/resolv.conf ]] && { touch ${build_work_path}/etc/resolv.conf || exit 1; }
 				mount --bind /etc/resolv.conf ${build_work_path}/etc/resolv.conf || exit 1
 
 				# Trap to ensure cleanup
@@ -1094,13 +1094,13 @@ move_relrepos() {
 	[[ -z ${index} ]] && echo_color ${color_turquoise_bold} "[ Collecting latest releases ]"
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		[[ -z ${index} ]] || [[ ${index} = ${i} ]] || continue # Filter index if provided
-		[[ ${stages[${i},selected]} = true ]] || ( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) || continue # Only upload selected repos or rebild if building now
+		[[ ${stages[${i},selected]} = true ]] || [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] || continue # Only upload selected repos or rebild if building now
 		[[ -n ${stages[${i},relrepo]} ]] || continue # Ignore remote download jobs (or other jobs without relrepo)
 		local relrepo_local_path=$(repo_local_path ${stages[${i},relrepo]})
 		local relrepo_path=${stages[${i},relrepo_path]}
 		# Determine if using new build or existing
-		( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) && local used_product=${stages[${i},product]} || local used_product=${stages[${i},latest_build]}
-		( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) && local used_timestamp=${stages[${i},timestamp_generated]} || local used_timestamp=${stages[${i},timestamp_latest]}
+		{ [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] } && local used_product=${stages[${i},product]} || local used_product=${stages[${i},latest_build]}
+		{ [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] } && local used_timestamp=${stages[${i},timestamp_generated]} || local used_timestamp=${stages[${i},timestamp_latest]}
 		if [[ -n ${used_product} ]] && [[ -n ${used_timestamp} ]]; then # Skip if no timestamp determined to upload
 			local relrepo_subpath=$(echo ${relrepo_path} | sed "s|@TIMESTAMP@|${used_timestamp}|")
 			local relrepo_full_path=${relrepo_local_path}/${relrepo_subpath}
@@ -1119,8 +1119,8 @@ move_relrepos() {
 			done
 			[[ ${include} = true ]] && relrepo_changed_directories[${i}]="${relrepo_changed_directories[${i}]} ${relrepo_subpath}"
 		fi
-		( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) && local used_product_iso=${stages[${i},product_iso]} || local used_product_iso=${stages[${i},latest_iso]}
-		( [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] ) && local used_timestamp_iso=${stages[${i},timestamp_generated]} || local used_timestamp_iso=${stages[${i},timestamp_iso_latest]}
+		{ [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] } && local used_product_iso=${stages[${i},product_iso]} || local used_product_iso=${stages[${i},latest_iso]}
+		{ [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] } && local used_timestamp_iso=${stages[${i},timestamp_generated]} || local used_timestamp_iso=${stages[${i},timestamp_iso_latest]}
 		if [[ -n ${used_product_iso} ]] && [[ -n ${used_timestamp_iso} ]]; then # Skip if no timestamp determined to upload
 			local relrepo_subpath=$(echo ${relrepo_path} | sed "s|@TIMESTAMP@|${used_timestamp_iso}|")
 			local relrepo_full_path=${relrepo_local_path}/${relrepo_subpath}
@@ -1438,10 +1438,10 @@ is_stage_selected() {
 		if [[ -z ${exp_stage} ]] || [[ ${stage} == ${exp_stage} ]]; then
 			local fits_stage=true
 		fi
-		if ( [[ -z ${exp_stage} ]] && [[ -z ${exp_release} ]] ) || [[ ${release} == ${exp_release} ]]; then
+		if { [[ -z ${exp_stage} ]] && [[ -z ${exp_release} ]] } || [[ ${release} == ${exp_release} ]]; then
 			local fits_release=true
 		fi
-		if ( [[ -z ${exp_stage} ]] && [[ -z ${exp_release} ]] && [[ -z ${exp_platform} ]] ) || [[ ${platform} == ${exp_platform} ]]; then
+		if { [[ -z ${exp_stage} ]] && [[ -z ${exp_release} ]] && [[ -z ${exp_platform} ]] } || [[ ${platform} == ${exp_platform} ]]; then
 			local fits_platform=true
 		fi
 		local should_include=$([[ ${fits_platform} == true && ${fits_release} == true && ${fits_stage} == true ]] && echo true || echo false)
@@ -1491,7 +1491,7 @@ repo_kind() {
 	local repo=${1}
 	# local, git, rsync
 	local repo_kind=$(echo ${repo} | grep -oP '(?<=^\[)[^]]+(?=\])')
-	if [[ -z ${repo_kind} ]] && ([[ ${repo} == http://* || ${repo} == https://* || ${repo} == git@* ]]); then
+	if [[ -z ${repo_kind} ]] && { [[ ${repo} == http://* || ${repo} == https://* || ${repo} == git@* ]] }; then
 		# Assume git repo for URLs
 		repo_kind=git
 	fi
@@ -1905,7 +1905,7 @@ while [ $# -gt 0 ]; do case ${1} in
 	*) selected_stages_templates+=("${1}");;       # Add selected stages.
 esac; shift; done
 
-trap "echo ''; report_status; exit 1" SIGINT
+trap "echo ''; report_status" SIGINT
 
 # Setup logging
 [[ ${PREPARE} = true ]] && mkdir -p $(dirname ${log_path}) && exec > >(tee -a ${log_path}) 2>&1
