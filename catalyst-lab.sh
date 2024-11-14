@@ -604,8 +604,8 @@ prepare_stages() {
 					[[ ! -f ${stage_fsscript_path_work} ]] && touch ${stage_fsscript_path_work} # Create if doesnt exists
 					cat <<EOF | sed 's/^[ \t]*//g' | tee -a ${stage_fsscript_path_work} > /dev/null
 						# Rebuild @world to make sure profile changes are included
-						emerge --changed-use --update --deep --usepkg --buildpkg --with-bdeps=y --quiet @world
-						emerge --depclean
+						emerge --changed-use --update --deep --usepkg --buildpkg --with-bdeps=y --color=y --quiet @world
+						emerge --depclean --color=y
 EOF
 				fi
 			fi
@@ -622,7 +622,7 @@ EOF
 			# Update seed.
 			if [[ ${stages[${i},target]} = stage1 ]]; then
 				set_spec_variable_if_missing ${stage_info_path_work} update_seed yes
-				set_spec_variable_if_missing ${stage_info_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg --with-bdeps=y @system @world"
+				set_spec_variable_if_missing ${stage_info_path_work} update_seed_command "--changed-use --update --deep --usepkg --buildpkg --with-bdeps=y --color=y @system @world"
 			fi
 
 			# LiveCD - stage1 specific default values.
@@ -675,7 +675,7 @@ EOF
 				[[ -f \${file} ]] && echo 'File already exists' && exit
 				mkdir -p ${download_dir}
 				trap '[[ -f \${file} ]] && rm -f \${file}' EXIT INT
-				wget ${stages[${i},url]} -O \${file} || exit 1
+				wget ${stages[${i},url]} -O \${file} --progress=dot:mega || exit 1
 				trap - EXIT
 EOF
 			chmod +x ${download_script_path_work}
@@ -823,6 +823,7 @@ EOF
 						--update
 						--deep
 						--keep-going
+						--color=y
 					)
 					output=\$(emerge \${emerge_args[@]} \${package} -pv 2>/dev/null)
 					if [[ \$? -ne 0 ]]; then
@@ -849,6 +850,7 @@ EOF
 						--keep-going
 						--quiet
 						--verbose
+						--color=y
 					)
 					echo "Building packages"
 					echo "emerge \${emerge_args[@]} \${packages_to_emerge[@]}"
@@ -1731,6 +1733,7 @@ report_status() {
 		[[ -n ${message} ]] && message="${message}\n${display_name}" || message="${display_name}"
 	done
 	echo -e "${message}"
+	echo -e "${message}" > ${report_path}
 	echo ""
 }
 
@@ -1876,6 +1879,8 @@ readonly catalyst_builds_path=${catalyst_path}/builds
 readonly catalyst_usr_path=/usr/share/catalyst
 readonly work_path=${tmp_path}/${timestamp}
 readonly binrepo_purge_script_path=${work_path}/binrepo_purge.sh
+readonly log_path=${work_path}/build.log
+readonly report_path=${work_path}/report.log
 
 # Create required folders if don't exists
 if [[ ! -d ${catalyst_builds_path} ]]; then
@@ -1901,6 +1906,9 @@ while [ $# -gt 0 ]; do case ${1} in
 esac; shift; done
 
 trap "echo ''; report_status; exit 1" SIGINT
+
+# Setup logging
+[[ ${PREPARE} = true ]] && mkdir -p $(dirname ${log_path}) && exec > >(tee -a ${log_path}) 2>&1
 
 # Main sanity check:
 readonly qemu_is_installed=$( which qemu-img >/dev/null 2>&1 && echo true || echo false )
