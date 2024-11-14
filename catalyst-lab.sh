@@ -388,11 +388,11 @@ prepare_releng() {
 	# If it exists and FETCH_FRESH_RELENG is set, pull changes.
 	if [[ ! -d ${releng_path} ]]; then
 		echo_color ${color_turquoise_bold} "[ Downloading releng ]"
-		git clone https://github.com/gentoo/releng.git ${releng_path} --depth 1 || echo_color ${color_red} "Failed to clone repository. Check if you have required access." && return 1
+		git clone https://github.com/gentoo/releng.git ${releng_path} --depth 1 || { echo_color ${color_red} "Failed to clone repository. Check if you have required access." && return 1; }
 		echo ""
 	elif [[ ${FETCH_FRESH_RELENG} = true ]]; then
 		echo_color ${color_turquoise_bold} "[ Updating releng ]"
-		git -C ${releng_path} pull || echo_color ${color_red} "Failed to pull repository. Check if you have required access." && return 1
+		git -C ${releng_path} pull || { echo_color ${color_red} "Failed to pull repository. Check if you have required access." && return 1; }
 		echo ""
 	fi
 }
@@ -427,19 +427,19 @@ fetch_repos() {
 					# If location doesn't exists yet - clone repository
 					echo -e "${color_turquoise}Clonning repo: ${color_yellow}${repo_url}${color_nc}"
 					mkdir -p ${repo_local_path}
-					git clone ${repo_url} ${repo_local_path} --depth 1 || echo_color ${color_red} "Failed to clone repository. Check if you have required access." && exit 1
+					git clone ${repo_url} ${repo_local_path} --depth 1 || { echo_color ${color_red} "Failed to clone repository. Check if you have required access." && exit 1; }
 					echo ""
 				elif [[ ${FETCH_FRESH_REPOS} = true ]]; then
 					# If it exists - pull repository
 					echo -e "${color_turquoise}Pulling repo: ${color_yellow}${repo_url}${color_nc}"
-					git -C ${repo_local_path} pull || echo_color ${color_red} "Failed to pull repository. Check if you have required access." && exit 1
+					git -C ${repo_local_path} pull || { echo_color ${color_red} "Failed to pull repository. Check if you have required access." && exit 1; }
 					echo ""
 				fi
 				;;
 			rsync)
 				echo -e "${color_turquoise}Syncing repo: ${color_yellow}${repo_url}${color_nc}"
 				[[ ! -d ${repo_local_path} ]] && mkdir -p ${repo_local_path}
-				rsync ${RSYNC_OPTIONS} ${ssh_username}@${repo_url}/ ${repo_local_path}/ || echo_color ${color_red} "Failed to sync repository. Check if you have required access." && exit 1
+				rsync ${RSYNC_OPTIONS} ${ssh_username}@${repo_url}/ ${repo_local_path}/ || { echo_color ${color_red} "Failed to sync repository. Check if you have required access." && exit 1; }
 				echo ""
 				;;
 			local) ;; # Skip local binrepos
