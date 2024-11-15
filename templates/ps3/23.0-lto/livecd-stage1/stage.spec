@@ -38,31 +38,23 @@ packages:
 	net-wireless/wpa_supplicant
 	sys-apps/busybox
 	sys-apps/ethtool
-	sys-apps/fxload
 	sys-apps/gptfdisk
 	sys-apps/hdparm
-	sys-apps/ibm-powerpc-utils
 	sys-apps/ipmitool
 	sys-apps/iproute2
-	sys-apps/lsvpd
 	sys-apps/memtester
 	sys-apps/merge-usr
-	sys-apps/ppc64-diag
 	sys-apps/sdparm
 	sys-apps/usbutils
 	sys-auth/ssh-import-id
 	sys-block/parted
 	sys-fs/bcache-tools
 	sys-fs/btrfs-progs
-	sys-fs/cryptsetup
 	sys-fs/dosfstools
 	sys-fs/e2fsprogs
 	sys-fs/f2fs-tools
 	sys-fs/iprutils
 	sys-fs/lsscsi
-	sys-fs/lvm2
-	sys-fs/mdadm
-	sys-fs/mtd-utils
 	sys-fs/sysfsutils
 	sys-fs/xfsprogs
 	sys-libs/gpm
