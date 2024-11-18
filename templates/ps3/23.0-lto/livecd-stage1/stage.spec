@@ -50,6 +50,7 @@ packages:
 	sys-block/parted
 	sys-fs/bcache-tools
 	sys-fs/btrfs-progs
+	sys-fs/cryptsetup
 	sys-fs/dosfstools
 	sys-fs/e2fsprogs
 	sys-fs/f2fs-tools

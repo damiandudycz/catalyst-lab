@@ -939,7 +939,6 @@ relrepo_mark_lfs() {
 	local relrepo_local_path=$(repo_local_path ${stages[${index},relrepo]})
 	local relrepo_kind=$(repo_kind ${stages[${index},relrepo]})
 	local relrepo_url=$(repo_url ${stages[${index},relrepo]})
-	local relrepo_new_directories=$(echo "${relrepo_changed_directories[${index}]}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 
 	pushd ${relrepo_local_path} > /dev/null
 	local relrepo_full_path=${relrepo_local_path}/${dir_to_check}
@@ -1051,11 +1050,12 @@ upload_binrepos() {
 		local binrepo_local_path=$(repo_local_path ${stages[${i},binrepo]})
 		local binrepo_url=$(repo_url ${stages[${i},binrepo]})
 
+		binrepo_purge ${i}
+
 		case ${binrepo_kind} in
 		git)
 			[[ -d ${binrepo_local_path}/.git ]] || continue # Skip if this repo doesnt yet exists
 			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}/${stages[${i},binrepo_path]}${color_nc}"
-			binrepo_purge ${i}
 
 			# Check if there are changes to commit
 			local changes=false
@@ -1077,7 +1077,6 @@ upload_binrepos() {
 			;;
 		rsync)
 			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}/${stages[${i},binrepo_path]}${color_nc}"
-			binrepo_purge ${i}
 			rsync ${RSYNC_OPTIONS} ${binrepo_full_path}/ ${ssh_username}@${binrepo_url}/${stages[${i},binrepo_path]}/
 			echo ""
 			;;
@@ -1183,7 +1182,6 @@ upload_relrepos() {
 				;;
 			rsync)
 				echo -e "${color_turquoise}Uploading release: ${color_yellow}${relrepo_url}/${dir}${color_nc}"
-				relrepo_mark_lfs ${i} ${dir}
 				rsync ${RSYNC_OPTIONS} ${relrepo_full_path}/ ${ssh_username}@${relrepo_url}/${dir}/
 				echo ""
 				;;
