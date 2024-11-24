@@ -110,15 +110,16 @@ load_stages() {
 				local _binrepo_fslimit=${stage_values[binrepo_fslimit]:-${release_binrepo_fslimit:-${platform_binrepo_fslimit}}}
 				local _relrepo=${stage_values[relrepo]:-${release_relrepo:-${platform_relrepo}}}
 				local _relrepo_path=${stage_values[relrepo_path]:-${release_relrepo_path:-${platform_relrepo_path:-${_rel_type}/@TIMESTAMP@}}}
+				local _relrepo_path_metadata=${stage_values[relrepo_path_metadata]:-${release_relrepo_path_metadata:-${platform_relrepo_path_metadata:-${_rel_type}}}}
 				local _relrepo_fslimit=${stage_values[relrepo_fslimit]:-${release_relrepo_fslimit:-${platform_relrepo_fslimit}}}
 				local _version_stamp=${stage_values[version_stamp]:-$(echo ${stage} | sed -E 's/.*(^stage[1-4]|^livecd-stage[1-2]|^binhost)-(.*)/\2-@TIMESTAMP@/; t; s/.*/@TIMESTAMP@/')}
 				local _product=${_rel_type}/${_target}-${_subarch}-${_version_stamp}
 				local _product_format=${_product} # Stays the same the whole time, containing "@TIMESTAMP@" string for later comparsions
-				local _product_iso=$([[ ${_target} = livecd-stage2 ]] && echo ${_rel_type}/${stage_values[iso]:-install-${platform}-@TIMESTAMP@.iso} || echo "") # TODO: Use value from spec if set
+				local _product_iso=$([[ ${_target} = livecd-stage2 ]] && echo ${_rel_type}/${stage_values[iso]:-install-${_subarch}-@TIMESTAMP@} || echo "") # TODO: Use value from spec if set
 				local _product_iso_format=${_product_iso} # Stays the same the whole time, containing "@TIMESTAMP@" string for later comparsions
 				local _profile=${stage_values[profile]}
 				# Sanitize selected variables
-				local properties_to_sanitize=(rel_type version_stamp source_subpath product product_iso binrepo binrepo_path relrepo relrepo_path profile product_format product_iso_format)
+				local properties_to_sanitize=(rel_type version_stamp source_subpath product product_iso binrepo binrepo_path relrepo relrepo_path relrepo_path_metadata profile product_format product_iso_format)
 				for key in ${properties_to_sanitize[@]}; do
 					eval "_${key}=\$(sanitize_spec_variable ${platform} ${release} ${stage} ${platform_family} ${platform_basearch} ${_subarch} \"${_rel_type}\" \"\${_${key}}\")"
 				done
@@ -168,6 +169,7 @@ load_stages() {
 				stages[${stages_count},binrepo_fslimit]=${_binrepo_fslimit}
 				stages[${stages_count},relrepo]=${_relrepo}
 				stages[${stages_count},relrepo_path]=${_relrepo_path}
+				stages[${stages_count},relrepo_path_metadata]=${_relrepo_path_metadata}
 				stages[${stages_count},relrepo_fslimit]=${_relrepo_fslimit}
 				stages[${stages_count},version_stamp]=${_version_stamp}
 				stages[${stages_count},catalyst_conf]=${_catalyst_conf}
@@ -635,7 +637,7 @@ EOF
 				set_spec_variable_if_missing ${stage_info_path_work} type gentoo-release-minimal
 				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo_${stages[${i},platform]}
 				set_spec_variable_if_missing ${stage_info_path_work} fstype squashfs
-				set_spec_variable_if_missing ${stage_info_path_work} iso $(basename ${stages[${i},product_iso]})
+				set_spec_variable_if_missing ${stage_info_path_work} iso $(basename ${stages[${i},product_iso]}).iso
 			fi
 
 			# Stage4 specific keys
@@ -823,14 +825,15 @@ EOF
 						--update
 						--deep
 						--keep-going
+						--quiet
 						--color=y
 					)
-					output=\$(emerge \${emerge_args[@]} \${package} -pv 2>/dev/null)
+					output=\$(emerge \${emerge_args[@]} \${package} -pv 2>/dev/null | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g') # Sed remove colors
 					if [[ \$? -ne 0 ]]; then
 						echo -e '${color_orange}Warning! '\${package}' fails to emerge. Adjust portage configuration. Skipping.${color_nc}'
 						continue
 					fi
-					packages_to_emerge+=(\$(echo "\$output" | grep '\[ebuild.*\]' | sed -E "s/.*] ([^ ]+)(::.*)?/=\\1/"))
+					packages_to_emerge+=(\$(echo "\${output}" | grep "^\\[ebuild.*\\]" | sed -E "s/.*] ([^ ]+) .*/=\\1/"))
 				done
 				packages_to_emerge=(\$(echo \${packages_to_emerge[@]} | tr ' ' '\n' | sort -u | tr '\n' ' '))
 
@@ -1024,10 +1027,9 @@ build_stages() {
 			}
 		fi
 
-		move_relrepos ${i}
-
-		[[ ${build_completed} = true ]] && [[ ${UPLOAD_BINREPOS} = true ]] && upload_binrepos ${i}
+		[[ ${build_completed} = true ]] && move_relrepos ${i}
 		[[ ${build_completed} = true ]] && [[ ${UPLOAD_RELREPOS} = true ]] && upload_relrepos ${i}
+		[[ ${build_completed} = true ]] && [[ ${UPLOAD_BINREPOS} = true ]] && upload_binrepos ${i}
 
 	done
 
@@ -1117,6 +1119,7 @@ move_relrepos() {
 					ln -s ${dest} ${catalyst_builds_path}/${stages[${i},rel_type]}/${fname} || exit 1
 				fi
 			done
+			update_latest_release ${i} ${stages[${i},product_format]} ${used_timestamp} tar.xz
 			[[ ${include} = true ]] && relrepo_changed_directories[${i}]="${relrepo_changed_directories[${i}]} ${relrepo_subpath}"
 		fi
 		{ [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] } && local used_product_iso=${stages[${i},product_iso]} || local used_product_iso=${stages[${i},latest_iso]}
@@ -1137,10 +1140,30 @@ move_relrepos() {
 					ln -s ${dest} ${catalyst_builds_path}/${stages[${i},rel_type]}/${fname} || exit 1
 				fi
 			done
+			update_latest_release ${i} ${stages[${i},product_iso_format]} ${used_timestamp_iso} iso
 			[[ ${include} = true ]] && relrepo_changed_directories[${i}]="${relrepo_changed_directories[${i}]} ${relrepo_subpath}"
 		fi
 	done
 	echo ""
+}
+
+# Update latest-release.txt file for given stage and timestamp
+update_latest_release() {
+										
+# WIP
+	local index=${1}
+	local used_product_format=${2}
+	local used_timestamp=${3}
+	local extension=${4}
+	local relrepo_local_path=$(repo_local_path ${stages[${index},relrepo]})
+	local relrepo_path=${stages[${index},relrepo_path]}
+	local relrepo_path_metadata=${stages[${index},relrepo_path_metadata]}
+	local product_filename="$(basename $(echo ${used_product_format} | sed 's/@TIMESTAMP@/${used_timestamp}/')).${extension}"
+	local metadata_filename="latest-$(basename $(echo ${used_product_format//@TIMESTAMP@/} | sed 's/^-//;s/-$//')).txt"
+	local product_path=${relrepo_local_path}/${relrepo_path}/${product_filename}
+	local metadata_path=${relrepo_local_path}/${relrepo_path_metadata}/${metadata_filename}
+	echo "Update latest release metadata ${metadata_path} with ${used_timestamp}"
+										
 }
 
 # Upload releases to release repos.
@@ -1750,16 +1773,16 @@ fi
 declare PLATFORM_KEYS=( # Variables allowed in platform.conf
 	arch      repos
 	cpu_flags compression_mode
-	binrepo binrepo_path binrepo_fslimit
-	relrepo relrepo_path relrepo_fslimit
+	binrepo binrepo_fslimit binrepo_path
+	relrepo relrepo_fslimit relrepo_path relrepo_path_metadata
 	use
 )
 declare RELEASE_KEYS=( # Variables allowed in release.conf
 	repos
         common_flags chost
         cpu_flags compression_mode
-        binrepo binrepo_path binrepo_fslimit
-	relrepo relrepo_path relrepo_fslimit
+	binrepo binrepo_fslimit binrepo_path
+	relrepo relrepo_fslimit relrepo_path relrepo_path_metadata
 	use
 )
 declare STAGE_KEYS=( # Variables stored in stages[] for the script.
@@ -1782,8 +1805,8 @@ declare STAGE_KEYS=( # Variables stored in stages[] for the script.
 
 	treeish
 	repos
-	binrepo binrepo_path binrepo_fslimit
-	relrepo relrepo_path relrepo_fslimit
+	binrepo binrepo_fslimit binrepo_path
+	relrepo relrepo_fslimit relrepo_path relrepo_path_metadata
 	catalyst_conf compression_mode
 	packages use use_toml
 
