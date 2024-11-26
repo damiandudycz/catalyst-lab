@@ -5,7 +5,7 @@ gk_mainargs: --all-ramdisk-modules
 boot/kernel: @PLATFORM@
 boot/kernel/@PLATFORM@/distkernel: yes
 boot/kernel/@PLATFORM@/sources: sys-kernel/gentoo-kernel-ps3
-boot/kernel/@PLATFORM@/dracut_args: --xz --no-hostonly -a dmsquash-live -a mdraid -o btrfs -o crypt -o i18n -o usrmount -o lunmask -o qemu -o qemu-net -o nvdimm -o multipath -o resume
+boot/kernel/@PLATFORM@/dracut_args: --xz --no-hostonly -a dmsquash-live -o btrfs -o crypt -o i18n -o usrmount -o lunmask -o qemu -o qemu-net -o nvdimm -o multipath -o resume
 boot/kernel/@PLATFORM@/extraversion: @PLATFORM@
 boot/kernel/@PLATFORM@/use: -X
 
