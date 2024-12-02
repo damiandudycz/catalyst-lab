@@ -1052,15 +1052,14 @@ upload_binrepos() {
 		local binrepo_local_path=$(repo_local_path ${stages[${i},binrepo]})
 		local binrepo_url=$(repo_url ${stages[${i},binrepo]})
 
+		echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}/${stages[${i},binrepo_path]}${color_nc}"
 		binrepo_purge ${i}
 
 		case ${binrepo_kind} in
 		git)
 			[[ -d ${binrepo_local_path}/.git ]] || continue # Skip if this repo doesnt yet exists
-			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}/${stages[${i},binrepo_path]}${color_nc}"
 
 			# Check if there are changes to commit
-			local changes=false
 			if [[ -n $(git -C ${binrepo_local_path} status --porcelain ${binrepo_full_path}) ]]; then
 				git -C ${binrepo_local_path} add ${binrepo_full_path}
 				git -C ${binrepo_local_path} commit -m "Automatic update: ${timestamp}" --only ${binrepo_full_path}
@@ -1070,15 +1069,12 @@ upload_binrepos() {
 				else
 					echo -e "${color_orange}Warning! No write access to binrepo: ${color_yellow}${binrepo_url}${color_nc}"
 				fi
-				changes=true
-			fi
-			if [[ ${changes} = false ]]; then
+			else
 				echo "No local changes detected"
 			fi
 			echo ""
 			;;
 		rsync)
-			echo -e "${color_turquoise}Uploading binrepo: ${color_yellow}${binrepo_url}/${stages[${i},binrepo_path]}${color_nc}"
 			rsync ${RSYNC_OPTIONS} ${binrepo_full_path}/ ${ssh_username}@${binrepo_url}/${stages[${i},binrepo_path]}/
 			echo ""
 			;;
@@ -1090,6 +1086,7 @@ upload_binrepos() {
 
 # Move release files to relrepos.
 declare -A relrepo_changed_directories=()
+declare -A relrepo_latest_metadata_files=()
 move_relrepos() {
 	local index=${1} # If no index, all repos are uploaded.
 
@@ -1149,21 +1146,23 @@ move_relrepos() {
 
 # Update latest-release.txt file for given stage and timestamp
 update_latest_release() {
-										
-# WIP
 	local index=${1}
 	local used_product_format=${2}
 	local used_timestamp=${3}
 	local extension=${4}
 	local relrepo_local_path=$(repo_local_path ${stages[${index},relrepo]})
-	local relrepo_path=${stages[${index},relrepo_path]}
-	local relrepo_path_metadata=${stages[${index},relrepo_path_metadata]}
-	local product_filename="$(basename $(echo ${used_product_format} | sed 's/@TIMESTAMP@/${used_timestamp}/')).${extension}"
-	local metadata_filename="latest-$(basename $(echo ${used_product_format//@TIMESTAMP@/} | sed 's/^-//;s/-$//')).txt"
+	local relrepo_path=$(echo ${stages[${index},relrepo_path]} | sed "s/@TIMESTAMP@/${used_timestamp}/g")
+	local relrepo_path_metadata=$(echo ${stages[${index},relrepo_path_metadata]} | sed "s/@TIMESTAMP@/${used_timestamp}/g")
+	local product_filename=$(basename $(echo ${used_product_format} | sed "s/@TIMESTAMP@/${used_timestamp}/g")).${extension}
+	local metadata_filename=latest-$(basename $(echo ${used_product_format//@TIMESTAMP@/} | sed 's/^-//;s/-$//')).txt
 	local product_path=${relrepo_local_path}/${relrepo_path}/${product_filename}
 	local metadata_path=${relrepo_local_path}/${relrepo_path_metadata}/${metadata_filename}
-	echo "Update latest release metadata ${metadata_path} with ${used_timestamp}"
-										
+	local product_relative_path=$(realpath --relative-to="${relrepo_local_path}/${relrepo_path_metadata}" "${relrepo_local_path}/${relrepo_path}")/${product_filename}
+	local product_size=$(stat --format="%s" ${product_path})
+	local release_name=${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}
+	echo "Marking latest release of ${release_name} [${used_product_format}] as ${used_timestamp}"
+	echo "${product_relative_path} ${product_size}" > ${metadata_path}
+	relrepo_latest_metadata_files[${index}]+="${relrepo_latest_metadata_files[${index}]} ${metadata_path}"
 }
 
 # Upload releases to release repos.
@@ -1177,39 +1176,66 @@ upload_relrepos() {
 		local relrepo_kind=$(repo_kind ${stages[${i},relrepo]})
 		local relrepo_url=$(repo_url ${stages[${i},relrepo]})
 		local relrepo_new_directories=$(echo "${relrepo_changed_directories[${i}]}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+		local relrepo_new_metadata_files=$(echo "${relrepo_latest_metadata_files[$i]}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+		local relrepo_attributes_path=${relrepo_local_path}/.gitattributes
+		relrepo_changed_directories[${i}]=""
+		relrepo_latest_metadata_files[${i}]=""
+		[[ -z ${relrepo_new_directories} ]] && [[ -z ${relrepo_new_metadata_files} ]] && continue # Nothing new to upload
+
+		echo -e "${color_turquoise}Uploading release: ${color_yellow}${relrepo_url}/${dir}${color_nc}"
+
+		local git_upload=false
+
+		# Add release files
 		for dir in ${relrepo_new_directories}; do
 			local relrepo_full_path=${relrepo_local_path}/${dir}
 			case ${relrepo_kind} in
 			git)
 				[[ -d ${relrepo_local_path}/.git ]] || continue # Skip if this repo doesnt yet exists
-				echo -e "${color_turquoise}Uploading release: ${color_yellow}${relrepo_url}/${dir}${color_nc}"
 				relrepo_mark_lfs ${i} ${dir}
 
 				# Check if there are changes to commit
-				local changes=false
 				if [[ -n $(git -C ${relrepo_local_path} status --porcelain ${relrepo_full_path}) ]]; then
 					git -C ${relrepo_local_path} add ${relrepo_full_path}
-					git -C ${relrepo_local_path} commit -m "Automatic update: ${timestamp}" --only ${relrepo_full_path}
-					# Check for write access.
-					if repo_url=$(git -C ${relrepo_local_path} config --get remote.origin.url) && [[ ! ${repo_url} =~ ^https:// ]] && git -C ${relrepo_local_path} ls-remote &>/dev/null && git -C ${relrepo_local_path} push --dry-run &>/dev/null; then
-						git -C ${relrepo_local_path} push
-					else
-						echo -e "${color_orange}Warning! No write access to release repo: ${color_yellow}${relrepo_url}${color_nc}"
-					fi
-					changes=true
+					[[ -f ${relrepo_attributes_path} ]] && git -C ${relrepo_local_path} add ${relrepo_attributes_path}
+					git_upload=true
 				fi
-				if [[ ${changes} = false ]]; then
-					echo "No local changes detected"
-				fi
-				echo ""
 				;;
 			rsync)
-				echo -e "${color_turquoise}Uploading release: ${color_yellow}${relrepo_url}/${dir}${color_nc}"
 				rsync ${RSYNC_OPTIONS} ${relrepo_full_path}/ ${ssh_username}@${relrepo_url}/${dir}/
-				echo ""
 				;;
 			esac
 		done
+
+		# Add metadata files
+		for file in ${relrepo_new_metadata_files}; do
+			case ${relrepo_kind} in
+			git)
+				[[ -d ${relrepo_local_path}/.git ]] || continue # Skip if this repo doesnt yet exists
+
+				# Check if there are changes to commit
+				if [[ -n $(git -C ${relrepo_local_path} status --porcelain ${file}) ]]; then
+					git -C ${relrepo_local_path} add ${file}
+					git_upload=true
+				fi
+				;;
+			rsync)
+				# TODO: Upload rsync metadata file only here
+				rsync ${RSYNC_OPTIONS} ${relrepo_full_path}/ ${ssh_username}@${relrepo_url}/${dir}/
+				;;
+			esac
+		done
+
+		if [[ ${git_upload} = true ]]; then
+			git -C ${relrepo_local_path} commit -m "Automatic update: ${timestamp}" # --only ${relrepo_full_path} # Note: Cannot use --only when dealing with .gitattribues in separate directory
+			# Check for write access.
+			if repo_url=$(git -C ${relrepo_local_path} config --get remote.origin.url) && [[ ! ${repo_url} =~ ^https:// ]] && git -C ${relrepo_local_path} ls-remote &>/dev/null && git -C ${relrepo_local_path} push --dry-run &>/dev/null; then
+				git -C ${relrepo_local_path} push
+			else
+				echo -e "${color_orange}Warning! No write access to release repo: ${color_yellow}${relrepo_url}${color_nc}"
+			fi
+		fi
+
 	done
 	echo ""
 }
@@ -1635,7 +1661,7 @@ purge_old_builds_and_isos() {
 	local available_builds_files=$(find ${catalyst_builds_path} \( -type f -o -type l \) \( -name "*.tar.xz" -o -name "*.iso" \) -printf '%P\n')
 	local to_remove=()
 	local to_remove_in_relrepo=()
-	relrepo_changed_directories=() # Empty at this step, as it will be performed after previous changes were already uploaded.
+#	relrepo_changed_directories=() # Empty at this step, as it will be performed after previous changes were already uploaded.
 	for ((i=0; i<${stages_count}; i++)); do
 		[[ ! ${stages[${i},selected]} = true ]] && continue
 		# Collect files from catalyst
