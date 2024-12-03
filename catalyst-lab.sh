@@ -789,6 +789,7 @@ EOF
 						repo_mount_paths="\${repo_mount_paths},\${repo_mount_path}"
 					done
 				fi
+				repo_mount_paths=$(echo "${repo_mount_paths}" | sed 's/^,//') # Remove leading ","
 
 				# Bind mount resolv.conf for DNS resolution
 				echo "Binding resolv.conf"
@@ -796,7 +797,7 @@ EOF
 				mount --bind /etc/resolv.conf ${build_work_path}/etc/resolv.conf || exit 1
 
 				# Trap to ensure cleanup
-				trap 'umount -l ${build_work_path}/{dev/pts,dev,proc,sys,run,var/cache/binpkgs,etc/resolv.conf\${repo_mount_paths}}' EXIT
+				trap 'umount -l ${build_work_path}/{dev/pts,dev,proc,sys,run}; umount ${build_work_path}/var/cache/binpkgs; umount ${build_work_path}/etc/resolv.conf; [[ -n \${repo_mount_paths} ]] && umount \${repo_mount_paths}' EXIT
 
 				# Insert binhost-run script into chroot and run it
 				echo "Entering chroot environment"
@@ -815,24 +816,41 @@ EOF
 				echo 'Searching for packages to rebuild...'
 				declare packages_to_emerge=()
 
+				emerge_args_analyze=(
+					--buildpkg
+					--usepkg
+					--getbinpkg=n
+					--changed-use
+					--update
+					--deep
+					--keep-going
+					--quiet
+					--color=y
+				)
+
+				emerge_args_build=(
+					--buildpkg
+					--usepkg
+					--getbinpkg=n
+					--changed-use
+					--update
+					--deep
+					--keep-going
+					--quiet
+					--verbose
+					--color=y
+				)
+
 				for package in ${stages[${i},packages]}; do
 					echo "Analyzing: \${package}"
-					emerge_args=(
-						--buildpkg
-						--usepkg
-						--getbinpkg=n
-						--changed-use
-						--update
-						--deep
-						--keep-going
-						--quiet
-						--color=y
-					)
-					output=\$(emerge \${emerge_args[@]} \${package} -pv 2>/dev/null | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g') # Sed remove colors
+					output=\$(emerge \${emerge_args_analyze[@]} \${package} -pv 2>&1)
 					if [[ \$? -ne 0 ]]; then
 						echo -e '${color_orange}Warning! '\${package}' fails to emerge. Adjust portage configuration. Skipping.${color_nc}'
+						echo -e "\${output}"
+						echo ""
 						continue
 					fi
+					output=\$(echo "\${output}" | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g') # Sed remove colors
 					packages_to_emerge+=(\$(echo "\${output}" | grep "^\\[ebuild.*\\]" | sed -E "s/.*] ([^ ]+) .*/=\\1/"))
 				done
 				packages_to_emerge=(\$(echo \${packages_to_emerge[@]} | tr ' ' '\n' | sort -u | tr '\n' ' '))
@@ -843,24 +861,12 @@ EOF
 					for package in \${packages_to_emerge[@]}; do
 						echo '  '\${package}
 					done
-					emerge_args=(
-						--buildpkg
-						--usepkg
-						--getbinpkg=n
-						--changed-use
-						--update
-						--deep
-						--keep-going
-						--quiet
-						--verbose
-						--color=y
-					)
 					echo "Building packages"
 					echo "emerge \${emerge_args[@]} \${packages_to_emerge[@]}"
-					emerge \${emerge_args[@]} \${packages_to_emerge[@]} || exit 1
-					echo "All done"
+					emerge \${emerge_args_build[@]} \${packages_to_emerge[@]} || exit 1
+					echo -e "${color_green}All done${color_nc}"
 				else
-					echo 'Nothing to rebuild.'
+					echo -e "${color_green}Nothing to rebuild${color_nc}"
 				fi
 EOF
 			chmod +x ${binhost_script_path_work}-run
@@ -1094,6 +1100,7 @@ move_relrepos() {
 	local i; for (( i=0; i<${stages_count}; i++ )); do
 		[[ -z ${index} ]] || [[ ${index} = ${i} ]] || continue # Filter index if provided
 		[[ ${stages[${i},selected]} = true ]] || [[ ${stages[${i},rebuild]} = true ]] && [[ ${BUILD} = true ]] || continue # Only upload selected repos or rebild if building now
+		[[ ${stages[${i},kind]} = build ]] || continue
 		[[ -n ${stages[${i},relrepo]} ]] || continue # Ignore remote download jobs (or other jobs without relrepo)
 		local relrepo_local_path=$(repo_local_path ${stages[${i},relrepo]})
 		local relrepo_path=${stages[${i},relrepo_path]}
@@ -2013,3 +2020,4 @@ validate_stages
 # TODO: (N) Add validation that parent and children uses the same base architecture
 # TODO: (L) Make it possible to work with hubs (git based) - adding hub from github link, pulling automatically changes, registering in shared hub list, detecting name collisions.
 # TODO: (L) Validate if stage name starts with one of: stage[1-4], livecd-stage[1-2], binhost. Other names should be considered incorrect. Custom version stamp can still be set in stage.spec if needed.
+
