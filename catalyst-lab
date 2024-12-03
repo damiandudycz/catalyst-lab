@@ -312,6 +312,15 @@ load_stages() {
 
 	[[ ${DEBUG} = true ]] && echo "" || echo -ne "\r"
 
+	if [[ ${stages_count} -le 0 ]]; then
+		if [[ ${#selected_stages_templates[@]} -eq 0 ]]; then
+			echo_color ${color_red} "Templates not found in /etc/catalyst-lab/templates"
+		else
+			echo_color ${color_red} "Matching templates not found in /etc/catalyst-lab/templates"
+		fi
+		exit 1
+	fi
+
 	# List stages to build
 	echo_color ${color_turquoise_bold} "[ Stages taking part in this process ]"
 	draw_stages_tree
@@ -1905,21 +1914,9 @@ readonly color_purple='\033[38;5;135m'
 readonly color_purple_bold='\033[1;38;5;135m'
 readonly color_nc='\033[0m' # No Color
 
+[[ ! -d /etc/catalyst-lab/templates ]] && mkdir -p /etc/catalyst-lab/templates
 # Load/create config.
-if [[ ! -f /etc/catalyst-lab/catalyst-lab.conf ]]; then
-	# Create default config if not available
-	mkdir -p /etc/catalyst-lab
-	mkdir -p /etc/catalyst-lab/templates
-	cat <<EOF | sed 's/^[ \t]*//' | tee /etc/catalyst-lab/catalyst-lab.conf > /dev/null || exit 1
-		# Important! Replace with your username. This value is used when downloading/uploading rsync binrepos.
-		ssh_username=catalyst-lab
-
-		tmpfs_size=6
-		jobs=$(nproc)
-		load_average=$(nproc).0
-EOF
-	echo "Default config file created: /etc/catalyst-lab/catalyst-lab.conf" && echo ""
-fi
+[[ ! -f /etc/catalyst-lab/catalyst-lab.conf ]] && echo_color ${color_red} "Configuration file missing: /etc/catalyst-lab/catalyst-lab.conf" && exit 1
 source /etc/catalyst-lab/catalyst-lab.conf
 
 # Constants:
