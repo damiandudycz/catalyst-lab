@@ -4,18 +4,17 @@ DESCRIPTION="An automation tool designed to streamline the process of building v
 HOMEPAGE="https://github.com/damiandudycz/catalyst-lab"
 SRC_URI="https://github.com/damiandudycz/catalyst-lab/archive/refs/tags/v${PV}.zip"
 
-KEYWORDS="amd64 arm64 ~ppc64"
+KEYWORDS="~amd64 ~arm64"
 LICENSE="GPL-2"
-IUSE=""
+IUSE="qemu git binhost"
 SLOT="0"
 
 DEPEND="
 	dev-util/catalyst
-	app-emulation/qemu[static-user]
 	app-misc/yq
-	sys-fs/squashfs-tools
-	dev-vcs/git
-	dev-vcs/git-lfs
+	binhost? ( sys-fs/squashfs-tools )
+	qemu? ( app-emulation/qemu[static-user] )
+	git? ( dev-vcs/git dev-vcs/git-lfs )
 "
 RDEPEND="${DEPEND}"
 BDEPEND=""
