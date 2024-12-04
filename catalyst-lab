@@ -994,7 +994,7 @@ build_stages() {
 
 			# Perform build
 			{
-				catalyst $args &&
+				catalyst $args && catalyst --purgetmponly -f ${stage_info_path_work} && # Clean tmp after build
 				build_completed=true &&
 				builds_status[${i}]=success &&
 				echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
@@ -1929,6 +1929,7 @@ readonly templates_path=/etc/catalyst-lab/templates
 readonly repos_cache_path=${cache_path}/repos
 readonly catalyst_path=/var/tmp/catalyst
 readonly catalyst_builds_path=${catalyst_path}/builds
+readonly catalyst_tmp_path=${catalyst_path}/tmp
 readonly catalyst_usr_path=/usr/share/catalyst
 readonly work_path=${tmp_path}/${timestamp}
 readonly binhost_work_path=${var_tmp_path}/${timestamp}
