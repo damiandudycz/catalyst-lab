@@ -699,7 +699,7 @@ EOF
 
 			local binhost_script_path_work=${stage_path_work}/build-binpkgs.sh
 			local source_tarball_path=${catalyst_builds_path}/${stages[${i},source_subpath]}.tar.xz
-			local build_work_path=${work_path}/binhosts/${stages[${i},product]}
+			local build_work_path=${binhost_work_path}/binhosts/${stages[${i},product]}
 			local binrepo_path=$(repo_local_path ${stages[${i},binrepo]})/${stages[${i},binrepo_path]}
 
 			# Create new portage_work_path if doesn't exists.
@@ -1921,6 +1921,7 @@ source /etc/catalyst-lab/catalyst-lab.conf
 
 # Constants:
 readonly tmp_path=/tmp/catalyst-lab
+readonly var_tmp_path=/var/tmp/catalyst-lab
 readonly cache_path=/var/cache/catalyst-lab
 readonly releng_path=/opt/releng
 readonly seeds_url=https://gentoo.osuosl.org/releases/@ARCH_FAMILY@/autobuilds
@@ -1930,6 +1931,7 @@ readonly catalyst_path=/var/tmp/catalyst
 readonly catalyst_builds_path=${catalyst_path}/builds
 readonly catalyst_usr_path=/usr/share/catalyst
 readonly work_path=${tmp_path}/${timestamp}
+readonly binhost_work_path=${var_tmp_path}/${timestamp}
 readonly binrepo_purge_script_path=${work_path}/binrepo_purge.sh
 readonly log_path=${work_path}/build.log
 readonly report_path=${work_path}/report.log
@@ -2004,6 +2006,7 @@ validate_stages
 [[ ${PURGE} = true ]] && purge_old_builds_and_isos
 [[ ${PURGE} = true ]] && [[ ${UPLOAD_RELREPOS} = true ]] && upload_relrepos # Uploads changes after purge_old_builds_and_isos
 [[ ${BUILD} = true ]] && report_status
+[[ ${BUILD} = true ]] && [[ -d ${binhost_work_path} ]] && rm -rf ${binhost_work_path}
 [[ ! ${BUILD} = true ]] && echo "To build selected stages use --build flag."
 
 # TODO: (H) Add possibility to include shared files anywhere into spec files. So for example keep single list of basic installCD tools, and use them across all livecd specs.
