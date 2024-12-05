@@ -994,7 +994,7 @@ build_stages() {
 
 			# Perform build
 			{
-				catalyst $args && catalyst --purgetmponly -f ${stage_info_path_work} && # Clean tmp after build
+				catalyst $args &&
 				build_completed=true &&
 				builds_status[${i}]=success &&
 				echo -e "${color_green}Stage build completed: ${color_turquoise}${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]}${color_nc}" && echo ""
@@ -1042,6 +1042,7 @@ build_stages() {
 			}
 		fi
 
+		clean_catalyst_build_tmp ${i}
 		[[ ${build_completed} = true ]] && move_relrepos ${i}
 		[[ ${build_completed} = true ]] && [[ ${UPLOAD_RELREPOS} = true ]] && upload_relrepos ${i}
 		[[ ${build_completed} = true ]] && [[ ${UPLOAD_BINREPOS} = true ]] && upload_binrepos ${i}
@@ -1049,6 +1050,29 @@ build_stages() {
 	done
 
 	echo_color ${color_green} "Stage builds completed" && echo ""
+}
+
+# Cleanup tmp files from catalyst
+clean_catalyst_build_tmp() {
+	local index=${1}
+	local kind=${stages[${index},kind]}
+	[[ ${kind} = build ]] || return
+	local product=${stages[${index},product]}
+	local product_iso=${stages[${index},product_iso]}
+	local products=( ${product} ${product_iso} )
+	local stage_path_work=${work_path}/${stages[${index},platform]}/${stages[${index},release]}/${stages[${index},stage]}
+	local stage_info_path_work=${stage_path_work}/stage.spec
+
+	echo "Clean tmp stage files: ${product}"
+
+	catalyst --purgetmponly -f ${stage_info_path_work}
+
+	for product in "${products[@]}"; do
+		local product_path=${catalyst_tmp_path}/${product}
+		local product_path_lock=${product_path}.lock
+		local product_path_autoresume=$(dirname ${product_path})/.autoresume-$(basename ${product_path})
+		rm -rf ${product_path} ${product_path_lock} ${product_path_autoresume}
+	done
 }
 
 upload_binrepos() {
