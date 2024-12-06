@@ -7,14 +7,13 @@ boot/kernel/@PLATFORM@/distkernel: yes
 boot/kernel/@PLATFORM@/sources: sys-kernel/gentoo-kernel-ps3
 boot/kernel/@PLATFORM@/dracut_args: --xz --no-hostonly -a dmsquash-live -o btrfs -o crypt -o i18n -o usrmount -o lunmask -o qemu -o qemu-net -o nvdimm -o multipath -o resume
 boot/kernel/@PLATFORM@/extraversion: @PLATFORM@
-boot/kernel/@PLATFORM@/use: -X
 
 rcadd:
 	zram-init|boot
 	ps3vram-swap|boot
 	NetworkManager|default
- 	ntpd|default
-  	ntp-client|default
+	ntpd|default
+	ntp-client|default
 
 unmerge:
 	app-portage/gentoolkit

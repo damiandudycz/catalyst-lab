@@ -19,7 +19,7 @@ packages:
         sys-kernel/gentoo-kernel-ps3
         sys-kernel/linux-headers
 	x11-base/xorg-server
-	x11-misc/lightdm
+	x11-apps/xdm
 
 rcadd:
       	ps3vram-swap|boot
