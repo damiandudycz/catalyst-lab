@@ -1,25 +1,28 @@
+# Copyright 2022-2024 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
 EAPI=8
 
-DESCRIPTION="An automation tool designed to streamline the process of building various Gentoo release stages and binhost packages."
+DESCRIPTION="An automation tool for building Gentoo release stages and binhost packages."
 HOMEPAGE="https://github.com/damiandudycz/catalyst-lab"
-SRC_URI="https://github.com/damiandudycz/catalyst-lab/archive/refs/tags/v${PV}.zip -> catalyst-lab-${PV}.zip"
+SRC_URI="https://github.com/damiandudycz/catalyst-lab/archive/refs/tags/catalyst-lab-${PV}.zip"
 
-KEYWORDS="~amd64 ~arm64"
 LICENSE="GPL-2"
-IUSE="qemu git binhost"
 SLOT="0"
+KEYWORDS="~amd64 ~arm64"
+IUSE="qemu git binhost"
 
-DEPEND="
+RDEPEND="
 	dev-util/catalyst
 	app-misc/yq
 	binhost? ( sys-fs/squashfs-tools )
 	qemu? ( app-emulation/qemu[static-user] )
 	git? ( dev-vcs/git dev-vcs/git-lfs )
 "
-RDEPEND="${DEPEND}"
-BDEPEND=""
+BDEPEND="app-arch/unzip"
 
 src_install() {
+	# Install catalyst-lab
 	dodir /usr/bin
 	dobin "${WORKDIR}/catalyst-lab-${PV}/catalyst-lab"
 
