@@ -1101,7 +1101,7 @@ upload_binrepos() {
 			# Check if there are changes to commit
 			if [[ -n $(git -C ${binrepo_local_path} status --porcelain ${binrepo_full_path}) ]]; then
 				git -C ${binrepo_local_path} add ${binrepo_full_path}
-				git -C ${binrepo_local_path} commit -m "Automatic update: ${timestamp}" --only ${binrepo_full_path}
+				git -C ${binrepo_local_path} commit -m "Automatic update - binrepo: ${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} - ${timestamp}" --only ${binrepo_full_path}
 				# Check for write access.
 				if repo_url=$(git -C ${binrepo_local_path} config --get remote.origin.url) && [[ ! ${repo_url} =~ ^https:// ]] && git -C ${binrepo_local_path} ls-remote &>/dev/null && git -C ${binrepo_local_path} push --dry-run &>/dev/null; then
 					git -C ${binrepo_local_path} push
@@ -1267,7 +1267,7 @@ upload_relrepos() {
 		done
 
 		if [[ ${git_upload} = true ]]; then
-			git -C ${relrepo_local_path} commit -m "Automatic update: ${timestamp}" # --only ${relrepo_full_path} # Note: Cannot use --only when dealing with .gitattribues in separate directory
+			git -C ${relrepo_local_path} commit -m "Automatic update - release: ${stages[${i},platform]}/${stages[${i},release]}/${stages[${i},stage]} - ${timestamp}" # --only ${relrepo_full_path} # Note: Cannot use --only when dealing with .gitattribues in separate directory
 			# Check for write access.
 			if repo_url=$(git -C ${relrepo_local_path} config --get remote.origin.url) && [[ ! ${repo_url} =~ ^https:// ]] && git -C ${relrepo_local_path} ls-remote &>/dev/null && git -C ${relrepo_local_path} push --dry-run &>/dev/null; then
 				git -C ${relrepo_local_path} push
