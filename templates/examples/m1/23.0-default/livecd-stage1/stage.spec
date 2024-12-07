@@ -1,4 +1,5 @@
-source_subpath: @REL_TYPE@/stage3-@SUB_ARCH@-openrc-@TIMESTAMP@.tar.xz
+source_subpath: @REL_TYPE@/stage3-@SUB_ARCH@-openrc-@TIMESTAMP@
+repos: /var/db/repos/asahi
 
 use:
 	alsa
@@ -50,7 +51,7 @@ packages:
 	net-misc/rsync
 	net-misc/vconfig
 	net-proxy/dante
-	net-proxy/tsocks
+#	net-proxy/tsocks
 	net-wireless/b43-fwcutter
 	net-wireless/iw
 	net-wireless/wireless-tools
