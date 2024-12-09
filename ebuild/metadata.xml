@@ -15,13 +15,13 @@
 	</upstream>
 	<flags>
 		<use flag="qemu">
-			Enables support for building stages for different architecture using QEMU.
+			Building stages for different architecture using QEMU.
 		</use>
 		<use flag="git">
-			Enables support for uploading binpkgs and releases to git repository.
+			Uploading binpkgs and releases to git repository.
 		</use>
 		<use flag="binhost">
-			Enables support for binhost targets for build selected packages.
+			Binhost targets support to build selected packages.
 		</use>
 	</flags>
 </pkgmetadata>
