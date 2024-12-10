@@ -3,7 +3,8 @@ repos: /var/db/repos/asahi
 
 bootargs: dokeymap
 fstype: squashfs
-gk_mainargs: --all-ramdisk-modules --firmware
+gk_mainargs: --all-ramdisk-modules
+#gk_mainargs: --all-ramdisk-modules --firmware
 type: gentoo-release-minimal
 volid: Gentoo-arm64-@TIMESTAMP@
 
