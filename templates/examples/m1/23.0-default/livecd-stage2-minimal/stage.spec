@@ -60,7 +60,7 @@ unmerge:
 	sys-devel/gcc-config
 	sys-devel/gettext
 	sys-devel/gnuconfig
-	sys-devel/llvm
+	llvm-core/llvm
 	sys-devel/m4
 	dev-build/make
 	sys-devel/patch

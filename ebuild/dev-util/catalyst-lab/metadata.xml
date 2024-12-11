@@ -13,15 +13,9 @@
 		<remote-id type="github">damiandudycz/catalyst-lab</remote-id>
 		<bugs-to>https://github.com/damiandudycz/catalyst-lab/issues</bugs-to>
 	</upstream>
-	<flags>
-		<use flag="qemu">
-			Building stages for different architecture using QEMU.
-		</use>
-		<use flag="git">
-			Uploading binpkgs and releases to git repository.
-		</use>
-		<use flag="binhost">
-			Binhost targets support to build selected packages.
-		</use>
-	</flags>
+	<use>
+		<flag name="qemu">Building stages for different architecture using QEMU.</flag>
+		<flag name="git">Uploading binpkgs and releases to git repository.</flag>
+		<flag name="binhost">Binhost targets support to build selected packages.</flag>
+	</use>
 </pkgmetadata>
