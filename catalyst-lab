@@ -1042,6 +1042,7 @@ build_stages() {
 			}
 		fi
 
+		collect_error_logs ${i}
 		clean_catalyst_build_tmp ${i}
 		[[ ${build_completed} = true ]] && move_relrepos ${i}
 		[[ ${build_completed} = true ]] && [[ ${UPLOAD_RELREPOS} = true ]] && upload_relrepos ${i}
@@ -1050,6 +1051,38 @@ build_stages() {
 	done
 
 	echo_color ${color_green} "Stage builds completed" && echo ""
+}
+
+# Copies packages build error logs for given stage
+# NOTE: This will not work when using tmpfs for catalyst builds, as portage is mounted to tmpfs then.
+collect_error_logs() {
+	local index=${1}
+	local status=${builds_status[${index}]}
+	[[ ${status} = failure ]] || return
+	local kind=${stages[${index},kind]}
+	[[ ${kind} = build ]] || [[ ${kind} = binhost ]] || return
+
+	local product=${stages[${index},product]}
+	[[ ${kind} = build ]] && local product_path_work=${catalyst_tmp_path}/${product}
+	[[ ${kind} = binhost ]] && local product_path_work=${work_path}/${product}
+	local portage_work_path=${product_path_work}/var/tmp/portage
+	local stage_bugs_path=${bugs_path}/${stages[${index},platform]}/${stages[${index},release]}/${stages[${index},stage]}
+
+	echo_color ${color_orange} "Collecting error logs: ${stages[${index},product]}"
+
+	for category in $(ls -A ${portage_work_path}); do
+		for package in $(ls -A ${portage_work_path}/${category}); do
+			local full_package=${category}/${package}
+			local build_log_path=${portage_work_path}/${full_package}/temp/build.log
+			local environment_path=${portage_work_path}/${full_package}/temp/environment
+			package_bugs_path=${stage_bugs_path}/${full_package}
+			mkdir -p ${package_bugs_path}
+			cp ${build_log_path} ${package_bugs_path}/build.log
+			cp ${environment_path} ${package_bugs_path}/environment
+		done
+	done
+	echo "Bug reports collected at: ${stage_bugs_path}"
+	echo ""
 }
 
 # Cleanup tmp files from catalyst
@@ -1960,6 +1993,7 @@ readonly binhost_work_path=${var_tmp_path}/${timestamp}
 readonly binrepo_purge_script_path=${work_path}/binrepo_purge.sh
 readonly log_path=${work_path}/build.log
 readonly report_path=${work_path}/report.log
+readonly bugs_path=${work_path}/bugs
 
 # Create required folders if don't exists
 if [[ ! -d ${catalyst_builds_path} ]]; then
