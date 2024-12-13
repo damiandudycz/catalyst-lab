@@ -1075,10 +1075,12 @@ collect_error_logs() {
 			local full_package=${category}/${package}
 			local build_log_path=${portage_work_path}/${full_package}/temp/build.log
 			local environment_path=${portage_work_path}/${full_package}/temp/environment
+			local config_log_path=$(find ${portage_work_path}/${full_package}/work/*/config.log)
 			package_bugs_path=${stage_bugs_path}/${full_package}
 			mkdir -p ${package_bugs_path}
-			cp ${build_log_path} ${package_bugs_path}/build.log
-			cp ${environment_path} ${package_bugs_path}/environment
+			[[ -f ${build_log_path} ]] && cp ${build_log_path} ${package_bugs_path}/build.log
+			[[ -f ${environment_path} ]]  && cp ${environment_path} ${package_bugs_path}/environment
+			[[ -n ${config_log_path} ]] && cp ${config_log_path} ${package_bugs_path}/config.log
 		done
 	done
 	echo "Bug reports collected at: ${stage_bugs_path}"
