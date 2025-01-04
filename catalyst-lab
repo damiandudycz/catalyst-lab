@@ -1637,7 +1637,7 @@ repo_local_path() {
 		echo ${repos_cache_path}/${repo_kind}_${local_name}
 		;;
 	local)
-		echo ${repository}
+		echo ${repo_url}
 		;;
 	*)	# Unsupported type of repository, just return it's full value.
 		echo ${repository}
