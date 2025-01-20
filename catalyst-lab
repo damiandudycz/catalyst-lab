@@ -644,7 +644,7 @@ EOF
 			# LiveCD - stage2 specific default values.
 			if [[ ${stages[${i},target]} = livecd-stage2 ]]; then
 				set_spec_variable_if_missing ${stage_info_path_work} type gentoo-release-minimal
-				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo_${stages[${i},platform]}
+				set_spec_variable_if_missing ${stage_info_path_work} volid Gentoo-${stages[${i},platform]}
 				set_spec_variable_if_missing ${stage_info_path_work} fstype squashfs
 				set_spec_variable_if_missing ${stage_info_path_work} iso $(basename ${stages[${i},product_iso]}).iso
 			fi
