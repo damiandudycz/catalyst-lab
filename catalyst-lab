@@ -1936,6 +1936,7 @@ declare -A ARCH_MAPPINGS=(
 declare -A ARCH_FAMILIES=(
 	# Map from base arch to arch family. Add only if different than base arch.
 	[ppc64]=ppc
+	[sparc64]=sparc
 )
 declare -A ARCH_INTERPRETERS=(
 	# Add custom interpreters if needed.
@@ -1943,6 +1944,7 @@ declare -A ARCH_INTERPRETERS=(
 	# This can also be used if multiple interpreters are needed.
 	# Keys should correspond to baseraw, for example x86_64, aarch64, ppc64
 	[x86_64]="/usr/bin/qemu-x86_64 /usr/bin/qemu-i386"
+	[sparc64]="/usr/bin/qemu-sparc /usr/bin/qemu-sparc64"
 )
 declare -A RELENG_BASES=(
 	# Definies base releng folder for current stage.
