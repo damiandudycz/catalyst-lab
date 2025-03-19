@@ -1,6 +1,8 @@
 source_subpath: @REL_TYPE@/stage3-@SUB_ARCH@-openrc-@TIMESTAMP@
 
-use: ps3 dist-kernel
+use:
+	ps3
+	dist-kernel
 
 packages:
 	app-admin/sudo

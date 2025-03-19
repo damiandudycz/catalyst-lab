@@ -16,7 +16,7 @@ packages:
 	sys-block/zram-init
         sys-devel/distcc
         sys-kernel/linux-headers
-	sys-kernel/gentoo-kernel
+	virtual/dist-kernel #	sys-kernel/gentoo-kernel
 
 rcadd:
 	zram-init|boot
