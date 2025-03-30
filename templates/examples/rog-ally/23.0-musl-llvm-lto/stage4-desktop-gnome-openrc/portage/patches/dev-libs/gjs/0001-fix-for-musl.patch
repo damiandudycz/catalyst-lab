@@ -1,0 +1,19 @@
+diff --git a/gjs/profiler.cpp b/gjs/profiler.cpp
+index 21df23e..7e20e1a 100644
+--- a/gjs/profiler.cpp
++++ b/gjs/profiler.cpp
+@@ -574,7 +574,13 @@ gjs_profiler_start(GjsProfiler *self)
+      */
+     sev.sigev_notify = SIGEV_THREAD_ID;
+     sev.sigev_signo = SIGPROF;
+-    sev._sigev_un._tid = syscall(__NR_gettid);
++    #if defined(__GLIBC__)
++        sev._sigev_un._tid = syscall(__NR_gettid);
++    #elif defined(__linux__)  // If we're on Linux but not using glibc, assume musl
++        sev.sigev_notify_thread_id = syscall(__NR_gettid);
++    #else
++        #error "Unsupported C library"
++    #endif
+ 
+     if (timer_create(CLOCK_MONOTONIC, &sev, &self->timer) == -1) {
+         g_warning("Failed to create profiler timer: %s", g_strerror(errno));

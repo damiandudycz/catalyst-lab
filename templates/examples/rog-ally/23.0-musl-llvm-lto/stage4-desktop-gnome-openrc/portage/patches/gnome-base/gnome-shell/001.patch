@@ -1,0 +1,13 @@
+diff --git a/meson.build b/meson.build
+index d762c50..66931ec 100644
+--- a/meson.build
++++ b/meson.build
+@@ -19,6 +19,8 @@ mtk_pc = 'mutter-mtk-' + mutter_api_version
+ libmutter_pc = 'libmutter-' + mutter_api_version
+ libmutter_test_pc = 'libmutter-test-' + mutter_api_version
+ 
++add_project_arguments('-D_GNU_SOURCE', language: ['c', 'cpp'])
++
+ ecal_req = '>= 3.33.1'
+ eds_req = '>= 3.33.1'
+ gcr_req = '>= 3.90.0'

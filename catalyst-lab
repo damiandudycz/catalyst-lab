@@ -626,7 +626,7 @@ EOF
 			[[ -d ${stage_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} overlay ${stage_overlay_path_work}
 			[[ -d ${stage_root_overlay_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} root_overlay ${stage_root_overlay_path_work}
 			[[ -f ${stage_fsscript_path_work} ]] && set_spec_variable_if_missing ${stage_info_path_work} fsscript ${stage_fsscript_path_work}
-			[[ -n ${repos_local_paths} ]] && set_spec_variable_if_missing ${stage_info_path_work} repos "${repos_local_paths[@]}"
+			[[ -n ${repos_local_paths} ]] && set_spec_variable ${stage_info_path_work} repos "${repos_local_paths[@]}"
 
 			# Special variables for only some stages:
 

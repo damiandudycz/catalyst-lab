@@ -1,0 +1,12 @@
+diff --git a/src/libsysprof/sysprof-elf-loader.c b/src/libsysprof/sysprof-elf-loader.c
+index c104b37..1c9de8e 100644
+--- a/src/libsysprof/sysprof-elf-loader.c
++++ b/src/libsysprof/sysprof-elf-loader.c
+@@ -20,6 +20,7 @@
+ 
+ #include "config.h"
+ 
++#include <unistd.h>
+ #include <fcntl.h>
+ #include <sys/stat.h>
+ 

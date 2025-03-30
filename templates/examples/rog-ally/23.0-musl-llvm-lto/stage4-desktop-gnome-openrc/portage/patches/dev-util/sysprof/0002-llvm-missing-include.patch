@@ -1,0 +1,17 @@
+diff --git a/src/preload/backtrace-helper.h b/src/preload/backtrace-helper.h
+index 43a3617..1ceac1b 100644
+--- a/src/preload/backtrace-helper.h
++++ b/src/preload/backtrace-helper.h
+@@ -26,10 +26,12 @@
+ static void
+ backtrace_init (void)
+ {
++#ifdef HAVE_LIBUNWIND
+   unw_set_caching_policy (unw_local_addr_space, UNW_CACHE_PER_THREAD);
+ #ifdef HAVE_UNW_SET_CACHE_SIZE
+   unw_set_cache_size (unw_local_addr_space, 1024, 0);
+ #endif
++#endif
+ }
+ 
+ static int

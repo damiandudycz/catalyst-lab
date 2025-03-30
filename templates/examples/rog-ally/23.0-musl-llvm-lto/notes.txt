@@ -1,0 +1,60 @@
+# Notes for building musl-llvm-clang-lto stages related to catalyst:
+
+1. Basic changes needed for lto:
+common_flags="${common_flags} -flto=thin -Werror=odr -Werror=strict-aliasing"
+use="${use} lto"
+
+2. Additional profiles:
+There are currently no desktop profiles for musl/llvm.
+Additional profiles were added in local overlay and are used in desktop stages.
+
+3. nolto environment:
+These packages require using nolto env changes:
+ - dev-libs/mpfr
+
+4. Rust:
+To build rust, you need to have working rust or rust-bin.
+This means, that without rust-bin, catalyst is not able to build rust.
+By default rust-bin is masked in musl builds, due to stability concerns.
+Yet there seems to be amd64 rust-bin available to download and install in current packages.
+For this reason rust-bin package was unmasked for the stages.
+This should work correctly, but consider this as testing feature for now.
+If there are issues, they will probably not be with rust-bin package itself, but rather with rust
+codebase packages build later.
+Additional stage4-desktop-openrc build is used, to install base tools and rust (using rust-bin as dependency)
+and later rust-bin us removed using stage4/unmerge.
+Also, the rust-bin unmask entry is left in portage outside of releng directory, so that this change
+will remain in generaged stage tarball.
+
+5. releng curl fixes change:
+Releng contains a fix for curl, to avoid circular dependency. This fix will probably soon not be
+needed due to recent changes to this package.
+These changes were overwriten in portage/package.use/releng/circular, to block this fix from being
+used.
+After releng removes these changes, this overwrites can be deleted from stages templates.
+
+6. libunwind issue:
+In llvm profile, there can occur an emerge block issue between sys-libs/llvm-libunwind and
+sys-libs/libunwind.
+In llvm profile we should use sys-libs/llvm-libunwind, but some ebuilds are not updated yet to use it,
+creating a block issue.
+To fix this, remporarly changes to ebuilds were manually applied to some packages.
+catalyst snapshot was then manually created and used.
+This is a pain in the ass issue, and should probably be fixed by updating these packages globally.
+
+7. undefinied-version environment:
+Undefinied-version env variables define these linker flags:
+LDFLAGS="${LDFLAGS} -Wl,--undefined-version"
+These packages require using undefinied-version env changes:
+ - sys-apps/keyutils
+ - sys-libs/talloc
+ - sys-libs/tdb
+ - dev-libs/totem-pl-parser
+ - dev-libs/libdex
+ - sys-libs/tevent
+ - sys-libs/ldb
+ - dev-libs/libdex
+...
+
+8. libdex:
+sys-libs/libdex package needed to be keyword unmasked, because a musl fix was currently only added to version that is keyworded.

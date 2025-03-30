@@ -1,0 +1,10 @@
+dev-libs/libportal undefinied-version.conf
+dev-libs/totem-pl-parser undefinied-version.conf
+media-libs/libjxl undefinied-version.conf
+sys-apps/keyutils undefinied-version.conf
+sys-libs/ldb undefinied-version.conf
+sys-libs/talloc undefinied-version.conf
+sys-libs/tdb undefinied-version.conf
+sys-libs/tevent undefinied-version.conf
+net-fs/samba undefinied-version.conf
+gnome-extra/nm-applet undefinied-version.conf
