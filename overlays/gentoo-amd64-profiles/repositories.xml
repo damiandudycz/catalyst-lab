@@ -1,0 +1,12 @@
+<repo quality="experimental" status="unofficial">
+  <name>gentoo-amd64-profiles</name>
+  <description lang="en">Additional profiles for CLANG / LLVM.</description>
+  <homepage>https://github.com/damiandudycz/gentoo-amd64-profiles</homepage>
+  <owner type="person">
+    <email>damiandudycz@yahoo.com</email>
+    <name>Damian Dudycz</name>
+  </owner>
+  <source type="git">https://github.com/damiandudycz/gentoo-amd64-profiles.git</source>
+  <source type="git">git+ssh://git@github.com/damiandudycz/gentoo-amd64-profiles.git</source>
+  <feed>https://github.com/damiandudycz/gentoo-amd64-profiles/commits/main.atom</feed>
+</repo>
