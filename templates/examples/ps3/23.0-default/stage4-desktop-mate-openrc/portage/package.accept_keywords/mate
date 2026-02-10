@@ -1,0 +1,122 @@
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=mate-extra/mate-media-1.28.1-r1 **
+# required by mate-base/mate-1.28.0::gentoo
+# required by mate (argument)
+=mate-base/mate-desktop-1.28.2 **
+# required by mate-base/mate-1.28.0::gentoo[themes]
+# required by mate (argument)
+=x11-themes/mate-backgrounds-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=mate-base/mate-applets-meta-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo
+# required by mate (argument)
+=mate-base/mate-panel-1.28.4 **
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=media-gfx/eom-1.28.0-r2 **
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=mate-base/mate-control-center-1.28.0-r1 **
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=app-editors/pluma-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=x11-terms/mate-terminal-1.28.1 **
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=mate-extra/mate-utils-1.28.0-r1 **
+# required by mate-base/mate-1.28.0::gentoo[notification]
+# required by mate (argument)
+=x11-misc/mate-notification-daemon-1.28.1-r1 **
+# required by mate-extra/mate-power-manager-1.28.1-r1::gentoo[policykit]
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=mate-extra/mate-polkit-1.28.1 **
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=mate-base/caja-1.28.0-r1 **
+# required by mate-base/mate-control-center-1.28.0-r1::gentoo
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=mate-base/libmatekbd-1.28.0 **
+# required by x11-wm/marco-1.28.1-r2::gentoo
+# required by mate-base/mate-control-center-1.28.0-r1::gentoo
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=gnome-extra/zenity-4.0.3 ~ppc64
+# required by x11-misc/mate-notification-daemon-1.28.1-r1::gentoo
+# required by virtual/notification-daemon-0::gentoo[-gnome]
+# required by mate-base/mate-1.28.0::gentoo
+# required by mate (argument)
+=mate-base/mate-common-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo
+# required by mate (argument)
+=mate-base/mate-settings-daemon-1.28.0-r1 **
+# required by mate-base/mate-applets-meta-1.28.0::gentoo
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=mate-base/mate-applets-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=mate-extra/mate-calc-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo[themes]
+# required by mate (argument)
+=x11-themes/mate-themes-3.22.26 **
+# required by mate-base/mate-1.28.0::gentoo
+# required by mate (argument)
+=mate-base/mate-menus-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=x11-misc/mozo-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo[themes]
+# required by mate (argument)
+=x11-themes/mate-icon-theme-1.28.0 **
+# required by mate (argument)
+=mate-base/mate-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=app-text/atril-1.28.0-r1 **
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=mate-extra/mate-screensaver-1.28.0 **
+# required by app-editors/pluma-1.28.0::gentoo
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=dev-libs/libpeas-1.36.0 ~ppc64
+# required by mate-base/mate-panel-1.28.4::gentoo
+# required by mate-base/mate-applets-1.28.0::gentoo
+# required by mate-base/mate-applets-meta-1.28.0::gentoo
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=gnome-base/dconf-editor-45.0.1 ~ppc64
+# required by mate-base/mate-panel-1.28.4::gentoo
+# required by mate-base/mate-applets-1.28.0::gentoo
+# required by mate-base/mate-applets-meta-1.28.0::gentoo
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=dev-libs/libmateweather-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=mate-extra/mate-system-monitor-1.28.1 **
+# required by mate-extra/mate-media-1.28.1-r1::gentoo
+# required by mate-base/mate-1.28.0::gentoo[base]
+# required by mate (argument)
+=media-libs/libmatemixer-1.28.0 **
+# required by mate-base/mate-1.28.0::gentoo
+# required by mate (argument)
+=x11-wm/marco-1.28.1-r2 **
+# required by mate-base/mate-1.28.0::gentoo
+# required by mate (argument)
+=mate-base/mate-session-manager-1.28.0-r1 **
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=mate-extra/mate-power-manager-1.28.1-r1 **
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=app-arch/engrampa-1.28.2 **
+# required by mate-base/mate-1.28.0::gentoo[extras]
+# required by mate (argument)
+=mate-extra/caja-extensions-1.28.0 **
