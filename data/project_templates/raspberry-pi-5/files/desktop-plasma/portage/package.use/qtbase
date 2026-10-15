@@ -1,0 +1,2 @@
+# Qt Quick components used by KDE Plasma and sddm-kcm require Qt6OpenGL.
+dev-qt/qtbase opengl
