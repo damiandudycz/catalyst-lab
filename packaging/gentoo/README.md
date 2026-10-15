@@ -1,26 +1,26 @@
 # Gentoo overlay
 
-Ebuilds of Catalyst Lab (`dev-util/catalystlab`):
+Ebuilds of Catalyst Lab (`dev-util/catalyst-lab`):
 
-- `catalystlab-9999`: live ebuild, builds the newest commit of the `main` branch.
-- `catalystlab-<version>`: release, downloads tag `v<version>` from GitHub.
+- `catalyst-lab-9999`: live ebuild, builds the newest commit of the `main` branch.
+- `catalyst-lab-<version>`: release, downloads tag `v<version>` from GitHub.
 
 ## Using the overlay
 
 The overlay is a directory of this repository. Clone it and add that directory as a repository, for example
-`/etc/portage/repos.conf/catalystlab.conf`:
+`/etc/portage/repos.conf/catalyst-lab.conf`:
 
 ```ini
-[catalystlab]
+[catalyst-lab]
 location = /var/db/repos/catalyst-lab/packaging/gentoo
 auto-sync = no
 ```
 
 ```bash
 git clone https://github.com/damiandudycz/catalyst-lab.git /var/db/repos/catalyst-lab
-echo "=dev-util/catalystlab-9999 **" >> /etc/portage/package.accept_keywords/catalystlab   # live ebuild
-echo "dev-util/catalystlab ~amd64" >> /etc/portage/package.accept_keywords/catalystlab     # releases (or ~arm64)
-emerge --ask dev-util/catalystlab
+echo "=dev-util/catalyst-lab-9999 **" >> /etc/portage/package.accept_keywords/catalyst-lab   # live ebuild
+echo "dev-util/catalyst-lab ~amd64" >> /etc/portage/package.accept_keywords/catalyst-lab     # releases (or ~arm64)
+emerge --ask dev-util/catalyst-lab
 ```
 
 Updating the overlay is `git -C /var/db/repos/catalyst-lab pull`.
@@ -32,5 +32,5 @@ Updating the overlay is `git -C /var/db/repos/catalyst-lab pull`.
 
 ## Updating
 
-New release: copy the newest versioned ebuild to `catalystlab-<version>.ebuild` and push tag `v<version>`. Manifest
-of the release (`ebuild catalystlab-<version>.ebuild manifest`) is generated after the tag exists.
+New release: copy the newest versioned ebuild to `catalyst-lab-<version>.ebuild` and push tag `v<version>`. Manifest
+of the release (`ebuild catalyst-lab-<version>.ebuild manifest`) is generated after the tag exists.
