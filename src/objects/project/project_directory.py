@@ -321,6 +321,7 @@ class ProjectConfiguration(Serializable):
     architecture: Architecture | None = None
     seen_build_timestamp: str | None = None # Newest build run whose result was seen (project was opened).
     packages_directory_id: uuid.UUID | None = None # Binary packages folder (shared by projects).
+    issue_notes: dict[str, list[dict]] | None = None # Notes attached to grouped failure issues.
 
     def serialize(self) -> dict:
         return {
@@ -331,6 +332,7 @@ class ProjectConfiguration(Serializable):
             "architecture": self.architecture.value if self.architecture else None,
             "seen_build_timestamp": self.seen_build_timestamp,
             "packages_directory_id": str(self.packages_directory_id) if self.packages_directory_id else None,
+            "issue_notes": self.issue_notes or {},
         }
 
     @classmethod
@@ -349,6 +351,8 @@ class ProjectConfiguration(Serializable):
             latest_snapshot=bool(data.get("latest_snapshot", False)),
             architecture=architecture,
             seen_build_timestamp=data.get("seen_build_timestamp"),
-            packages_directory_id=uuid.UUID(data["packages_directory_id"]) if data.get("packages_directory_id") else None
+            packages_directory_id=uuid.UUID(data["packages_directory_id"]) if data.get("packages_directory_id") else None,
+            issue_notes={str(key): list(notes) for key, notes in (data.get("issue_notes") or {}).items()
+                         if isinstance(notes, list)},
         )
 

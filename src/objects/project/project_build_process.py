@@ -681,9 +681,13 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             # Spec and portage configuration are kept with build (work directory is temporary).
             shutil.copyfile(spec_path, os.path.join(self.build.path, StageBuild.SPEC_FILE))
             self.build.details["inputs"]["spec"] = StageBuild.SPEC_FILE
+            from .build_failures import stage_configuration_key
+            toolset_details = self.build.details["inputs"].get("toolset") or {}
             if has_confdir:
                 shutil.copytree(portage_path, os.path.join(self.build.path, StageBuild.PORTAGE_DIRECTORY), symlinks=True, dirs_exist_ok=True)
                 self.build.details["inputs"]["portage"] = StageBuild.PORTAGE_DIRECTORY
+            self.build.details["inputs"]["configuration"] = stage_configuration_key(
+                spec, process.timestamp, toolset_details.get("catalyst"))
             self.build.save(project)
             self.log("Spec:")
             for line in spec.splitlines():
@@ -741,6 +745,8 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
                 self.build.artifact = iso_file
                 self.build.details["output"]["size"] = os.path.getsize(os.path.join(self.build.path, iso_file))
             self.build.save(project)
+            from .build_failures import reconcile_project_failure_states
+            reconcile_project_failure_states(project)
             process.stage_builds[self.stage.id] = self.build
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
@@ -758,6 +764,9 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
                     print(f"Failed to read failure details: {details_error}")
                 try:
                     self.build.save(project)
+                    if not stopped:
+                        from .build_failures import reconcile_project_failure_states
+                        reconcile_project_failure_states(project)
                 except Exception as save_error:
                     print(f"Failed to save build status: {save_error}")
             self.complete(MultiStageProcessStageState.FAILED)
