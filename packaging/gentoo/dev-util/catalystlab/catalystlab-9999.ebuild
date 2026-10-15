@@ -8,14 +8,14 @@ PYTHON_COMPAT=( python3_{11..14} )
 inherit gnome2-utils meson optfeature python-single-r1 xdg
 
 DESCRIPTION="GNOME application for building Gentoo stages, live images and systems with Catalyst"
-HOMEPAGE="https://github.com/damiandudycz/catalyst-lab-2"
+HOMEPAGE="https://github.com/damiandudycz/catalyst-lab"
 
 if [[ ${PV} == 9999 ]]; then
 	inherit git-r3
-	EGIT_REPO_URI="https://github.com/damiandudycz/catalyst-lab-2.git"
+	EGIT_REPO_URI="https://github.com/damiandudycz/catalyst-lab.git"
 else
-	SRC_URI="https://github.com/damiandudycz/catalyst-lab-2/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz"
-	S="${WORKDIR}/catalyst-lab-2-${PV}"
+	SRC_URI="https://github.com/damiandudycz/catalyst-lab/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz"
+	S="${WORKDIR}/catalyst-lab-${PV}"
 	KEYWORDS="~amd64 ~arm64"
 fi
 

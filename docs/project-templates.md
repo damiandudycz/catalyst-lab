@@ -44,7 +44,7 @@ Repositories are checked when they are downloaded, and are rejected if their lat
 
 ```toml
 format = 1                      # Optional, version of template format.
-min_app_version = "0.2.0"       # Optional, oldest version of Catalyst Lab that supports the template.
+min_app_version = "2.0.0"       # Optional, oldest version of Catalyst Lab that supports the template.
 name = "Gentoo release"         # Shown in list of templates and used as default project name.
 description = "Stages built like official Gentoo releases."
 architecture = "arm64"          # Optional, architecture of projects for templates made for one architecture.
@@ -306,7 +306,7 @@ options page lists them as you change options.
 Templates in Git repositories are added to the list in the app with a pull request:
 
 1. Create a public Git repository with your template, following the [repository layout](#repository-layout).
-2. Fork [catalyst-lab-2](https://github.com/damiandudycz/catalyst-lab-2) and add a line to
+2. Fork [catalyst-lab](https://github.com/damiandudycz/catalyst-lab) and add a line to
    [`data/project_templates/repositories.txt`](../data/project_templates/repositories.txt):
    ```
    https://github.com/you/your-template.git Title of your template
@@ -317,7 +317,7 @@ Templates in Git repositories are added to the list in the app with a pull reque
 3. Open a pull request that changes only this file. Describe what the template creates and which architectures and
    Releng specs it was tested with.
 
-Catalyst Lab downloads the latest list from the `main` branch of catalyst-lab-2 when templates are shown, so a merged
+Catalyst Lab downloads the latest list from the `main` branch of catalyst-lab when templates are shown, so a merged
 template is available without updating the app, and a template removed from the list (for example when it's broken
 or unsafe) is not offered anymore.
 Repository URLs have to use `https://`. Templates are downloaded from the default branch of their repository, so later

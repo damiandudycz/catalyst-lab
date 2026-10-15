@@ -360,7 +360,7 @@ class ProjectTemplate:
         if min_app_version is not None:
             from . import app_info
             if not isinstance(min_app_version, str) or not re.match(r"^\d+(\.\d+)*$", min_app_version):
-                raise TemplateError("Template: min_app_version must be version like 0.2.0")
+                raise TemplateError("Template: min_app_version must be version like 2.0.0")
             if app_info.version_tuple(app_info.APP_VERSION) < app_info.version_tuple(min_app_version):
                 raise TemplateError(f"Requires Catalyst Lab {min_app_version} or newer (this is {app_info.APP_VERSION})")
         if data.get("format", TEMPLATE_FORMAT) != TEMPLATE_FORMAT:
@@ -780,7 +780,7 @@ class TemplateRepository:
 
 # Latest list of template repositories, from main branch of Catalyst Lab repository. New templates are added there with
 # pull requests, so they are available without updating the app.
-REPOSITORIES_LIST_URL = "https://raw.githubusercontent.com/damiandudycz/catalyst-lab-2/main/data/project_templates/repositories.txt"
+REPOSITORIES_LIST_URL = "https://raw.githubusercontent.com/damiandudycz/catalyst-lab/main/data/project_templates/repositories.txt"
 
 def parse_template_repositories(text: str) -> list[TemplateRepository]:
     """Repositories from repositories.txt: lines with URL, optionally followed by title. Empty lines and lines starting

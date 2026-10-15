@@ -12,18 +12,18 @@ The overlay is a directory of this repository. Clone it and add that directory a
 
 ```ini
 [catalystlab]
-location = /var/db/repos/catalyst-lab-2/packaging/gentoo
+location = /var/db/repos/catalyst-lab/packaging/gentoo
 auto-sync = no
 ```
 
 ```bash
-git clone https://github.com/damiandudycz/catalyst-lab-2.git /var/db/repos/catalyst-lab-2
+git clone https://github.com/damiandudycz/catalyst-lab.git /var/db/repos/catalyst-lab
 echo "=dev-util/catalystlab-9999 **" >> /etc/portage/package.accept_keywords/catalystlab   # live ebuild
 echo "dev-util/catalystlab ~amd64" >> /etc/portage/package.accept_keywords/catalystlab     # releases (or ~arm64)
 emerge --ask dev-util/catalystlab
 ```
 
-Updating the overlay is `git -C /var/db/repos/catalyst-lab-2 pull`.
+Updating the overlay is `git -C /var/db/repos/catalyst-lab pull`.
 
 ## USE flags
 
