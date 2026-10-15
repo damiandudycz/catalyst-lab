@@ -3,6 +3,7 @@ import os, re, shutil, uuid
 from dataclasses import dataclass, field
 from typing import Callable
 from .repository import Repository
+from .architecture import Architecture
 from .snapshot import PortageProfile
 from .project_stage import load_catalyst_stage_arguments_details
 from .project_stage_arguments import StageArgumentDetails
@@ -31,6 +32,7 @@ class StageSpecContext:
     iso_overlay: str | None = None # Generated ISO overlay (livecd/overlay), as seen by catalyst.
     snapshot: object | None = None # Snapshot selected for build, project snapshot when not set.
     path_mapper: Callable[[str], str] | None = None # Path of host folder as seen by catalyst (project, releng, overlays).
+    rosetta_amd64: bool = False # Rosetta binfmt handler is active in the build machine.
 
 def snapshot_treeish(project_directory, snapshot=None) -> str | None:
     """Catalyst finds snapshot as snapshots/gentoo-<treeish>.sqfs. Snapshot of project, unless other is given."""
@@ -80,6 +82,11 @@ def generate_stage_spec(project_directory, stage, context: StageSpecContext) -> 
     return "\n".join(lines) + "\n"
 
 def _argument_value(project_directory, stage, name: str, argument, context: StageSpecContext):
+    if (argument.details == StageArgumentDetails.interpreter
+            and project_directory.get_architecture() == Architecture.amd64
+            and context.rosetta_amd64
+            and _uses_automatic_interpreter(project_directory, stage)):
+        return None
     match argument.details:
         case StageArgumentDetails.target:
             return stage.target.replace("_", "-")
@@ -97,8 +104,22 @@ def _argument_value(project_directory, stage, name: str, argument, context: Stag
             return context.iso_overlay
     value = resolve_stage_argument(project_directory, stage, name)
     if value is UNRESOLVED and _is_automatic(project_directory, stage, argument):
-        value = _automatic_value(project_directory, argument)
+        value = _automatic_value(project_directory, argument, context)
     return value
+
+def _uses_automatic_interpreter(project_directory, stage, _visited: frozenset = frozenset()) -> bool:
+    """True when interpreter comes from an automatic option, including through parent stages."""
+    if stage is None or stage.id in _visited:
+        return False
+    value = getattr(stage, StageArgumentDetails.interpreter.name, None)
+    if isinstance(value, list) and len(value) == 1:
+        value = value[0]
+    if value == StageAutomaticOption.INHERIT_FROM_PARENT:
+        parent_id = getattr(stage, StageArgumentDetails.parent.name, None)
+        parent = next((item for item in project_directory.stages if item.id == parent_id), None)
+        return _uses_automatic_interpreter(project_directory, parent, _visited | {stage.id})
+    return value in (StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE,
+                     StageAutomaticOption.GENERATE_AUTOMATICALLY)
 
 def _is_automatic(project_directory, stage, argument, _visited: frozenset = frozenset()) -> bool:
     """Argument uses automatic value, directly or inherited from parent stages."""
@@ -113,11 +134,13 @@ def _is_automatic(project_directory, stage, argument, _visited: frozenset = froz
         return _is_automatic(project_directory, parent, argument, _visited | {stage.id})
     return value == StageAutomaticOption.GENERATE_AUTOMATICALLY
 
-def _automatic_value(project_directory, argument):
+def _automatic_value(project_directory, argument, context: StageSpecContext):
     """Automatic values determined when building. None means catalyst default."""
     match argument.details:
         case StageArgumentDetails.interpreter:
             architecture = project_directory.get_architecture()
+            if architecture == Architecture.amd64 and context.rosetta_amd64:
+                return None # Lima's Rosetta binfmt handler runs amd64 binaries without Catalyst copying QEMU in.
             return architecture.qemu_user_binary() if architecture and is_emulated_build(architecture) else None
     return None
 

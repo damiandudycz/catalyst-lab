@@ -59,6 +59,7 @@ class ProjectBuild(MultiStageProcess):
         # Builds of toolsets linked to virtual machine run in that machine (always without root privileges).
         self.machine = self.toolset.machine if self.toolset else None
         self.executor = self.toolset.executor if self.toolset else None
+        self._rosetta_amd64: bool | None = None
         self.rootless_unsupported_reason = self.executor.unsupported_reason() if self.executor and not self.machine else None
         self.rootless = self.machine is not None or self.rootless_unsupported_reason is None
         self.rootless_toolset_path: str | None = None # Extracted toolset and snapshot, set when preparing toolset.
@@ -73,6 +74,19 @@ class ProjectBuild(MultiStageProcess):
 
     def name(self) -> str:
         return self.project_directory.name
+
+    def rosetta_amd64_available(self) -> bool:
+        """Whether the running toolset machine has Lima's Rosetta binfmt handler enabled."""
+        if self._rosetta_amd64 is None:
+            if self.machine is None or self.executor is None:
+                self._rosetta_amd64 = False
+            else:
+                output = self.executor.output(
+                    "entry=/proc/sys/fs/binfmt_misc/rosetta; "
+                    "[ -r $entry ] && grep -q '^enabled' $entry && echo enabled"
+                )
+                self._rosetta_amd64 = output == "enabled"
+        return self._rosetta_amd64
 
     def _on_step_state_changed(self, *args):
         if self.status != MultiStageProcessState.SETUP:
@@ -656,7 +670,10 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
                 cache_paths={argument: process.container_path(path) for argument, path in cache_paths.items()},
                 snapshot=process.snapshot,
                 path_mapper=process.container_path,
+                rosetta_amd64=process.rosetta_amd64_available(),
             ))
+            if process.rosetta_amd64_available():
+                self.log("Rosetta is active for amd64; Catalyst interpreter is omitted")
             values = _spec_values(spec)
             spec_path = os.path.join(work_directory, "stage.spec")
             with open(spec_path, "w", encoding="utf-8") as file:

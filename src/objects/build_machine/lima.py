@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, shutil, signal, subprocess, sys, threading
+import json, os, platform, shutil, signal, subprocess, sys, threading
 
 # ------------------------------------------------------------------------------
 # Lima (https://lima-vm.io) runs virtual machines used to build on systems other than Linux. On macOS it uses
@@ -229,11 +229,12 @@ def machine_configuration(cpus: int, memory_gib: int, shared_paths: list[str]) -
     """Lima configuration (YAML) of build machine."""
     mounts = "\n".join(f'- location: "{path}"\n  writable: true' for path in shared_paths)
     indented_setup = "\n".join("    " + line for line in machine_setup_script().splitlines())
+    rosetta = "rosetta:\n  enabled: true\n  binfmt: true\n" if _ROSETTA_FOR_AMD64 else ""
     return f"""minimumLimaVersion: 2.0.0
 base:
 - {LIMA_TEMPLATE}
 vmType: vz
-cpus: {cpus}
+{rosetta}cpus: {cpus}
 memory: {memory_gib}GiB
 disk: {SYSTEM_DISK_GIB}GiB
 containerd:
@@ -248,12 +249,16 @@ provision:
 """
 
 # Version of machine setup, increased when setup script changes. Existing machines are updated when started.
-MACHINE_SETUP_VERSION = 7
+MACHINE_SETUP_VERSION = 8
 _MACHINE_SETUP_VERSION_FILE = "/etc/catalystlab-setup-version"
 
 # QEMU user emulators, to build stages for other architectures (like on Linux hosts, binfmt_misc with F flag makes
 # them work in chroots and namespaces).
 _QEMU_ARCHITECTURES = "x86_64 i386 arm armeb aarch64 riscv64 ppc ppc64 ppc64le s390x mips mipsel mips64 mips64el sparc sparc64 alpha m68k loongarch64 hppa sh4"
+
+# On Apple Silicon, Lima can register Apple's Rosetta runtime as the x86_64 Linux
+# binfmt handler. Keep QEMU available for other target architectures.
+_ROSETTA_FOR_AMD64 = sys.platform == "darwin" and platform.machine().lower() in ("arm64", "aarch64")
 
 # Rules of qemu-binfmt (Alpine) for some architectures (eg. ppc64) match only ELF files with OS ABI 0 (SYSV), programs
 # marked with GNU/Linux ABI (3), like gcc and ldconfig of Gentoo ppc64 stages, fail then with Exec format error. Rules
@@ -261,6 +266,12 @@ _QEMU_ARCHITECTURES = "x86_64 i386 arm armeb aarch64 riscv64 ppc ppc64 ppc64le s
 # ELF header, like rules of QEMU for most architectures.
 _BINFMT_FIX_SCRIPT = r"""#!/bin/sh
 cd /proc/sys/fs/binfmt_misc || exit 0
+# Lima registers Rosetta before provisioning when enabled. QEMU's amd64 handler
+# must be removed so amd64 ELF files are dispatched to Rosetta instead.
+if [ -f rosetta ] && grep -q '^enabled' rosetta && [ -f qemu-x86_64 ]; then
+    echo -1 > qemu-x86_64
+    echo "Using Lima's Rosetta handler for x86_64 Linux binaries"
+fi
 for entry in qemu-*; do
     [ -f "$entry" ] || continue
     offset=$(sed -n 's/^offset //p' "$entry")
