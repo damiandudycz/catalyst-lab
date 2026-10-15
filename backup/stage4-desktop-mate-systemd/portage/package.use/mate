@@ -1,5 +1,0 @@
-# required by dev-libs/libayatana-appindicator-0.5.93::gentoo
-# required by mate-base/mate-control-center-1.28.0-r1::gentoo
-# required by mate-base/mate-1.28.0::gentoo[base]
-# required by mate (argument)
->=dev-libs/libdbusmenu-16.04.0-r2 gtk3
