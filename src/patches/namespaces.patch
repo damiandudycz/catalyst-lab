@@ -1,0 +1,26 @@
+--- namespaces.py	2025-04-25 00:15:53.918024625 +0200
++++ namespaces-new.py	2025-04-25 00:17:12.684688053 +0200
+@@ -40,20 +40,9 @@
+     :param nstype: Namespace to enter; one of CLONE_*.
+     :raises OSError: if setns failed.
+     """
+-    try:
+-        fp = None
+-        if isinstance(fd, str):
+-            fp = open(fd)
+-            fd = fp.fileno()
+-
+-        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+-        if libc.setns(ctypes.c_int(fd), ctypes.c_int(nstype)) != 0:
+-            e = ctypes.get_errno()
+-            raise OSError(e, os.strerror(e))
+-    finally:
+-        if fp is not None:
+-            fp.close()
+-
++    """This function was patched by CatalystLab to always return true"""
++    """without actually doing anything, since CatalystLab already isolates the environment"""
++    pass
+ 
+ def unshare(flags):
+     """Binding to the Linux unshare system call. See unshare(2) for details.

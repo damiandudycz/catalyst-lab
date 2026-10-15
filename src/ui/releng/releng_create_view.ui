@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="RelengCreateView" parent="GtkBox">
+
+    <!-- Setup view -->
+    <child>
+      <object class="WizardView" id="wizard_view">
+        <signal name="is-page-ready-to-continue" handler="is_page_ready_to_continue"/>
+        <signal name="begin-installation" handler="begin_installation"/>
+        <property name="show_welcome_screen">True</property>
+        <property name="welcome_screen_icon_name">book-minimalistic-svgrepo-com-symbolic</property>
+        <property name="welcome_screen_title">Create Releng Directory</property>
+        <property name="welcome_screen_description">Clone the Gentoo Release Engineering repository, or your fork of it, from Git. Its spec templates and portage configuration are used as defaults for project stages.</property>
+        <property name="install_button_label">Create directory</property>
+
+        <!-- Page 1: Config screen -->
+        <child>
+          <object class="GtkScrolledWindow" id="config_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GitDirectoryCreateConfigView" id="config_view">
+                <property name="manager_class_name">RelengManager</property>
+                <property name="available_sources">GIT_REPOSITORY</property>
+                <!-- <property name="available_sources">GIT_REPOSITORY,LOCAL_DIRECTORY,CREATE_NEW_PORTAGE_OVERLAY</property> -->
+                <property name="default_git_repository">https://github.com/gentoo/releng.git</property>
+                <!-- <property name="default_local_directory">/home/damiandudycz</property> -->
+                <property name="allow_changing_git_repository">False</property>
+                <property name="default_directory_name">Releng</property>
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+      </object>
+    </child>
+
+  </template>
+</interface>
+

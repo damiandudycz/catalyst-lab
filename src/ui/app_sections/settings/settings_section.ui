@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="SettingsSection" parent="GtkBox">
+    <child>
+      <object class="GtkScrolledWindow">
+        <property name="hscrollbar-policy">automatic</property>
+        <property name="vscrollbar-policy">automatic</property>
+        <property name="hexpand">True</property>
+        <property name="vexpand">True</property>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">24</property>
+            <property name="margin-start">24</property>
+            <property name="margin-end">24</property>
+            <property name="margin-bottom">24</property>
+
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">Library</property>
+                    <child>
+                      <object class="GtkListBox">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="boxed-list"/>
+                        </style>
+                        <child>
+                          <object class="AdwActionRow" id="location_row">
+                            <property name="title">Location</property>
+                            <property name="subtitle-selectable">True</property>
+                            <style>
+                              <class name="property"/>
+                            </style>
+                            <child type="suffix">
+                              <object class="GtkButton">
+                                <property name="icon-name">folder-open-symbolic</property>
+                                <property name="tooltip-text">Open folder</property>
+                                <property name="valign">center</property>
+                                <signal name="clicked" handler="on_open_clicked"/>
+                                <style>
+                                  <class name="flat"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child type="suffix">
+                              <object class="GtkButton">
+                                <property name="label">Change…</property>
+                                <property name="valign">center</property>
+                                <signal name="clicked" handler="on_change_clicked"/>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Library can be moved or copied to another place, or a new or existing library can be used. Catalyst Lab restarts after the change. It can't be changed while something is loaded or running.</property>
+                    <property name="xalign">0</property>
+                    <property name="wrap">True</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <style>
+                      <class name="caption"/>
+                      <class name="dimmed"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">Navigation</property>
+                    <child>
+                      <object class="GtkListBox">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="boxed-list"/>
+                        </style>
+                        <child>
+                          <object class="AdwComboRow" id="navigation_style_row">
+                            <property name="title">Navigation style</property>
+                            <property name="model">
+                              <object class="GtkStringList">
+                                <items>
+                                  <item>Modal windows</item>
+                                  <item>Push in main window</item>
+                                </items>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">How wizards and installations (new project, toolset, build, deploy…) are shown: in windows over the main window, or pushed in the main window, going back when they are closed.</property>
+                    <property name="xalign">0</property>
+                    <property name="wrap">True</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <style>
+                      <class name="caption"/>
+                      <class name="dimmed"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">Builds</property>
+                    <child>
+                      <object class="GtkListBox">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="boxed-list"/>
+                        </style>
+                        <child>
+                          <object class="AdwSwitchRow" id="pause_queue_row">
+                            <property name="title">Pause queue when a build fails</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">While a project is built, builds of other projects can be added to queue, they start one after another. Queued builds continue after failed build unless this is enabled.</property>
+                    <property name="xalign">0</property>
+                    <property name="wrap">True</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <style>
+                      <class name="caption"/>
+                      <class name="dimmed"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">QEMU</property>
+                    <property name="description">Default resources for virtual machines. You can adjust them before each run.</property>
+                    <child>
+                      <object class="GtkListBox">
+                        <property name="selection-mode">none</property>
+                        <style><class name="boxed-list"/></style>
+                        <child>
+                          <object class="AdwSpinRow" id="qemu_cpus_row">
+                            <property name="title">CPUs</property>
+                            <property name="adjustment">
+                              <object class="GtkAdjustment">
+                                <property name="lower">1</property><property name="upper">64</property>
+                                <property name="step-increment">1</property><property name="value">4</property>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwSpinRow" id="qemu_memory_row">
+                            <property name="title">Memory (GiB)</property>
+                            <property name="adjustment">
+                              <object class="GtkAdjustment">
+                                <property name="lower">1</property><property name="upper">256</property>
+                                <property name="step-increment">1</property><property name="value">4</property>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkSeparator"/>
+            </child>
+
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Library is the folder with all data of Catalyst Lab: toolsets, snapshots, releng and overlays, projects with their builds, binary packages, virtual machines and configuration.</property>
+                <property name="halign">center</property>
+                <property name="wrap">True</property>
+                <property name="justify">fill</property>
+                <attributes>
+                  <attribute name="foreground" value="grey"/>
+                </attributes>
+              </object>
+            </child>
+
+          </object>
+        </child>
+      </object>
+    </child>
+
+  </template>
+</interface>

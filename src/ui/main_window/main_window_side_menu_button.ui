@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+
+  <template class="MainWindowSideMenuButton" parent="GtkListBoxRow">
+    <child>
+      <object class="GtkBox">
+        <property name="spacing">10</property>
+        <property name="margin-start">6</property>
+        <property name="margin-end">6</property>
+        <child>
+          <object class="GtkImage" id="icon"/>
+        </child>
+        <child>
+          <object class="GtkLabel" id="label">
+            <property name="hexpand">True</property>
+            <property name="xalign">0</property>
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </template>
+
+</interface>
+

@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="ProjectCreateView" parent="GtkBox">
+
+    <!-- Setup view -->
+    <child>
+      <object class="WizardView" id="wizard_view">
+        <signal name="is-page-ready-to-continue" handler="is_page_ready_to_continue"/>
+        <signal name="begin-installation" handler="begin_installation"/>
+        <property name="show_welcome_screen">True</property>
+        <property name="welcome_screen_icon_name">notes-minimalistic-svgrepo-com-symbolic</property>
+        <property name="welcome_screen_title">Create Project</property>
+        <property name="welcome_screen_description">A project contains a tree of stages built together. Select the toolset, Releng directory, snapshot and architecture used to build them. All of them can be changed later.</property>
+        <property name="install_button_label">Create project</property>
+
+        <!-- Page 1: Config screen -->
+        <child>
+          <object class="GtkScrolledWindow" id="source_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GitDirectoryCreateConfigView" id="source_view">
+                <property name="manager_class_name">ProjectManager</property>
+                <property name="available_sources">CREATE_NEW,GIT_REPOSITORY,TEMPLATE</property>
+                <property name="default_directory_name">Project</property>
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 2: Template options screen (only for template source) -->
+        <child>
+          <object class="GtkScrolledWindow" id="template_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox" id="template_options_container">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 3: Toolset screen -->
+        <child>
+          <object class="GtkScrolledWindow" id="toolset_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="toolset_selection_view">
+                    <property name="title">Toolset</property>
+                    <property name="description">Toolset with Catalyst installed, used to build stages of this project.</property>
+                    <property name="item_class_name">Toolset</property>
+                    <property name="item_icon">toolbox-symbolic</property>
+                    <property name="item_title_property_name">name</property>
+                    <property name="item_subtitle_property_name">short_details</property>
+                    <property name="item_status_property_name">status_indicator_values</property>
+                    <property name="autoselect_default">True</property>
+                    <signal name="is-item-selectable" handler="is_item_selectable"/>
+                    <signal name="is-item-usable" handler="is_item_usable"/>
+                    <signal name="setup-items-monitoring" handler="setup_items_monitoring"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 4: Releng screen -->
+        <child>
+          <object class="GtkScrolledWindow" id="releng_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="releng_selection_view">
+                    <property name="title">Releng directory</property>
+                    <property name="description">Its spec templates and portage configuration are used as defaults for stages.</property>
+                    <property name="item_class_name">RelengDirectory</property>
+                    <property name="item_icon">book-minimalistic-svgrepo-com-symbolic</property>
+                    <property name="item_title_property_name">name</property>
+                    <property name="item_subtitle_property_name">short_details</property>
+                    <property name="item_status_property_name">status_indicator_values</property>
+                    <property name="autoselect_default">True</property>
+                    <signal name="is-item-selectable" handler="is_item_selectable"/>
+                    <signal name="is-item-usable" handler="is_item_usable"/>
+                    <signal name="setup-items-monitoring" handler="setup_items_monitoring"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 5: Snapshot screen -->
+        <child>
+          <object class="GtkScrolledWindow" id="snapshot_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="snapshot_selection_view">
+                    <property name="title">Snapshot</property>
+                    <property name="description">Snapshot of the Gentoo ebuild repository used to build stages.</property>
+                    <property name="item_class_name">Snapshot</property>
+                    <property name="item_icon">video-frame-svgrepo-com-symbolic</property>
+                    <property name="item_title_property_name">name</property>
+                    <property name="item_subtitle_property_name">short_details</property>
+                    <property name="item_status_property_name">status_indicator_values</property>
+                    <property name="autoselect_default">True</property>
+                    <signal name="is-item-selectable" handler="is_item_selectable"/>
+                    <signal name="is-item-usable" handler="is_item_usable"/>
+                    <signal name="setup-items-monitoring" handler="setup_items_monitoring"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 6: Architecture screen (not for templates with architecture option) -->
+        <child>
+          <object class="GtkScrolledWindow" id="arch_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="arch_selection_view">
+                    <property name="title">Architecture</property>
+                    <property name="description">Architecture of built stages. Stages of architectures that host can't run natively are built with QEMU emulation.</property>
+                    <property name="item_icon">cursor-square-symbolic</property>
+                    <property name="item_title_property_name">name</property>
+                    <signal name="is-item-selectable" handler="is_item_selectable"/>
+                    <signal name="is-item-usable" handler="is_item_usable"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 7: Binary packages screen -->
+        <child>
+          <object class="GtkScrolledWindow" id="packages_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="packages_selection_view">
+                    <property name="title">Binary packages</property>
+                    <property name="description">Folder keeping binary packages built with stages, reused by next builds. Projects with the same architecture can share a folder to reuse packages built by each other.</property>
+                    <property name="item_class_name">PackagesDirectory</property>
+                    <property name="item_icon">archive-minimalistic-svgrepo-com-symbolic</property>
+                    <property name="item_title_property_name">name</property>
+                    <property name="item_subtitle_property_name">short_details</property>
+                    <property name="display_none">True</property>
+                    <property name="none_title">New folder for this project</property>
+                    <property name="none_subtitle">Named like the project</property>
+                    <signal name="is-item-selectable" handler="is_item_selectable"/>
+                    <signal name="is-item-usable" handler="is_item_usable"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+      </object>
+    </child>
+
+  </template>
+</interface>
+

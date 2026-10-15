@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="DeploySection" parent="GtkBox">
+    <child>
+      <object class="GtkScrolledWindow">
+        <property name="hscrollbar-policy">automatic</property>
+        <property name="vscrollbar-policy">automatic</property>
+        <property name="hexpand">True</property>
+        <property name="vexpand">True</property>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">24</property>
+            <property name="margin-start">24</property>
+            <property name="margin-end">24</property>
+            <property name="margin-bottom">24</property>
+
+            <child>
+              <object class="RepositoryListView">
+                <property name="title">Projects</property>
+                <property name="item_class_name">ProjectDirectory</property>
+                <property name="item_installation_class_name">DeployInstallation</property>
+                <property name="item_icon">deploy-symbolic</property>
+                <property name="item_title_property_name">name</property>
+                <property name="item_subtitle_property_name">deploy_summary</property>
+                <property name="item_status_property_name">deploy_status_indicator_values</property>
+                <property name="show_add_button">False</property>
+                <signal name="item-row-pressed" handler="on_item_row_pressed"/>
+                <signal name="installation-row-pressed" handler="on_installation_row_pressed"/>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkBox">
+                <property name="spacing">8</property>
+                <property name="halign">center</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">danger-triangle-svgrepo-com-symbolic</property>
+                    <property name="valign">center</property>
+                    <style>
+                      <class name="warning"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Deploying is currently being tested and might not work correctly. Check the installed system before relying on it.</property>
+                    <property name="wrap">True</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="warning"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkSeparator"/>
+            </child>
+
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Stage3 and stage4 builds can be installed on another machine booted from Gentoo LiveCD, through SSH, or on Linux on a disk connected to this computer, like SD card or external disk: disk is partitioned, stage is installed on it and system is configured. Select a project to see its builds ready to deploy. Running deployments are listed first.</property>
+                <property name="halign">center</property>
+                <property name="wrap">True</property>
+                <property name="justify">fill</property>
+                <attributes>
+                  <attribute name="foreground" value="grey"/>
+                </attributes>
+              </object>
+            </child>
+
+          </object>
+        </child>
+      </object>
+    </child>
+
+  </template>
+</interface>

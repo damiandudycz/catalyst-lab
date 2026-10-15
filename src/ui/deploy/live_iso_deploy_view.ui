@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="LiveIsoDeployView" parent="GtkBox">
+    <child>
+      <object class="WizardView" id="wizard_view">
+        <signal name="is-page-ready-to-continue" handler="is_page_ready_to_continue"/>
+        <signal name="begin-installation" handler="begin_installation"/>
+        <property name="show_welcome_screen">True</property>
+        <property name="welcome_screen_icon_name">deploy-symbolic</property>
+        <property name="welcome_screen_title">Deploy Live CD</property>
+        <property name="welcome_screen_description">Writes ISO image of live CD to USB drive or SD card, or saves it as new ISO file to write later.</property>
+        <property name="install_button_label">Deploy</property>
+
+        <!-- Page 1: Deploy method -->
+        <child>
+          <object class="GtkScrolledWindow" id="method_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="method_selection_view">
+                    <property name="title">Deploy to</property>
+                    <property name="description">Where the live CD is written. Methods that can't be used on this computer are disabled, with the reason.</property>
+                    <property name="item_title_property_name">title</property>
+                    <property name="item_subtitle_property_name">details</property>
+                    <property name="item_unsupported_property_name">unavailable</property>
+                    <property name="autoselect_default">True</property>
+                    <signal name="is-item-selectable" handler="is_method_selectable"/>
+                    <signal name="is-item-usable" handler="is_method_usable"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 2: Boot -->
+        <child>
+          <object class="GtkScrolledWindow" id="boot_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">24</property>
+                <child>
+                  <object class="AdwPreferencesGroup" id="boot_group">
+                    <property name="title">Boot</property>
+                    <property name="description">Firmware of machine that starts the live CD.</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup" id="raspberry_pi_group">
+                    <property name="title">Raspberry Pi</property>
+                    <property name="description">Raspberry Pi firmware starts kernel of live CD from FAT partition added before ISO, with device trees of its release. UEFI machines can still boot it.</property>
+                    <child>
+                      <object class="AdwSwitchRow" id="serial_console_row">
+                        <property name="title">Serial console</property>
+                        <property name="subtitle">Messages and login also on serial port (GPIO 14 and 15, UART connector of Raspberry Pi 5)</property>
+                        <property name="active">True</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwSpinRow" id="scan_delay_row">
+                        <property name="title">Wait for USB drives</property>
+                        <property name="subtitle">Seconds before live system is searched, USB drives need some time to appear</property>
+                        <property name="adjustment">
+                          <object class="GtkAdjustment">
+                            <property name="lower">0</property>
+                            <property name="upper">30</property>
+                            <property name="value">3</property>
+                            <property name="step-increment">1</property>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwSwitchRow" id="older_models_row">
+                        <property name="title">Firmware of older models</property>
+                        <property name="subtitle">Needed by Raspberry Pi 4 and older, Raspberry Pi 5 has its firmware in EEPROM. Kernel of live CD has to support the model too</property>
+                        <property name="active">True</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="kernel_arguments_row">
+                        <property name="title">Additional kernel arguments</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwExpanderRow" id="config_row">
+                        <property name="title">Additions to config.txt</property>
+                        <property name="subtitle">Lines added after kernel and initramfs settings</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 3: Live system -->
+        <child>
+          <object class="GtkScrolledWindow" id="system_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox" id="system_box">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">24</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 4: Disk -->
+        <child>
+          <object class="GtkScrolledWindow" id="disk_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="AdwPreferencesGroup" id="disks_group">
+                    <property name="title">Disk</property>
+                    <property name="description">All data on selected disk will be erased. Root access is needed to write to disks.</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="find_disks_button">
+                    <property name="label">Find disks</property>
+                    <property name="halign">center</property>
+                    <style>
+                      <class name="pill"/>
+                    </style>
+                    <signal name="clicked" handler="on_find_disks_clicked"/>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="disk_status_label">
+                    <property name="visible">False</property>
+                    <property name="wrap">True</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </template>
+</interface>

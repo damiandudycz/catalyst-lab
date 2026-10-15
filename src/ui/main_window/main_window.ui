@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="CatalystlabWindow" parent="AdwApplicationWindow">
+    <!-- Window properties -->
+    <property name="default-width">800</property>
+    <property name="default-height">600</property>
+
+    <!-- Breakpoint controls side bar collapsed state and toggle button visibility -->
+    <child>
+      <object class="AdwBreakpoint" id="sidebar_toggle_breakpoint">
+        <condition>max-width: 640sp</condition>
+      </object>
+    </child>
+
+    <!-- Window content -->
+    <property name="content">
+
+      <!-- Main navigation view -->
+      <object class="AdwNavigationView" id="navigation_view">
+        <child>
+          <object class="AdwNavigationPage">
+            <property name="title">Catalyst Lab</property>
+            <property name="tag">root</property>
+            <child>
+
+              <!-- Main split view -->
+              <object class="AdwOverlaySplitView" id="split_view">
+                <property name="show-sidebar">False</property>
+
+                <!-- SideBar -->
+                <property name="sidebar">
+                  <object class="AdwNavigationPage">
+                    <property name="title">Sidebar</property>
+                      <property name="child">
+                        <object class="AdwToolbarView">
+                            <child type="top">
+                              <object class="AdwHeaderBar">
+                                <property name="title-widget">
+                                  <object class="AdwWindowTitle">
+                                    <property name="title">Menu</property>
+                                  </object>
+                                </property>
+                                <child type="end">
+                                  <object class="GtkMenuButton">
+                                    <property name="icon-name">open-menu-symbolic</property>
+                                    <property name="tooltip-text">Menu</property>
+                                    <property name="menu-model">primary_menu</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <property name="content">
+                              <!-- Load CatalystlabWindowSideMenu -->
+                              <object class="CatalystlabWindowSideMenu" id="side_menu"/>
+                            </property>
+                         </object>
+                      </property>
+                  </object>
+                </property>
+
+                <!-- Main Content Area -->
+                <property name="content">
+                  <object class="CatalystlabWindowContent" id="content_view">
+                    <signal name="toggle-sidebar" handler="sidebar_toggle_button_clicked"/>
+                  </object>
+                </property>
+              </object>
+
+            </child>
+          </object>
+        </child>
+      </object>
+
+    </property>
+
+  </template>
+
+  <!-- Context Menu -->
+  <menu id="primary_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Preferences</attribute>
+        <attribute name="action">app.preferences</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_Keyboard Shortcuts</attribute>
+        <attribute name="action">win.show-help-overlay</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_About CatalystLab</attribute>
+        <attribute name="action">app.about</attribute>
+      </item>
+    </section>
+  </menu>
+
+</interface>

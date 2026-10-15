@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="CatalystlabWindowContent" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <child>
+      <!-- Currently displayed content - it's child to be replaced in code -->
+      <object class="GtkBox" id="content">
+        <property name="orientation">vertical</property>
+        <!-- Child is not set here, it will be set in code by the user of this template -->
+      </object>
+    </child>
+  </template>
+
+</interface>
+

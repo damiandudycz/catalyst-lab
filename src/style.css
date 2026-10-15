@@ -1,0 +1,74 @@
+.transparent-bg {
+    background-color: rgba(0, 0, 0, 0);
+}
+.tag-label {
+  border: 1px solid;
+  border-radius: 9999px;
+  padding: 2px 10px;
+  background-color: @sidebar_bg_color;
+  border-color: @sidebar_color;
+  color: @sidebar_fg_color;
+}
+.tag-label.success {
+  background-color: @success_bg_color;
+  border-color: @success_color;
+  color: @success_fg_color;
+}
+.tag-label.warning {
+  background-color: @warning_bg_color;
+  border-color: @warning_color;
+  color: @warning_fg_color;
+}
+/* Toned yellow tag, worth noticing but not a problem, eg. own commits of project. Warning color of theme (adapts to
+   light and dark style) as text, tint of it as background. */
+.tag-label.notice {
+  background-color: alpha(@warning_color, 0.15);
+  border-color: alpha(@warning_color, 0.5);
+  color: @warning_color;
+}
+.tag-label.error {
+  background-color: @error_bg_color;
+  border-color: @error_color;
+  color: @error_fg_color;
+}
+.tag-label.accent {
+  background-color: @accent_bg_color;
+  border-color: @accent_color;
+  color: @accent_fg_color;
+}
+.tag-label.destructive {
+  background-color: @destructive_bg_color;
+  border-color: @destructive_color;
+  color: @destructive_fg_color;
+}
+/* Buttons joined in single boxed list, separated with thin lines. */
+.joined-buttons > row.suggested-action:not(:last-child) {
+  border-bottom: 1px solid alpha(@accent_fg_color, 0.3);
+}
+
+/* Stage in project stages tree: opaque base under its translucent card, so node expanded while hovered covers other
+   nodes and lines. Radius of boxed lists. */
+.stages-tree-node {
+  background-color: var(--window-bg-color);
+  border-radius: 12px;
+}
+.stages-tree-node row.warning,
+.stages-tree-node row.warning image {
+  color: @warning_color;
+}
+
+/* Small button, eg. next to caption text (Update template in project page). */
+button.small-button {
+  min-height: 24px;
+  padding: 2px 10px;
+  border-radius: 6px;
+}
+/* Expander rows nested in expanded expander row (eg. list settings of kernel): Adwaita styles arrows of all rows
+   inside expanded row as expanded, collapsed nested rows get normal arrow again. */
+row.expander:checked row.expander:not(:checked) image.expander-row-arrow { opacity: var(--dim-opacity); color: inherit; }
+row.expander:checked row.expander:not(:checked) image.expander-row-arrow:dir(ltr) { -gtk-icon-transform: rotate(0.5turn); }
+row.expander:checked row.expander:not(:checked) image.expander-row-arrow:dir(rtl) { -gtk-icon-transform: rotate(-0.5turn); }
+
+/* Progress of operations in side menu, in place of line above them: as thin as separator, accent color. */
+progressbar.operations-progress > trough { min-height: 1px; border-radius: 0; background-color: var(--border-color, alpha(currentColor, 0.15)); }
+progressbar.operations-progress > trough > progress { min-height: 1px; border-radius: 0; }

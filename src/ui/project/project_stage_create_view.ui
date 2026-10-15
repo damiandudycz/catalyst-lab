@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="ProjectStageCreateView" parent="GtkBox">
+
+    <!-- Setup view -->
+    <child>
+      <object class="WizardView" id="wizard_view">
+        <signal name="is-page-ready-to-continue" handler="is_page_ready_to_continue"/>
+        <signal name="begin-installation" handler="begin_installation"/>
+        <property name="show_welcome_screen">True</property>
+        <property name="welcome_screen_icon_name">notes-minimalistic-svgrepo-com-symbolic</property>
+        <property name="welcome_screen_title">Create Stage</property>
+        <property name="welcome_screen_description">Add a stage to the project. Select its Catalyst target, optionally a Releng template providing default settings, and the parent stage used as its seed.</property>
+        <property name="install_button_label">Create stage</property>
+
+        <!-- Page 1: Spec type screen -->
+        <child>
+          <object class="GtkScrolledWindow" id="spec_type_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="spec_type_selection_view">
+                    <property name="title">Target</property>
+                    <property name="description">Catalyst target of the stage. Stage targets build stage tarballs, livecd and diskimage targets build installation images.</property>
+                    <property name="item_icon">ruler-cross-pen-svgrepo-com-symbolic</property>
+                    <property name="autoselect_default">False</property>
+                    <signal name="is-item-selectable" handler="is_item_selectable"/>
+                    <signal name="is-item-usable" handler="is_item_usable"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 2: Releng base spec screen -->
+        <child>
+          <object class="GtkScrolledWindow" id="releng_base_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="releng_base_selection_view">
+                    <property name="title">Releng template</property>
+                    <property name="description">You can use a Releng template to prepopulate default settings for your stage. These defaults serve as a starting point and can be overridden by specific stage variables as needed. The architecture specified in the template does not influence the final build—it is used solely for sourcing default values from the Releng repository.
+Catalyst Lab will attempt to locate a matching template based on the selected build architecture. If an exact match is not available, you may still use templates from a different architecture to apply default values.
+If you prefer not to use a template, select None and configure all values manually.</property>
+                    <property name="item_icon">clapperboard-edit-svgrepo-com-symbolic</property>
+                    <property name="autoselect_default">False</property>
+                    <property name="display_none">True</property>
+                    <property name="none_title">None</property>
+                    <property name="none_subtitle">Do not use Releng template</property>
+                    <signal name="is-item-selectable" handler="is_item_selectable"/>
+                    <signal name="is-item-usable" handler="is_item_usable"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 3: Options name -->
+        <child>
+          <object class="GtkScrolledWindow" id="options_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">Options</property>
+                    <!-- <property name="description"></property> -->
+                    <child>
+                      <object class="AdwEntryRow" id="stage_name_row">
+                        <property name="title">Stage name</property>
+                        <property name="show-apply-button">True</property>
+                        <property name="text"></property>
+                        <signal name="apply" handler="on_stage_name_activate"/>
+                        <signal name="changed" handler="on_stage_name_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="name_used_label">
+                        <property name="label">This stage name is already used.</property>
+                        <property name="halign">center</property>
+                        <property name="wrap">True</property>
+                        <property name="justify">fill</property>
+                        <property name="margin-top">12</property>
+                        <style>
+                          <class name="error"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="ItemSelectionView" id="seed_list_selection_view">
+                    <property name="title">Parent stage</property>
+                    <property name="description">Stage used as seed. Its build is the starting point for building this stage.</property>
+                    <property name="item_title_property_name">name</property>
+                    <property name="item_subtitle_property_name">short_details</property>
+                    <property name="autoselect_default">False</property>
+                    <signal name="is-item-selectable" handler="is_item_selectable"/>
+                    <signal name="is-item-usable" handler="is_item_usable"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+  </template>
+</interface>
+

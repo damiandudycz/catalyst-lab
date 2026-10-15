@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="ItemSelectionView" parent="GtkBox">
+    <child>
+      <object class="AdwPreferencesGroup" id="items_list">
+        
+      </object>
+    </child>
+
+  </template>
+</interface>
+

@@ -1,0 +1,527 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="DeployCreateView" parent="GtkBox">
+    <child>
+      <object class="WizardView" id="wizard_view">
+        <signal name="is-page-ready-to-continue" handler="is_page_ready_to_continue"/>
+        <signal name="begin-installation" handler="begin_installation"/>
+        <property name="show_welcome_screen">True</property>
+        <property name="welcome_screen_icon_name">deploy-symbolic</property>
+        <property name="welcome_screen_title">Deploy Build</property>
+        <property name="welcome_screen_description">Installs stage on disk of another machine booted from Gentoo LiveCD, or on disk connected to this computer. Catalyst Lab partitions the disk, installs the stage and configures the system.</property>
+        <property name="install_button_label">Deploy</property>
+
+        <!-- Page 1: Deploy method -->
+        <child>
+          <object class="GtkScrolledWindow" id="method_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="method_selection_view">
+                    <property name="title">Deploy to</property>
+                    <property name="description">Where the stage is installed. Methods that can't be used on this computer are disabled, with the reason.</property>
+                    <property name="item_title_property_name">title</property>
+                    <property name="item_subtitle_property_name">details</property>
+                    <property name="item_unsupported_property_name">unavailable</property>
+                    <property name="autoselect_default">True</property>
+                    <signal name="is-item-selectable" handler="is_method_selectable"/>
+                    <signal name="is-item-usable" handler="is_method_usable"/>
+                  </object>
+                </child>
+
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 2: Connection -->
+        <child>
+          <object class="GtkScrolledWindow" id="connection_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="AdwPreferencesGroup" id="local_group">
+                    <property name="title">Disk of this computer</property>
+                    <property name="description">Connect SD card or external disk. System is installed for machine that will boot from it, select its firmware. Root access is needed to write to the disk.</property>
+                    <property name="visible">False</property>
+                    <child>
+                      <object class="AdwActionRow" id="local_architecture_row">
+                        <property name="title">Architecture</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwComboRow" id="target_firmware_row">
+                        <property name="title">Firmware</property>
+                        <property name="subtitle">Of machine that will boot from the disk</property>
+                        <signal name="notify::selected" handler="on_firmware_changed"/>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup" id="ssh_group">
+                    <property name="title">Connection</property>
+                    <property name="description">On the machine booted from Gentoo LiveCD set root password with passwd, start SSH server with rc-service sshd start and check its address with ip address.</property>
+                    <child>
+                      <object class="AdwEntryRow" id="host_row">
+                        <property name="title">Address</property>
+                        <signal name="changed" handler="on_connection_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="port_row">
+                        <property name="title">Port</property>
+                        <property name="text">22</property>
+                        <property name="input-purpose">digits</property>
+                        <signal name="changed" handler="on_connection_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="user_row">
+                        <property name="title">User</property>
+                        <property name="text">root</property>
+                        <signal name="changed" handler="on_connection_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPasswordEntryRow" id="password_row">
+                        <property name="title">Password</property>
+                        <signal name="changed" handler="on_connection_changed"/>
+                        <signal name="entry-activated" handler="on_connect_clicked"/>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="connect_button">
+                    <property name="label">Connect</property>
+                    <property name="halign">center</property>
+                    <signal name="clicked" handler="on_connect_clicked"/>
+                    <style>
+                      <class name="pill"/>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup" id="machine_group">
+                    <property name="title">Machine</property>
+                    <property name="visible">False</property>
+                    <child>
+                      <object class="AdwActionRow" id="machine_row">
+                        <property name="title">Connected</property>
+                        <property name="icon-name">check-circle-svgrepo-com-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="connection_status_label">
+                    <property name="visible">False</property>
+                    <property name="wrap">True</property>
+                    <property name="justify">center</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 3: Disk -->
+        <child>
+          <object class="GtkScrolledWindow" id="disk_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="AdwPreferencesGroup" id="disks_group">
+                    <property name="title">Disk</property>
+                    <property name="description">All data on selected disk will be erased.</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup" id="partitions_group">
+                    <property name="title">Partitions</property>
+                    <child>
+                      <object class="AdwComboRow" id="table_row">
+                        <property name="title">Partition table</property>
+                        <property name="subtitle">Changing it applies default layout</property>
+                        <property name="model">
+                          <object class="GtkStringList">
+                            <items>
+                              <item>GPT</item>
+                              <item>MBR (DOS)</item>
+                            </items>
+                          </object>
+                        </property>
+                        <signal name="notify::selected" handler="on_table_changed"/>
+                      </object>
+                    </child>
+                    <property name="header-suffix">
+                      <object class="GtkBox">
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkButton" id="default_layout_button">
+                            <property name="label">Default layout</property>
+                            <signal name="clicked" handler="on_default_layout_clicked"/>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="add_partition_button">
+                            <property name="child">
+                              <object class="AdwButtonContent">
+                                <property name="icon-name">list-add-symbolic</property>
+                                <property name="label">Add partition</property>
+                              </object>
+                            </property>
+                            <signal name="clicked" handler="on_add_partition_clicked"/>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="partitions_status_label">
+                    <property name="visible">False</property>
+                    <property name="wrap">True</property>
+                    <style>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 4: System -->
+        <child>
+          <object class="GtkScrolledWindow" id="system_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">System</property>
+                    <child>
+                      <object class="AdwEntryRow" id="hostname_row">
+                        <property name="title">Hostname</property>
+                        <signal name="changed" handler="on_system_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwSwitchRow" id="ssh_row">
+                        <property name="title">Enable SSH server</property>
+                        <property name="subtitle">Starts sshd on boot, when stage contains it</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwSwitchRow" id="reboot_row">
+                        <property name="title">Reboot when finished</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="hostname_status_label">
+                    <property name="visible">False</property>
+                    <property name="wrap">True</property>
+                    <style>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">Localization</property>
+                    <property name="description">Suggested from this computer.</property>
+                    <child>
+                      <object class="AdwEntryRow" id="timezone_row">
+                        <property name="title">Timezone</property>
+                        <signal name="changed" handler="on_system_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwExpanderRow" id="locale_row">
+                        <property name="title">Locales</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="keymap_row">
+                        <property name="title">Keyboard layout</property>
+                        <signal name="changed" handler="on_system_changed"/>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="localization_status_label">
+                    <property name="visible">False</property>
+                    <property name="wrap">True</property>
+                    <style>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">Network</property>
+                    <child>
+                      <object class="AdwComboRow" id="network_service_row">
+                        <property name="title">Network service</property>
+                        <signal name="notify::selected" handler="on_system_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwComboRow" id="network_mode_row">
+                        <property name="title">Address</property>
+                        <property name="model">
+                          <object class="GtkStringList">
+                            <items>
+                              <item>Automatic (DHCP)</item>
+                              <item>Static</item>
+                            </items>
+                          </object>
+                        </property>
+                        <signal name="notify::selected" handler="on_system_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="interface_row">
+                        <property name="title">Interface</property>
+                        <signal name="changed" handler="on_system_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="address_row">
+                        <property name="title">Address with prefix</property>
+                        <signal name="changed" handler="on_system_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="gateway_row">
+                        <property name="title">Gateway</property>
+                        <signal name="changed" handler="on_system_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="dns_row">
+                        <property name="title">DNS servers</property>
+                        <signal name="changed" handler="on_system_changed"/>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="network_status_label">
+                    <property name="visible">False</property>
+                    <property name="wrap">True</property>
+                    <style>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 5: Users -->
+        <child>
+          <object class="GtkScrolledWindow" id="users_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">Root</property>
+                    <property name="description">Root password is required, root account of stage is locked.</property>
+                    <child>
+                      <object class="AdwPasswordEntryRow" id="root_password_row">
+                        <property name="title">Root password</property>
+                        <signal name="changed" handler="on_users_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPasswordEntryRow" id="root_password_confirm_row">
+                        <property name="title">Confirm root password</property>
+                        <signal name="changed" handler="on_users_changed"/>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="root_status_label">
+                    <property name="visible">False</property>
+                    <property name="wrap">True</property>
+                    <style>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup" id="users_group">
+                    <property name="title">Users</property>
+                    <property name="description">Groups are the ones existing in stage. Members of wheel group can use sudo and doas: Gentoo doesn't allow it by default, deploy enables it.</property>
+                    <property name="header-suffix">
+                      <object class="GtkButton">
+                        <property name="child">
+                          <object class="AdwButtonContent">
+                            <property name="icon-name">list-add-symbolic</property>
+                            <property name="label">Add user</property>
+                          </object>
+                        </property>
+                        <signal name="clicked" handler="on_add_user_clicked"/>
+                        <style>
+                          <class name="flat"/>
+                        </style>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="users_status_label">
+                    <property name="visible">False</property>
+                    <property name="wrap">True</property>
+                    <style>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup" id="ssh_keys_group">
+                    <property name="title">SSH keys</property>
+                    <property name="description">Selected keys of this computer are authorized for root and added users.</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 6: Boot -->
+        <child>
+          <object class="GtkScrolledWindow" id="boot_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">Boot</property>
+                    <child>
+                      <object class="AdwActionRow" id="stage_contents_row">
+                        <property name="title">Stage contents</property>
+                        <property name="subtitle">Checking stage archive...</property>
+                        <child type="suffix">
+                          <object class="AdwSpinner" id="stage_contents_spinner"/>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwComboRow" id="kernel_row">
+                        <property name="title">Kernel</property>
+                        <signal name="notify::selected" handler="on_boot_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwSwitchRow" id="firmware_row">
+                        <property name="title">Install firmware</property>
+                        <property name="subtitle">sys-kernel/linux-firmware, needed by most Wi-Fi, Bluetooth and graphics hardware</property>
+                        <signal name="notify::active" handler="on_boot_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwComboRow" id="bootloader_row">
+                        <property name="title">Bootloader</property>
+                        <signal name="notify::selected" handler="on_boot_changed"/>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="boot_info_label">
+                    <property name="wrap">True</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="dimmed"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </template>
+</interface>

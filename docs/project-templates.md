@@ -1,0 +1,325 @@
+# Project templates
+
+New projects can be created from a template. A template describes the stages of a project (and optionally files like
+Portage configuration), and can have options, like architecture or init system, that change what is created.
+
+Templates come from Git repositories listed in
+[`data/project_templates/repositories.txt`](../data/project_templates/repositories.txt). The app always downloads this
+list from the `main` branch, so templates removed from it are not offered anymore. Then it downloads only the
+`template.toml` files of these repositories, to show their templates and options. When a project is created, the
+repository is cloned under the project name and its content is replaced with the generated project, so the project
+keeps the history of the template repository.
+
+Templates included in the official list are in
+[catalystlab-templates](https://github.com/damiandudycz/catalystlab-templates), for example
+[Gentoo release](https://github.com/damiandudycz/catalystlab-templates/tree/main/gentoo-release).
+
+Templates can't run code. Values are generated with small expressions (see [Expressions](#expressions)) that only
+allow a fixed set of operations, so templates from other repositories are safe to use.
+
+## Repository layout
+
+A repository has one template in its root, or many templates, each in its own directory:
+
+```
+gentoo-release/                 Directory of template, its name is used only in repository.
+    template.toml               Required, definition of template.
+    files/                      Optional, files copied to projects (see [[files]]).
+    README.md                   Optional.
+raspberry-pi-5/
+    template.toml
+    ...
+README.md                       Optional, also LICENSE, COPYING (with any extension), .gitignore, .gitattributes.
+```
+
+With one template, `template.toml`, `files/` and other files are in the root of the repository.
+
+Repositories are checked when they are downloaded, and are rejected if their latest commit contains anything else:
+
+- other files or directories (also directories of templates without `template.toml`),
+- symbolic links, submodules or executable files,
+- more than 2000 files, files larger than 10 MB, or more than 50 MB of files in total.
+
+## template.toml
+
+```toml
+format = 1                      # Optional, version of template format.
+min_app_version = "0.2.0"       # Optional, oldest version of Catalyst Lab that supports the template.
+name = "Gentoo release"         # Shown in list of templates and used as default project name.
+description = "Stages built like official Gentoo releases."
+architecture = "arm64"          # Optional, architecture of projects for templates made for one architecture.
+```
+
+The architecture of the project is set by the template when it has `architecture`, or a variable of `architecture`
+type. Otherwise the app asks for it. A fixed architecture is available in expressions as `architecture`.
+
+### Options: `[[variables]]`
+
+Options selected when creating a project, shown in this order. All of them are optional, a template without
+variables creates always the same project.
+
+```toml
+[[variables]]
+id = "init"                     # Name used in expressions.
+title = "Init system"           # Shown in the app.
+description = "..."             # Optional, shown under the title.
+type = "choice"                 # choice (default), boolean or architecture.
+default = "openrc"              # Optional, the first available option is used otherwise.
+when = "architecture != 'm68k'" # Optional, the option is shown only when this is true. Otherwise its value is none.
+options = [
+    { value = "openrc", title = "OpenRC" },
+    { value = "systemd", title = "systemd", when = "architecture in ['amd64', 'arm64']" },
+    "other",                    # Short form, value is also the title.
+]
+```
+
+Types:
+
+| Type | Values |
+|---|---|
+| `choice` | Texts from `options`. Options can have their own `when`, to be available only for some selections. |
+| `boolean` | `true` or `false`, shown as a switch. Has no `options`. |
+| `multiple` | Any number of `options`, shown as a list of switches. Its value is a list of selected values, `default` is a list too. |
+| `architecture` | Architecture names (`amd64`, `arm64`, `arm`, `ppc`, `ppc64`, `ppc64le`, `riscv`, `s390x`, `sparc`, `x86`...). The selected one is also the architecture of the project, so the app doesn't ask for it separately. Only one per template. |
+
+A `when` condition can use variables defined above it. When a selected value is no longer available (because of
+another selection), the default or first available option is used.
+
+### Groups: `[[groups]]`
+
+Configuration that can be enabled when creating a project and applied to selected stages, for example sets of
+packages. Every group is shown with a switch, and lists stages it can be applied to.
+
+```toml
+groups_title = "Additional software"    # Top level, title of groups in the app.
+
+[[groups]]
+id = "kernel"
+title = "Kernel and firmware"
+description = "Distribution kernel with initramfs."   # Optional.
+default = true                          # Optional, enabled by default.
+when = "architecture in ['amd64', 'arm64']"  # Optional, the group is offered only when this is true.
+stages = ["stage4", "stage4-desktop"]   # Ids of stages the group can be applied to.
+default_stages = ["stage4"]             # Optional, stages selected by default (all of stages otherwise).
+
+[groups.arguments]                      # Added to arguments of selected stages.
+stage4_packages = ["sys-kernel/gentoo-kernel-bin", "sys-kernel/linux-firmware"]
+
+[[groups.files]]                        # Copied to directories of selected stages.
+source = "files/kernel"
+destination = "portage"                 # Relative to the stage directory.
+```
+
+- Lists in arguments are added to lists of the stage and of other groups (without duplicates), other values replace
+  them.
+- A group isn't applied to a stage built from a stage that already gets it (its parent, or further ancestor): the
+  stage has its packages, services and files from its seed. Such stages are shown checked and disabled.
+- Arguments that the target of a stage doesn't have are skipped, so a group can set for example both
+  `stage4_packages` and `livecd_packages`.
+- Enabled groups are available in expressions as list `groups`, for example `'kernel' in groups`. Groups can use
+  variables in `when` and expressions, `[values]` can use `groups`.
+
+### Overlays: `[[overlays]]`
+
+Overlays (Gentoo ebuild repositories) used by stages, for example with packages or kernels for specific hardware.
+
+```toml
+[[overlays]]
+id = "ps3"                              # Used in stage arguments.
+url = "https://github.com/damiandudycz/ps3-gentoo-overlay.git"
+name = "ps3-gentoo-overlay"             # Optional, name of overlay in Catalyst Lab when it's added.
+when = "..."                            # Optional, overlay is used only when this is true.
+
+[[stages]]
+...
+[stages.arguments]
+repos = [{ type = "Overlay", value = "ps3" }]
+```
+
+When the project is created, an overlay already added to Catalyst Lab from the same URL is used. Otherwise it's
+cloned to Overlays. The options page lists overlays and whether they will be downloaded. Children of the stage inherit
+`repos` like other arguments.
+
+### Computed values: `[values]`
+
+Values computed from variables, available in expressions below (and in later values), in this order. Useful when the
+same value is used in many places.
+
+```toml
+[values]
+spec_directory = "{{ f'{variant}/' if variant else '' }}"
+stage4_services = "{{ ['sshd|default'] if init == 'openrc' else [] }}"
+```
+
+### Stages: `[[stages]]`
+
+Stages of the project. A parent has to be defined before its children.
+
+```toml
+[[stages]]
+id = "stage3"                   # Used in parent of other stages.
+parent = "stage1"               # Optional, id of the stage whose build is used as seed.
+name = "stage3-{{ init }}"      # Name of stage in project.
+target = "stage3"               # Catalyst target: stage1, stage3, stage4, livecd_stage1, livecd_stage2...
+releng_template = "{{ spec_directory }}stage3-{{ init }}-23.spec"  # Optional, see below.
+when = "include_stage3"         # Optional, the stage is created only when this is true.
+
+[stages.arguments]              # Optional values of stage arguments.
+stage4_packages = ["app-admin/sudo", "net-misc/chrony"]
+stage4_rcadd = "{{ stage4_services }}"
+```
+
+- `releng_template` is a path of a spec in the Releng directory selected for the project, relative to
+  `releases/specs/<architecture>` (for example `releases/specs/amd64` or `releases/specs/ppc/ppc64`). The stage
+  inherits values from this spec. A missing spec is reported when the project is created, but the stage is still
+  created.
+- `arguments` are Catalyst spec options, with `/` replaced by `_` (`stage4/packages` → `stage4_packages`). Values can
+  be texts, numbers, booleans or lists of texts. Empty values (`""`, `[]` or none) are skipped. Other kinds of values
+  can be given in the format of `stage.json` files of projects, for example
+  `profile = { type = "StageAutomaticOption", value = "INHERIT_FROM_PARENT" }`. To find names and formats, configure
+  a stage in the app and look at its `stages/<name>/stage.json`.
+- Arguments that are not set get the same defaults as stages added in the app (inherited from the parent or the Releng
+  spec when possible). Values set by the template are shown as **Custom value** in stage settings.
+- In lists, items that are none are skipped, so expressions can leave them out.
+- Some values can join inherited values with own ones: put `"@releng"` (Releng spec) and/or `"@parent"` (parent
+  stage) in a list with own entries, for example `livecd_packages = ["@releng", "net-misc/networkmanager"]` or
+  `common_flags = ["@parent", "-flto"]`. Lists (packages, USE flags, services `rcadd`/`rcdel`, `unmerge`, `empty`,
+  `rm`, `modblacklist`, `users`, `groups`, `repos`, `catalyst_use`, `hostuse`, `install_mask`) are joined without
+  duplicates, texts (compiler flags, `gk_mainargs`, `livecd_bootargs`) are joined with spaces. Inherited entries can't
+  be removed this way; to remove some, give the whole value without markers. Groups adding entries to such list keep
+  the inherited entries too. Needs Catalyst Lab 0.3.1 or newer (`min_app_version = "0.3.1"`).
+- Values that are paths to files of the project (for example fsscript or kernel configuration added with
+  `[[files]]`) should use placeholders, replaced when building: `@STAGE_DIR@` (directory of the stage),
+  `@PROJECT_DIR@` (directory of the project), and like in Releng specs `@REPO_DIR@` (Releng directory). For example
+  `stage4_fsscript = "@STAGE_DIR@/fsscript.sh"`. Projects are moved and cloned, so they shouldn't contain
+  absolute paths.
+
+#### Kernels
+
+Stages with kernels (`livecd_stage2`, `stage4`...) build kernels listed in `boot_kernel`. Settings of each kernel
+(`boot/kernel/<name>/...` in Catalyst specs) are given in `boot_kernels`, a table of kernel names. Settings that are not
+given come from the Releng spec of the stage. For example a kernel from an overlay:
+
+```toml
+[stages.arguments]
+boot_kernel = ["ps3"]
+
+[stages.arguments.boot_kernels.ps3]
+sources = "sys-kernel/gentoo-kernel-ps3"
+distkernel = true
+dracut_args = "--xz --no-hostonly -a dmsquash-live -o btrfs"
+extraversion = "ps3"
+```
+
+Use `boot_kernel = ["@releng"]` to use the Releng kernel list as-is. A template may optionally add its own kernels
+alongside that list with `boot_kernel = ["@releng", "custom-name"]`; custom names need corresponding entries in
+`boot_kernels`. Platform templates that replace the Releng kernel list should specify only their custom names.
+
+Settings: `sources`, `distkernel`, `config`, `dracut_args`, `extraversion`, `packages`, `use`, `gk_kernargs`,
+`gk_action`, `aliases`, `console`, `initramfs_overlay`, `softlevel`. `packages`, `use`, `aliases` and `console` are
+lists, `distkernel` is a boolean (`true` writes `yes`, `false` leaves it out, as Catalyst only checks if it's set), others are
+texts. Groups can add settings of kernels too
+(`[groups.arguments.boot_kernels.<name>]`), they are combined with settings of the stage.
+Kernel settings need Catalyst Lab 0.3.0 or newer (`min_app_version = "0.3.0"`).
+
+### Files: `[[files]]`
+
+Files copied to the project, for example Portage configuration or root overlays of stages.
+
+```toml
+[[files]]
+source = "files/stage4"                 # File or directory in template.
+destination = "stages/stage4-{{ init }}" # Path in project.
+when = "init == 'openrc'"               # Optional.
+```
+
+- Paths can't lead outside of the template or the project.
+- Files ending with `.template` are copied without this suffix, with `{{ expressions }}` in their contents replaced.
+  Other files are copied without changes.
+- Stage directories are `stages/<stage name>`. Their `portage` directory is Portage configuration of the stage,
+  `root_overlay` its root overlay (files added to the root of stage4 or LiveCD), and `overlay` the ISO overlay of
+  livecd-stage2 (files added to the ISO next to the live system). When a template adds files there, the stage uses
+  them: **Stage overlay** is added to its Portage confdir, root overlay or ISO overlay sources (after Releng and
+  parent sources). Groups are an easy way to add them only to selected stages.
+
+## Updating projects
+
+Projects remember the template they were created from: `project-template.json` in the project has its repository,
+commit, selected options and stages created from template stages. Commits that generate the project ("Create project
+from template", "Update from template") change this file. The project page shows the template, own commits of the
+project (not in the template), not saved changes, and **Update template** button. It's blue when the template has
+changes: when the project is opened, only listing of files of the latest template is downloaded to check it.
+
+Changes of the project have to be saved before updating. Update starts with options of the latest version of the
+template, with values selected for the project (options that aren't available anymore get defaults), so they can be
+changed too. Update generates the project again from the latest version of
+the template, with the same options, as a new commit on top of the last generation. Then it compares three versions:
+the last generation, the project, and the new generation. Settings of stages are compared one by one (stages are
+matched by ids, so renamed stages are compared too), other files as whole:
+
+- changed only in the template: applied,
+- changed only in the project: kept,
+- changed in both differently: you choose to keep the project version or use the template version,
+- stage removed by the template (eg. option was changed), but changed in the project (its settings, or files added
+  to it): you choose to keep the whole stage, or remove it.
+
+Own commits of the project are then replayed on top of the new generation, with these decisions, so the history of the
+project has its own commits on top of the latest template. Commits keep their messages and authors. The template
+repository isn't a remote of the project, projects get changes of templates only this way.
+
+Projects cloned from Git repositories are updated the same way (**Update from repository**): the remote branch is
+compared with the project since the last shared commit, and own commits are replayed on top of the remote branch, so
+the history of the project stays the history of its repository with own commits on top. Projects without own commits
+are moved to the latest version. As commits are replayed (rebased), commits already pushed elsewhere get new ids.
+
+## Expressions
+
+Texts in `template.toml` can contain expressions in `{{ }}`. A text that is a single expression gets its value (which
+can be a list or boolean), otherwise values are inserted as text. `when` conditions are expressions without `{{ }}`.
+
+Expressions can use:
+
+- names of variables, computed values, `groups` and `project_name`,
+- texts, numbers, `True`, `False`, `None` and lists,
+- `and`, `or`, `not`, comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`), `in`, `not in`,
+- `+` (texts, lists, numbers) and `-` (numbers),
+- conditional values: `'a' if condition else 'b'`,
+- f-strings: `f'{variant}/'`,
+- functions `lower(text)`, `upper(text)`, `replace(text, old, new)`, `join(separator, list)`.
+
+Everything else (calling other functions, attributes, indexing, loops, comprehensions, lambdas, imports...) is
+rejected. Expressions are limited in length, complexity and size of their results.
+
+## Testing a template
+
+Write a list of repositories in the format of `repositories.txt` and start Catalyst Lab with
+`CATALYSTLAB_TEMPLATE_REPOSITORIES` set to its `file://` (or `https://`) URL, which replaces the list from `main`.
+Local repositories can be added to it with `file://` URLs, for example `file:///home/me/my-templates`. Only committed
+files are used.
+
+Then create a new project, select **From template** and your template. Errors in `template.toml` are shown in the list
+of templates or on the options page. Check that every combination of options creates the stages you expect: the
+options page lists them as you change options.
+
+## Adding a template to Catalyst Lab
+
+Templates in Git repositories are added to the list in the app with a pull request:
+
+1. Create a public Git repository with your template, following the [repository layout](#repository-layout).
+2. Fork [catalyst-lab-2](https://github.com/damiandudycz/catalyst-lab-2) and add a line to
+   [`data/project_templates/repositories.txt`](../data/project_templates/repositories.txt):
+   ```
+   https://github.com/you/your-template.git Title of your template
+   ```
+   The URL is followed by an optional title, shown with templates of the repository and in errors.
+   A template can also be added to an existing repository with templates, like
+   [catalystlab-templates](https://github.com/damiandudycz/catalystlab-templates), with a pull request there.
+3. Open a pull request that changes only this file. Describe what the template creates and which architectures and
+   Releng specs it was tested with.
+
+Catalyst Lab downloads the latest list from the `main` branch of catalyst-lab-2 when templates are shown, so a merged
+template is available without updating the app, and a template removed from the list (for example when it's broken
+or unsafe) is not offered anymore.
+Repository URLs have to use `https://`. Templates are downloaded from the default branch of their repository, so later
+changes are available without changing the list. Use `min_app_version` when a template needs features of newer
+Catalyst Lab: older versions show it as unavailable, with the version it needs.

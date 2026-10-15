@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="ProjectBuildView" parent="GtkBox">
+
+    <!-- Setup view -->
+    <child>
+      <object class="WizardView" id="wizard_view">
+        <signal name="is-page-ready-to-continue" handler="is_page_ready_to_continue"/>
+        <signal name="begin-installation" handler="begin_installation"/>
+        <property name="show_welcome_screen">True</property>
+        <property name="welcome_screen_icon_name">sledgehammer-svgrepo-com-symbolic</property>
+        <property name="welcome_screen_title">Build Stages</property>
+        <property name="welcome_screen_description">Build selected stages of the project with Catalyst. Parent stages are reused from their latest builds, or built too when they don't have any.</property>
+        <property name="install_button_label">Start build</property>
+
+        <!-- Page 1: Stages selection -->
+        <child>
+          <object class="GtkScrolledWindow" id="stages_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="AdwPreferencesGroup" id="stages_group">
+                    <property name="title">Stages</property>
+                    <property name="description">Select stages to build. Parent stages are reused from their latest build, or built too if they don't have one.</property>
+                    <property name="header-suffix">
+                      <object class="GtkBox">
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkButton">
+                            <property name="label">Select all</property>
+                            <property name="valign">center</property>
+                            <signal name="clicked" handler="on_select_all_clicked"/>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton">
+                            <property name="label">Clear</property>
+                            <property name="valign">center</property>
+                            <signal name="clicked" handler="on_clear_clicked"/>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 2: Snapshot -->
+        <child>
+          <object class="GtkScrolledWindow" id="snapshot_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="snapshot_selection_view">
+                    <property name="title">Snapshot</property>
+                    <property name="description">Snapshot of the Gentoo ebuild repository used by this build. Snapshot of the project is selected by default. Get latest generates a new snapshot with the project toolset before building.</property>
+                    <property name="item_icon">video-frame-svgrepo-com-symbolic</property>
+                    <property name="item_title_property_name">name</property>
+                    <property name="item_subtitle_property_name">short_details</property>
+                    <property name="autoselect_default">False</property>
+                    <signal name="is-item-selectable" handler="is_item_selectable"/>
+                    <signal name="is-item-usable" handler="is_item_usable"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 3: Summary -->
+        <child>
+          <object class="GtkScrolledWindow" id="summary_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="AdwPreferencesGroup" id="build_order_group">
+                    <property name="title">Build order</property>
+                    <property name="description">Stages are built in this order. When a stage fails, stages depending on it are skipped, other branches are still built.</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup" id="reused_group">
+                    <property name="title">Reused builds</property>
+                    <property name="description">Previous builds used as seeds.</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">Location</property>
+                    <child>
+                      <object class="AdwActionRow" id="snapshot_row">
+                        <property name="title">Snapshot</property>
+                        <property name="icon-name">video-frame-svgrepo-com-symbolic</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow" id="runs_on_row">
+                        <property name="title">Runs on</property>
+                        <property name="icon-name">toolbox-symbolic</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow" id="location_row">
+                        <property name="title">Builds are stored in</property>
+                        <property name="subtitle-selectable">True</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+  </template>
+</interface>

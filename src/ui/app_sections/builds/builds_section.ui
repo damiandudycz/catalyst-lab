@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="BuildsSection" parent="GtkBox">
+    <child>
+      <object class="GtkScrolledWindow">
+        <property name="hscrollbar-policy">automatic</property>
+        <property name="vscrollbar-policy">automatic</property>
+        <property name="hexpand">True</property>
+        <property name="vexpand">True</property>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">24</property>
+            <property name="margin-start">24</property>
+            <property name="margin-end">24</property>
+            <property name="margin-bottom">24</property>
+
+            <child>
+              <object class="RepositoryListView">
+                <property name="title">Projects</property>
+                <property name="item_class_name">ProjectDirectory</property>
+                <property name="item_installation_class_name">ProjectBuild</property>
+                <property name="item_icon">box-minimalistic-svgrepo-com-symbolic</property>
+                <property name="item_title_property_name">name</property>
+                <property name="item_subtitle_property_name">builds_summary</property>
+                <property name="item_status_property_name">build_status_indicator_values</property>
+                <property name="show_add_button">False</property>
+                <property name="show_installations">False</property>
+                <signal name="item-row-pressed" handler="on_item_row_pressed"/>
+                <signal name="installation-row-pressed" handler="on_installation_row_pressed"/>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkSeparator"/>
+            </child>
+
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Builds of project stages, stored in builds location. Select a project to see builds of its stages. Projects being built are marked with blinking indicator.</property>
+                <property name="halign">center</property>
+                <property name="wrap">True</property>
+                <property name="justify">fill</property>
+                <attributes>
+                  <attribute name="foreground" value="grey"/>
+                </attributes>
+              </object>
+            </child>
+
+          </object>
+        </child>
+      </object>
+    </child>
+
+  </template>
+</interface>

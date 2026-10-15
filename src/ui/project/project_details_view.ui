@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="ProjectDetailsView" parent="GtkBox">
+    <property name="orientation">vertical</property>
+
+    <!-- Switcher -->
+    <child>
+      <object class="AdwViewSwitcher" id="switcher">
+        <property name="margin-start">24</property>
+        <property name="margin-end">24</property>
+        <property name="margin-bottom">12</property>
+        <property name="stack">stack</property>
+        <property name="policy">wide</property>
+      </object>
+    </child>
+    <!-- [END] Switcher -->
+
+    <!-- Content container -->
+    <child>
+      <object class="AdwViewStack" id="stack">
+
+        <!-- Pages []: -->
+
+        <!-- Page 1 container -->
+        <child>
+          <object class="AdwViewStackPage">
+            <property name="name">stages</property>
+            <property name="title">Stages</property>
+            <property name="icon-name">checklist-minimalistic-svgrepo-com-symbolic</property>
+            <property name="child">
+              <object class="GtkScrolledWindow">
+                <property name="hscrollbar-policy">never</property>
+                <property name="vscrollbar-policy">automatic</property>
+                <property name="hexpand">True</property>
+                <property name="vexpand">True</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">automatic</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <property name="hexpand">True</property>
+                        <property name="vexpand">True</property>
+                        <child>
+                          <object class="StagesTreeView" id="stages_tree_view">
+                            <signal name="stage-selected" handler="on_stage_selected"/>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkListBox">
+                        <property name="margin-start">24</property>
+                        <property name="margin-end">24</property>
+                        <property name="margin-top">12</property>
+                        <property name="margin-bottom">12</property>
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="boxed-list"/>
+                        </style>
+                        <child>
+                          <object class="AdwButtonRow">
+                            <property name="title">Add stage</property>
+                            <property name="start-icon-name">list-add-symbolic</property>
+                            <property name="activatable">True</property>
+                            <signal name="activated" handler="on_add_stage_activated"/>
+                            <style>
+                              <class name="suggested-action"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <!-- Build buttons in one row, visible ones share it. -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="margin-start">24</property>
+                        <property name="margin-end">24</property>
+                        <property name="margin-bottom">12</property>
+                        <property name="spacing">12</property>
+                        <property name="homogeneous">True</property>
+                        <child>
+                          <object class="GtkListBox" id="build_progress_list">
+                            <property name="hexpand">True</property>
+                            <property name="selection-mode">none</property>
+                            <property name="visible">False</property>
+                            <style>
+                              <class name="boxed-list"/>
+                            </style>
+                            <child>
+                              <object class="AdwButtonRow" id="build_progress_row">
+                                <property name="title">Show build progress</property>
+                                <property name="start-icon-name">checklist-minimalistic-svgrepo-com-symbolic</property>
+                                <property name="activatable">True</property>
+                                <signal name="activated" handler="on_build_progress_activated"/>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkListBox">
+                            <property name="hexpand">True</property>
+                            <property name="selection-mode">none</property>
+                            <style>
+                              <class name="boxed-list"/>
+                            </style>
+                            <child>
+                              <object class="AdwButtonRow">
+                                <property name="title">Builds list</property>
+                                <property name="start-icon-name">box-minimalistic-svgrepo-com-symbolic</property>
+                                <property name="activatable">True</property>
+                                <signal name="activated" handler="on_builds_activated"/>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkListBox" id="build_list">
+                            <property name="hexpand">True</property>
+                            <property name="selection-mode">none</property>
+                            <style>
+                              <class name="boxed-list"/>
+                            </style>
+                            <child>
+                              <object class="AdwButtonRow" id="build_row">
+                                <property name="title">Create build</property>
+                                <property name="start-icon-name">sledgehammer-svgrepo-com-symbolic</property>
+                                <property name="activatable">True</property>
+                                <signal name="activated" handler="on_build_activated"/>
+                                <style>
+                                  <class name="suggested-action"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </property>
+          </object>
+        </child>
+        <!-- [END] Page 1 container -->
+
+        <!-- Page 2 container -->
+        <child>
+          <object class="AdwViewStackPage">
+            <property name="title">Configuration</property>
+            <property name="icon-name">settings-svgrepo-com-symbolic</property>
+            <property name="child">
+              <object class="GtkScrolledWindow">
+                <property name="hscrollbar-policy">never</property>
+                <property name="vscrollbar-policy">automatic</property>
+                <property name="hexpand">True</property>
+                <property name="vexpand">True</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+                    <!-- <property name="margin-top">24</property> -->
+                    <property name="margin-bottom">24</property>
+                    <child>
+                      <object class="ItemSelectionExpanderRow" id="toolset_selection_view">
+                        <property name="title">Toolset</property>
+                        <property name="item_class_name">Toolset</property>
+                        <property name="item_icon">toolbox-symbolic</property>
+                        <property name="item_title_property_name">name</property>
+                        <property name="item_subtitle_property_name">short_details</property>
+                        <property name="item_status_property_name">status_indicator_values</property>
+                        <signal name="is-item-selectable" handler="is_item_selectable"/>
+                        <signal name="is-item-usable" handler="is_item_usable"/>
+                        <signal name="setup-items-monitoring" handler="setup_items_monitoring"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="ItemSelectionExpanderRow" id="releng_selection_view">
+                        <property name="title">Releng directory</property>
+                        <property name="item_class_name">RelengDirectory</property>
+                        <property name="item_icon">book-minimalistic-svgrepo-com-symbolic</property>
+                        <property name="item_title_property_name">name</property>
+                        <property name="item_subtitle_property_name">short_details</property>
+                        <property name="item_status_property_name">status_indicator_values</property>
+                        <signal name="is-item-selectable" handler="is_item_selectable"/>
+                        <signal name="is-item-usable" handler="is_item_usable"/>
+                        <signal name="setup-items-monitoring" handler="setup_items_monitoring"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="ItemSelectionExpanderRow" id="snapshot_selection_view">
+                        <property name="title">Snapshot</property>
+                        <property name="item_class_name">Snapshot</property>
+                        <property name="item_icon">video-frame-svgrepo-com-symbolic</property>
+                        <property name="item_title_property_name">name</property>
+                        <property name="item_subtitle_property_name">short_details</property>
+                        <property name="item_status_property_name">status_indicator_values</property>
+                        <signal name="is-item-selectable" handler="is_item_selectable"/>
+                        <signal name="is-item-usable" handler="is_item_usable"/>
+                        <signal name="setup-items-monitoring" handler="setup_items_monitoring"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="ItemSelectionExpanderRow" id="arch_selection_view">
+                        <property name="title">Architecture</property>
+                        <property name="item_icon">cursor-square-symbolic</property>
+                        <property name="item_title_property_name">name</property>
+                        <signal name="is-item-selectable" handler="is_item_selectable"/>
+                        <signal name="is-item-usable" handler="is_item_usable"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="ItemSelectionExpanderRow" id="packages_selection_view">
+                        <property name="title">Binary packages</property>
+                        <property name="item_class_name">PackagesDirectory</property>
+                        <property name="item_icon">archive-minimalistic-svgrepo-com-symbolic</property>
+                        <property name="item_title_property_name">name</property>
+                        <property name="item_subtitle_property_name">short_details</property>
+                        <property name="item_status_property_name">status_indicator_values</property>
+                        <property name="display_none">True</property>
+                        <property name="none_title">None</property>
+                        <property name="none_subtitle">Packages are kept in builds of project, not shared</property>
+                        <signal name="is-item-selectable" handler="is_item_selectable"/>
+                        <signal name="is-item-usable" handler="is_item_usable"/>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </property>
+          </object>
+        </child>
+        <!-- [END] Page 2 container -->
+
+        <!-- Page 3 container -->
+        <child>
+          <object class="AdwViewStackPage">
+            <property name="title">Information</property>
+            <property name="icon-name">question-circle-svgrepo-com-symbolic</property>
+            <property name="child">
+              <object class="GtkScrolledWindow">
+                <property name="hscrollbar-policy">automatic</property>
+                <property name="vscrollbar-policy">automatic</property>
+                <property name="hexpand">True</property>
+                <property name="vexpand">True</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">24</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+                    <!-- <property name="margin-top">24</property> -->
+                    <property name="margin-bottom">24</property>
+                    <child>
+                      <object class="GitDirectoryDetailsView" id="directory_details_view">
+                        <property name="manager_class_name">ProjectManager</property>
+                        <property name="update_class_name">ProjectUpdate</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </property>
+          </object>
+        </child>
+        <!-- [END] Page 3 container -->
+
+      </object>
+    </child>
+    <!-- [END] Content container -->
+
+  </template>
+</interface>
+

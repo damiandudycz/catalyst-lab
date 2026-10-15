@@ -1,0 +1,206 @@
+from __future__ import annotations
+import os, re, shutil, uuid
+from dataclasses import dataclass, field
+from typing import Callable
+from .repository import Repository
+from .snapshot import PortageProfile
+from .project_stage import load_catalyst_stage_arguments_details
+from .project_stage_arguments import StageArgumentDetails
+from .project_stage_automatic_option import StageAutomaticOption
+from .project_stage_compression_mode import StageCompressionMode
+from .project_stage_value_resolver import resolve_stage_argument, load_stage_releng_template_values, UNRESOLVED
+from .project_stage_portage_confdir import (
+    StagePortageConfdirSource, portage_confdir_sources, releng_portage_variant, parent_overlay_stages,
+    stage_overlay_path, is_emulated_build, root_overlay_values, root_overlay_folders
+)
+
+# ------------------------------------------------------------------------------
+# Generating catalyst spec files for stages.
+
+# Arguments describing stage only in CatalystLab, not passed to catalyst.
+_virtual_arguments = {StageArgumentDetails.name.value, StageArgumentDetails.parent.value, StageArgumentDetails.releng_template.value}
+
+@dataclass
+class StageSpecContext:
+    """Values known only when building."""
+    timestamp: str          # Replaces @TIMESTAMP@.
+    source_subpath: str     # Seed, relative to catalyst builds directory.
+    portage_confdir: str | None # Generated portage configuration, as seen by catalyst.
+    cache_paths: dict = field(default_factory=dict) # Enabled caches (pkgcache_path, kerncache_path), as seen by catalyst.
+    root_overlay: str | None = None # Generated root overlay, as seen by catalyst.
+    iso_overlay: str | None = None # Generated ISO overlay (livecd/overlay), as seen by catalyst.
+    snapshot: object | None = None # Snapshot selected for build, project snapshot when not set.
+    path_mapper: Callable[[str], str] | None = None # Path of host folder as seen by catalyst (project, releng, overlays).
+
+def snapshot_treeish(project_directory, snapshot=None) -> str | None:
+    """Catalyst finds snapshot as snapshots/gentoo-<treeish>.sqfs. Snapshot of project, unless other is given."""
+    snapshot = snapshot or project_directory.get_snapshot()
+    if snapshot is None:
+        return None
+    match = re.match(r"^gentoo-(.+)\.sqfs$", snapshot.filename)
+    return match.group(1) if match else None
+
+def generate_stage_spec(project_directory, stage, context: StageSpecContext) -> str:
+    """Spec file contents, with automatic options resolved and placeholders replaced. Raises if required value is missing."""
+    arguments = load_catalyst_stage_arguments_details(toolset=project_directory.get_toolset(), target_name=stage.target)
+    releng_directory = project_directory.get_releng_directory()
+    mapped = context.path_mapper or (lambda path: path)
+    placeholders = {
+        "@TIMESTAMP@": context.timestamp,
+        "@REPO_DIR@": mapped(releng_directory.directory_path()) if releng_directory else "",
+        # Files kept in project (eg. added by project templates), available in toolset (paths without whitespace).
+        "@PROJECT_DIR@": mapped(project_directory.directory_path()),
+        "@STAGE_DIR@": mapped(project_directory.stage_directory_path(name=stage.name)),
+        "@TREEISH@": snapshot_treeish(project_directory, context.snapshot) or "",
+    }
+    lines, missing = [], []
+    for name, argument in arguments.items():
+        if name in _virtual_arguments:
+            continue
+        value = _argument_value(project_directory, stage, name, argument, context)
+        text = _format_value(value, mapped)
+        if text is None:
+            if argument.required:
+                missing.append(argument.display_name)
+            continue
+        for placeholder, replacement in placeholders.items():
+            text = text.replace(placeholder, replacement)
+        lines.append(f"{name}: {text}")
+    # Settings of kernels (boot/kernel/<name>/...), own of stage or from its releng template.
+    if StageArgumentDetails.boot_kernel.value in arguments:
+        from .project_stage_kernels import kernel_spec_values
+        for name, value in kernel_spec_values(project_directory, stage):
+            if (text := _format_value(value, mapped)) is None:
+                continue
+            for placeholder, replacement in placeholders.items():
+                text = text.replace(placeholder, replacement)
+            lines.append(f"{name}: {text}")
+    if missing:
+        raise RuntimeError(f"Missing required values: {', '.join(missing)}")
+    return "\n".join(lines) + "\n"
+
+def _argument_value(project_directory, stage, name: str, argument, context: StageSpecContext):
+    match argument.details:
+        case StageArgumentDetails.target:
+            return stage.target.replace("_", "-")
+        case StageArgumentDetails.source_subpath:
+            return context.source_subpath
+        case StageArgumentDetails.snapshot_treeish:
+            return snapshot_treeish(project_directory, context.snapshot)
+        case StageArgumentDetails.portage_confdir:
+            return context.portage_confdir
+        case StageArgumentDetails.pkgcache_path | StageArgumentDetails.kerncache_path:
+            return context.cache_paths.get(argument.details)
+        case StageArgumentDetails.stage4_root_overlay | StageArgumentDetails.livecd_root_overlay:
+            return context.root_overlay
+        case StageArgumentDetails.livecd_overlay:
+            return context.iso_overlay
+    value = resolve_stage_argument(project_directory, stage, name)
+    if value is UNRESOLVED and _is_automatic(project_directory, stage, argument):
+        value = _automatic_value(project_directory, argument)
+    return value
+
+def _is_automatic(project_directory, stage, argument, _visited: frozenset = frozenset()) -> bool:
+    """Argument uses automatic value, directly or inherited from parent stages."""
+    if stage is None or stage.id in _visited:
+        return False
+    value = getattr(stage, argument.attribute_name, None)
+    if isinstance(value, list) and len(value) == 1:
+        value = value[0]
+    if value == StageAutomaticOption.INHERIT_FROM_PARENT:
+        parent_id = getattr(stage, StageArgumentDetails.parent.name, None)
+        parent = next((item for item in project_directory.stages if item.id == parent_id), None)
+        return _is_automatic(project_directory, parent, argument, _visited | {stage.id})
+    return value == StageAutomaticOption.GENERATE_AUTOMATICALLY
+
+def _automatic_value(project_directory, argument):
+    """Automatic values determined when building. None means catalyst default."""
+    match argument.details:
+        case StageArgumentDetails.interpreter:
+            architecture = project_directory.get_architecture()
+            return architecture.qemu_user_binary() if architecture and is_emulated_build(architecture) else None
+    return None
+
+def _format_value(value, path_mapper=lambda path: path) -> str | None:
+    if value is None or value is UNRESOLVED or isinstance(value, StageAutomaticOption) or value == "" or value == []:
+        return None
+    if isinstance(value, list):
+        items = [text for item in value if (text := _format_value(item, path_mapper)) is not None]
+        return ("\n\t" + "\n\t".join(items)) if len(items) > 1 else (items[0] if items else None)
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, PortageProfile):
+        return value.path if value.repo == "gentoo" else f"{value.repo}:{value.path}"
+    if isinstance(value, StageCompressionMode):
+        return value.name
+    if isinstance(value, uuid.UUID):
+        # Repos are stored by overlay id, catalyst needs their location.
+        overlay = next((item for item in Repository.OverlayDirectory.value if item.id == value), None)
+        return path_mapper(overlay.directory_path()) if overlay else None
+    return str(value)
+
+# ------------------------------------------------------------------------------
+# Portage configuration:
+
+def generate_portage_confdir(project_directory, stage, destination: str) -> bool:
+    """Combines selected portage configuration sources into destination folder. Later sources overwrite files of
+    earlier ones. Returns false if stage doesn't use any source."""
+    sources = portage_confdir_sources(stage)
+    folders = []
+    if StagePortageConfdirSource.RELENG in sources:
+        releng_directory = project_directory.get_releng_directory()
+        variant = releng_portage_variant(project_directory, stage)
+        if releng_directory and variant:
+            folders.append(os.path.join(releng_directory.directory_path(), "releases", "portage", variant))
+    if StagePortageConfdirSource.PARENT_OVERLAY in sources:
+        folders += [stage_overlay_path(project_directory, item) for item in parent_overlay_stages(project_directory, stage)]
+    if StagePortageConfdirSource.STAGE_OVERLAY in sources:
+        folders.append(stage_overlay_path(project_directory, stage))
+    if not sources:
+        return False
+    os.makedirs(destination, exist_ok=True)
+    for folder in folders:
+        if os.path.isdir(folder):
+            shutil.copytree(folder, destination, dirs_exist_ok=True, symlinks=True)
+    return True
+
+# ------------------------------------------------------------------------------
+# Root overlay:
+
+def generate_root_overlay(project_directory, stage, destination: str, argument: StageArgumentDetails | None = None) -> bool:
+    """Combines selected root overlay sources into destination folder (releng template overlays, parent overlays,
+    stage overlay). Later sources overwrite files of earlier ones. Returns false if stage doesn't use root overlay or
+    none of its folders exists."""
+    if not root_overlay_values(project_directory, stage, argument):
+        return False
+    folders = [folder for folder in root_overlay_folders(project_directory, stage, argument) if os.path.isdir(folder)]
+    if not folders:
+        return False
+    os.makedirs(destination, exist_ok=True)
+    for folder in folders:
+        shutil.copytree(folder, destination, dirs_exist_ok=True, symlinks=True)
+    return True
+
+# ------------------------------------------------------------------------------
+# Seeds of root stages:
+
+def seed_name_prefix(project_directory, stage) -> str:
+    """Name of stage3 used as seed for stage without parent, eg. stage3-arm64-openrc. Taken from releng template
+    seed if possible, otherwise guessed from stage name and version stamp."""
+    template_values = load_stage_releng_template_values(project_directory=project_directory, stage=stage) or {}
+    template_seed = template_values.get(StageArgumentDetails.source_subpath.value)
+    if isinstance(template_seed, str):
+        name = os.path.basename(template_seed)
+        name = re.sub(r"(\.tar\.\w+)$", "", name)
+        name = re.sub(r"-(latest|@TIMESTAMP@)$", "", name)
+        if name.startswith("stage3-"):
+            return name
+    architecture = project_directory.get_architecture()
+    hints = f"{stage.name} {getattr(stage, StageArgumentDetails.version_stamp.name, '') or ''}"
+    init_system = "systemd" if "systemd" in str(hints) else "openrc"
+    return f"stage3-{architecture.value}-{init_system}"
+
+def select_seed_url(urls: list, prefix: str):
+    """Picks stage3 matching prefix exactly (stage3-arm64-openrc-<timestamp>.tar.xz, not -desktop- variants)."""
+    pattern = re.compile(rf"^{re.escape(prefix)}-\d{{8}}T\d{{6}}Z\.tar\.\w+$")
+    return next((url for url in urls if pattern.match(os.path.basename(url.path))), None)

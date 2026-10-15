@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/com/damiandudycz/CatalystLab">
+    <file>style.css</file>
+    <file>patches/namespaces.patch</file>
+    <file>patches/default-resolv-conf.patch</file>
+    <file>objects/root_helper/root_helper_server.py</file>
+    <file preprocess="xml-stripblanks">gtk/help-overlay.ui</file>
+    <file preprocess="xml-stripblanks">ui/app_sections/environments/environments_section.ui</file>
+    <file preprocess="xml-stripblanks">ui/app_sections/overlays/overlays_section.ui</file>
+    <file preprocess="xml-stripblanks">ui/app_sections/projects/projects_section.ui</file>
+    <file preprocess="xml-stripblanks">ui/app_sections/builds/builds_section.ui</file>
+    <file preprocess="xml-stripblanks">ui/app_sections/releng/releng_section.ui</file>
+    <file preprocess="xml-stripblanks">ui/app_sections/snapshots/snapshots_section.ui</file>
+    <file preprocess="xml-stripblanks">ui/app_sections/settings/settings_section.ui</file>
+    <file preprocess="xml-stripblanks">ui/app_sections/welcome/welcome_section.ui</file>
+    <file preprocess="xml-stripblanks">ui/components/multistage_process_execution_view/multistage_process_execution_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/components/repository_list/repository_list_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/components/root_command_output/root_command_output_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/components/item_select/item_select_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/git_directory/git_directory_create_config_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/git_directory/git_directory_details_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/main_window/main_window_content.ui</file>
+    <file preprocess="xml-stripblanks">ui/main_window/main_window_side_menu_button.ui</file>
+    <file preprocess="xml-stripblanks">ui/main_window/main_window_side_menu.ui</file>
+    <file preprocess="xml-stripblanks">ui/main_window/main_window.ui</file>
+    <file preprocess="xml-stripblanks">ui/overlay/overlay_create_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/project/project_create_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/project/project_details_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/project/project_stage_create_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/project/project_build_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/project/project_stage_details_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/releng/releng_create_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/releng/releng_select_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/snapshot/snapshot_create_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/toolset/toolset_create_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/build_machine/build_machine_create_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/deploy/deploy_create_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/deploy/live_iso_deploy_view.ui</file>
+    <file preprocess="xml-stripblanks">ui/app_sections/deploy/deploy_section.ui</file>
+    <file preprocess="xml-stripblanks">ui/toolset/toolset_details_view.ui</file>
+
+  </gresource>
+</gresources>

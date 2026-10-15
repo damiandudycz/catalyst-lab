@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="OverlaysSection" parent="GtkBox">
+    <child>
+      <object class="GtkScrolledWindow">
+        <property name="hscrollbar-policy">automatic</property>
+        <property name="vscrollbar-policy">automatic</property>
+        <property name="hexpand">True</property>
+        <property name="vexpand">True</property>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">24</property>
+            <property name="margin-start">24</property>
+            <property name="margin-end">24</property>
+            <!-- <property name="margin-top">24</property> -->
+            <property name="margin-bottom">24</property>
+
+            <child>
+              <object class="RepositoryListView">
+                <property name="title">Portage overlays</property>
+                <property name="item_class_name">OverlayDirectory</property>
+                <property name="add_button_title">Add overlay</property>
+                <property name="item_installation_class_name">OverlayInstallation</property>
+                <property name="item_icon">layers-minimalistic-svgrepo-com-symbolic</property>
+                <property name="item_title_property_name">name</property>
+                <property name="item_subtitle_property_name">short_details</property>
+                <property name="item_status_property_name">status_indicator_values</property>
+                <signal name="item-row-pressed" handler="on_item_row_pressed"/>
+                <signal name="installation-row-pressed" handler="on_installation_row_pressed"/>
+                <signal name="add-new-item-pressed" handler="on_add_new_item_pressed"/>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkSeparator"/>
+            </child>
+
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Portage overlays are additional ebuild repositories, kept as Git directories. They can be added to project stages as repos, and their profiles can be used by stages.</property>
+                <property name="halign">center</property>
+                <property name="wrap">True</property>
+                <property name="justify">fill</property>
+                <attributes>
+                  <attribute name="foreground" value="grey"/>
+                </attributes>
+              </object>
+            </child>
+
+          </object>
+        </child>
+      </object>
+    </child>
+
+  </template>
+</interface>
+

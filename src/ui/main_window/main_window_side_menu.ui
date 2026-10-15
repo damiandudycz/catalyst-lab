@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+
+  <!-- Template -->
+  <template class="CatalystlabWindowSideMenu" parent="GtkBox">
+    <property name="orientation">vertical</property>
+
+    <!-- ListBox for the entries -->
+    <child>
+      <object class="GtkScrolledWindow">
+        <property name="hscrollbar-policy">automatic</property>
+        <property name="vscrollbar-policy">automatic</property>
+        <property name="hexpand">True</property>
+        <property name="vexpand">True</property>
+        <child>
+          <object class="GtkListBox" id="section_list">
+            <property name="selection-mode">single</property>
+            <!-- Apply Adwaita styling for lists within sidebars -->
+            <style><class name="navigation-sidebar"/></style>
+            <signal name="row-selected" handler="row_selected"/>
+          </object>
+        </child>
+      </object>
+    </child>
+
+  </template>
+</interface>

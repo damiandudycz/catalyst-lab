@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+	<id>com.damiandudycz.CatalystLab</id>
+	<metadata_license>CC0-1.0</metadata_license>
+	<project_license>GPL-3.0-or-later</project_license>
+	<name>Catalyst Lab</name>
+	<summary>Build custom Gentoo Linux stages, live images and systems</summary>
+	<developer id="io.github.damiandudycz">
+		<name>Damian Dudycz</name>
+	</developer>
+	<description>
+		<p>
+			Catalyst Lab wraps Catalyst, the Gentoo Release Engineering templates, QEMU and other tools in a friendly
+			GNOME application. It prepares an isolated build environment, generates spec files, runs the builds and can
+			install the result on another machine.
+		</p>
+		<ul>
+			<li>Projects with trees of stages, created from templates (Gentoo releases, Raspberry Pi 5, PlayStation 3)</li>
+			<li>Isolated toolsets, Gentoo repository snapshots and Releng directories</li>
+			<li>Builds for other architectures with QEMU, with diagnostics of failed packages</li>
+			<li>Deploys stages to machines through SSH, to disks and to disk images, and live CDs to USB drives</li>
+		</ul>
+	</description>
+	<launchable type="desktop-id">com.damiandudycz.CatalystLab.desktop</launchable>
+	<url type="homepage">https://github.com/damiandudycz/catalyst-lab-2</url>
+	<url type="bugtracker">https://github.com/damiandudycz/catalyst-lab-2/issues</url>
+	<url type="vcs-browser">https://github.com/damiandudycz/catalyst-lab-2</url>
+	<content_rating type="oars-1.1" />
+	<supports>
+		<control>pointing</control>
+		<control>keyboard</control>
+	</supports>
+	<requires>
+		<display_length compare="ge">768</display_length>
+	</requires>
+	<releases>
+		<release version="0.3.1" date="2026-10-12" />
+	</releases>
+</component>

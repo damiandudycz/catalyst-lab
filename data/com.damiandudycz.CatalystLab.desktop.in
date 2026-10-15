@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Catalyst Lab
+Comment=Build custom Gentoo Linux stages, live images and systems
+Exec=catalystlab
+Icon=com.damiandudycz.CatalystLab
+Terminal=false
+Type=Application
+Categories=GTK;Development;Building;
+Keywords=Gentoo;Catalyst;Stage;Releng;LiveCD;ISO;
+StartupNotify=true

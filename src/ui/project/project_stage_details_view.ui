@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="ProjectStageDetailsView" parent="GtkBox">
+    <child>
+      <object class="GtkScrolledWindow">
+        <property name="hscrollbar-policy">never</property>
+        <property name="vscrollbar-policy">automatic</property>
+        <property name="hexpand">True</property>
+        <property name="vexpand">True</property>
+        <child>
+          <object class="GtkBox">
+            <property name="margin-start">24</property>
+            <property name="margin-end">24</property>
+            <property name="margin-top">4</property>
+            <property name="margin-bottom">24</property>
+            <property name="orientation">vertical</property>
+            <property name="spacing">24</property>
+            <child>
+              <object class="AdwPreferencesGroup" id="basic_config_pref_group">
+                <property name="title">Stage and template</property>
+                <child>
+                  <object class="AdwEntryRow" id="stage_name_row">
+                    <property name="title">Stage name</property>
+                    <property name="show-apply-button">True</property>
+                    <signal name="apply" handler="on_stage_name_activate"/>
+                    <signal name="changed" handler="on_stage_name_changed"/>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwActionRow" id="name_used_row">
+                    <property name="title">This stage name is already used.</property>
+                    <style>
+                      <class name="caption-heading"/>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="architecture_pref_group">
+                <property name="title">Architecture</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="release_pref_group">
+                <property name="title">Release output</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="packages_pref_group">
+                <property name="title">Package management</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="kernels_pref_group">
+                <property name="title">Kernels</property>
+                <property name="visible">False</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="stage_setup_pref_group">
+                <property name="title">Stage system setup</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="live_image_pref_group">
+                <property name="title">Live image output</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="live_system_pref_group">
+                <property name="title">Live system setup</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="build_behavior_pref_group">
+                <property name="title">Portage and build behavior</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="row_warnings_group">
+                <property name="visible">False</property>
+                <child>
+                  <object class="AdwActionRow" id="row_warnings_row">
+                    <property name="title">Some stage settings could not be loaded</property>
+                    <child type="prefix">
+                      <object class="GtkImage">
+                        <property name="icon-name">danger-triangle-svgrepo-com-symbolic</property>
+                        <property name="valign">center</property>
+                        <style>
+                          <class name="warning"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="delete_button">
+                <property name="halign">center</property>
+                <style>
+                  <class name="destructive-action"/>
+                </style>
+                <child>
+                  <object class="AdwButtonContent">
+                    <property name="label">Delete stage</property>
+                    <property name="icon-name">trash-bin-trash-svgrepo-com-symbolic</property>
+                  </object>
+                </child>
+                <signal name="clicked" handler="on_delete_clicked"/>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>
+

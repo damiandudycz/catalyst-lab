@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="GitDirectoryDetailsView" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <property name="spacing">24</property>
+    <child>
+      <object class="AdwPreferencesGroup">
+        <property name="title">Basic information</property>
+        <child>
+          <object class="AdwEntryRow" id="directory_name_row">
+            <property name="title">Directory name</property>
+            <property name="show-apply-button">True</property>
+            <signal name="apply" handler="on_directory_name_activate"/>
+            <signal name="changed" handler="on_directory_name_changed"/>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow" id="name_used_row">
+            <property name="title">This directory name is already used.</property>
+            <style>
+              <class name="caption-heading"/>
+              <class name="error"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow" id="status_directory_url_row">
+            <property name="title">URL</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow" id="status_directory_path_row">
+            <property name="title">Local directory</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow" id="status_directory_branch_name_row">
+            <property name="title">Branch name</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow" id="status_directory_date_updated_row">
+            <property name="title">Last commit date</property>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwPreferencesGroup">
+        <child>
+          <object class="AdwActionRow">
+            <property name="title">Status</property>
+            <!-- Put status labels here -->
+            <child>
+              <object class="GtkBox">
+                <property name="valign">center</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel" id="tag_unknown">
+                    <property name="label">Unknown</property>
+                    <style>
+                      <class name="tag-label"/>
+                      <class name="caption-heading"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="tag_unchanged">
+                    <property name="label">Unchanged</property>
+                    <style>
+                      <class name="tag-label"/>
+                      <class name="caption-heading"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="tag_update_available">
+                    <property name="label">Update available</property>
+                    <style>
+                      <class name="tag-label"/>
+                      <class name="caption-heading"/>
+                      <class name="accent"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="tag_changed">
+                    <property name="label">Changed</property>
+                    <style>
+                      <class name="tag-label"/>
+                      <class name="caption-heading"/>
+                      <class name="warning"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="tag_updating">
+                    <property name="label">Updating</property>
+                    <style>
+                      <class name="tag-label"/>
+                      <class name="caption-heading"/>
+                      <class name="accent"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow" id="status_update_row">
+            <property name="title">Update</property>
+            <property name="activatable">True</property>
+            <signal name="activated" handler="status_update_row_clicked"/>
+            <child type="suffix">
+              <object class="GtkBox">
+                <property name="valign">center</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel" id="status_update_progress_label">
+                    <style>
+                      <class name="dimmed"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="tag_update_succeded">
+                    <property name="label">Completed</property>
+                    <style>
+                      <class name="tag-label"/>
+                      <class name="caption-heading"/>
+                      <class name="success"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="tag_update_failed">
+                    <property name="label">Failed</property>
+                    <style>
+                      <class name="tag-label"/>
+                      <class name="caption-heading"/>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child type="suffix">
+              <object class="GtkImage">
+                <property name="icon-name">go-next-symbolic</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwExpanderRow" id="status_logs_row">
+            <property name="title">History</property>
+            <property name="subtitle">Last 10 logs</property>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwPreferencesGroup" id="actions_group">
+        <property name="title">Actions</property>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">6</property>
+            <property name="hexpand">True</property>
+            <property name="homogeneous">True</property>
+            <child>
+              <object class="AdwSplitButton" id="action_button_save_changes">
+                <property name="child">
+                  <object class="AdwButtonContent">
+                    <property name="icon-name">archive-up-minimlistic-svgrepo-com-symbolic</property>
+                    <property name="label">Save changes</property>
+                  </object>
+                </property>
+                <property name="menu-model">changes_menu</property>
+                <signal name="clicked" handler="action_button_save_changes_clicked"/>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="action_button_update">
+                <child>
+                  <object class="AdwButtonContent">
+                    <property name="label">Update</property>
+                    <property name="icon-name">clock-circle-svgrepo-com-symbolic</property>
+                  </object>
+                </child>
+                <signal name="clicked" handler="action_button_update_clicked"/>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="action_button_delete">
+                <style>
+                  <class name="destructive-action"/>
+                </style>
+                <child>
+                  <object class="AdwButtonContent">
+                    <property name="label">Delete</property>
+                    <property name="icon-name">trash-bin-trash-svgrepo-com-symbolic</property>
+                  </object>
+                </child>
+                <signal name="clicked" handler="action_button_delete_clicked"/>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <menu id="changes_menu">
+      <section>
+        <item>
+          <attribute name="label">Save changes</attribute>
+          <attribute name="action">changes.save_changes</attribute>
+        </item>
+        <item>
+          <attribute name="label">Discard changes</attribute>
+          <attribute name="action">changes.discard_changes</attribute>
+        </item>
+      </section>
+    </menu>
+  </template>
+</interface>
+

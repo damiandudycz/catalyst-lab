@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="RelengSelectionView" parent="GtkBox">
+    <child>
+      <object class="AdwPreferencesGroup" id="releng_directories_list">
+        <property name="title">Select Releng directory</property>
+        <property name="description">Select Releng directory to use.</property>
+      </object>
+    </child>
+
+  </template>
+</interface>
+

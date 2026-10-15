@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="RootCommandOutputView" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <child>
+      <object class="GtkScrolledWindow" id="scrolled_window">
+        <property name="vexpand">true</property>
+        <child>
+          <object class="GtkTextView" id="text_view">
+            <property name="wrap-mode">word</property>
+            <property name="editable">false</property>
+            <property name="cursor-visible">false</property>
+            <property name="monospace">true</property>
+            <property name="left-margin">10</property>
+            <property name="right-margin">10</property>
+            <property name="top-margin">10</property>
+            <property name="bottom-margin">10</property>
+            <style>
+              <class name="transparent-bg"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+
+  </template>
+</interface>
+

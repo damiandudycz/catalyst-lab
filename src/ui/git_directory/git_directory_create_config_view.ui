@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+
+  <!-- Libraries -->
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+
+  <!-- Template -->
+  <template class="GitDirectoryCreateConfigView" parent="GtkBox">
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <child>
+          <object class="AdwPreferencesGroup" id="source_group">
+            <property name="title">Source</property>
+            <child>
+              <object class="GtkBox" id="source_toggle_group_container">
+                <property name="orientation">horizontal</property>
+                <property name="valign">center</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="template_container">
+            <property name="orientation">vertical</property>
+            <property name="visible">False</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwPreferencesGroup" id="options_group">
+            <property name="title">Options</property>
+            <child>
+              <object class="AdwEntryRow" id="directory_url_row">
+                <property name="title">Repository URL</property>
+                <property name="show-apply-button">True</property>
+                <property name="text"></property>
+                <signal name="apply" handler="on_directory_url_activate"/>
+                <signal name="changed" handler="on_directory_url_changed"/>
+              </object>
+            </child>
+            <child>
+              <object class="AdwActionRow" id="directory_local_directory_row">
+                <property name="title">Local directory</property>
+                <property name="subtitle">(Select directory)</property>
+                <child type="suffix">
+                  <object class="GtkBox">
+                    <property name="valign">center</property>
+                    <child>
+                      <object class="GtkButton" id="directory_local_directory_button">
+                        <style>
+                          <class name="flat"/>
+                          <class name="caption"/>
+                        </style>
+                        <property name="child">
+                          <object class="AdwButtonContent">
+                            <property name="label">Select directory</property>
+                            <property name="icon-name">copy-svgrepo-com-symbolic</property>
+                          </object>
+                        </property>
+                        <signal name="clicked" handler="_on_select_local_directory_clicked"/>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwEntryRow" id="directory_name_row">
+                <property name="title">Directory name</property>
+                <property name="show-apply-button">True</property>
+                <property name="text"></property>
+                <signal name="apply" handler="on_directory_name_activate"/>
+                <signal name="changed" handler="on_directory_name_changed"/>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="name_used_label">
+                <property name="label">This directory name is already used.</property>
+                <property name="halign">center</property>
+                <property name="wrap">True</property>
+                <property name="justify">fill</property>
+                <property name="margin-top">12</property>
+                <style>
+                  <class name="error"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>
+
