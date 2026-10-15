@@ -779,40 +779,73 @@ def _stage_argument_value(value, context: str):
 APP_REPOSITORY_URL = "https://github.com/damiandudycz/catalyst-lab"
 APP_TEMPLATE_ROOT = "data/project_templates"
 APP_TEMPLATE_BRANCH = "main"
-APP_TEMPLATE_API_ROOT = "https://api.github.com/repos/damiandudycz/catalyst-lab/contents"
+
+def _app_repository_checkout(path: str) -> None:
+    """Fetches the current app commit and Git trees, leaving file blobs lazy until requested."""
+    _run_git(["git", "clone", "--depth", "1", "--filter=blob:none", "--no-checkout", "--quiet",
+              "--single-branch", "--branch", APP_TEMPLATE_BRANCH, APP_REPOSITORY_URL, path])
+
+def _app_git_output(repository: str, *arguments: str) -> bytes:
+    result = subprocess.run(["git", "-C", repository, *arguments], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            timeout=60, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    if result.returncode != 0:
+        output = result.stderr.decode(errors="replace").strip()
+        raise TemplateError(output.splitlines()[-1] if output else f"git {' '.join(arguments[:2])} failed")
+    return result.stdout
+
+def _app_template_entries(repository: str) -> list[tuple[str, str]]:
+    entries = []
+    output = _app_git_output(repository, "ls-tree", "-z", f"HEAD:{APP_TEMPLATE_ROOT}")
+    for item in output.split(b"\0"):
+        if not item:
+            continue
+        details, separator, raw_name = item.partition(b"\t")
+        if not separator:
+            continue
+        mode, object_type, tree_hash = details.decode("ascii").split()
+        name = raw_name.decode("utf-8", errors="strict")
+        if object_type == "tree" and mode == "040000" and _TEMPLATE_DIRECTORY.fullmatch(name):
+            entries.append((name, tree_hash))
+    return entries
+
+def _app_template_tree_in(repository: str, repository_path: str) -> str | None:
+    try:
+        tree_hash = _app_git_output(repository, "rev-parse", f"HEAD:{repository_path}").decode().strip()
+        object_type = _app_git_output(repository, "cat-file", "-t", tree_hash).decode().strip()
+        return tree_hash if object_type == "tree" else None
+    except (TemplateError, UnicodeDecodeError):
+        return None
 
 def load_app_templates() -> list[ProjectTemplate | tuple[str, TemplateError]]:
     """Loads only the current template definitions from the app repository.
     The chooser does not use template copies installed with the app."""
-    entries = _github_contents(APP_TEMPLATE_ROOT)
     temporary_files = tempfile.TemporaryDirectory(prefix="app-template-definitions-")
+    repository = os.path.join(temporary_files.name, "repository")
     templates = []
     has_remote_template = False
-    import requests
-    from urllib.parse import quote
-    for entry in entries:
-        name = entry.get("name", "")
-        if entry.get("type") != "dir" or not _TEMPLATE_DIRECTORY.fullmatch(name) or name in (".", ".."):
-            continue
-        repository_path = f"{APP_TEMPLATE_ROOT}/{name}"
-        try:
-            url = f"https://raw.githubusercontent.com/damiandudycz/catalyst-lab/{APP_TEMPLATE_BRANCH}/{quote(repository_path + '/' + TEMPLATE_FILE, safe='/')}"
-            response = requests.get(url, headers={"User-Agent": "Catalyst-Lab"}, timeout=15)
-            response.raise_for_status()
-            if len(response.content) > 1_000_000:
-                raise TemplateError(f"{TEMPLATE_FILE} is too large")
-            path = os.path.join(temporary_files.name, name)
-            os.makedirs(path, exist_ok=True)
-            with open(os.path.join(path, TEMPLATE_FILE), "wb") as file:
-                file.write(response.content)
-            template = ProjectTemplate.load(path, repository_path=repository_path, source_kind="app",
-                                            source_tree=entry.get("sha"), files_available=False)
-            template.temporary_files = temporary_files
-            templates.append(template)
-            has_remote_template = True
-        except Exception as error:
-            print(f"Failed to load app template {name}: {error}")
-            templates.append((name, error if isinstance(error, TemplateError) else TemplateError(str(error))))
+    try:
+        _app_repository_checkout(repository)
+        for name, tree_hash in _app_template_entries(repository):
+            repository_path = f"{APP_TEMPLATE_ROOT}/{name}"
+            try:
+                content = _app_git_output(repository, "show", f"HEAD:{repository_path}/{TEMPLATE_FILE}")
+                if len(content) > 1_000_000:
+                    raise TemplateError(f"{TEMPLATE_FILE} is too large")
+                path = os.path.join(temporary_files.name, name)
+                os.makedirs(path, exist_ok=True)
+                with open(os.path.join(path, TEMPLATE_FILE), "wb") as file:
+                    file.write(content)
+                template = ProjectTemplate.load(path, repository_path=repository_path, source_kind="app",
+                                                source_tree=tree_hash, files_available=False)
+                template.temporary_files = temporary_files
+                templates.append(template)
+                has_remote_template = True
+            except Exception as error:
+                print(f"Failed to load app template {name}: {error}")
+                templates.append((name, error if isinstance(error, TemplateError) else TemplateError(str(error))))
+    except Exception:
+        temporary_files.cleanup()
+        raise
     if not has_remote_template:
         temporary_files.cleanup()
     return templates
@@ -822,48 +855,38 @@ def load_app_template_definition(repository_path: str) -> ProjectTemplate:
     name = repository_path.removeprefix(APP_TEMPLATE_ROOT + "/")
     if not _TEMPLATE_DIRECTORY.fullmatch(name) or name in (".", ".."):
         raise TemplateError("Invalid in-app template path")
-    tree_hash = app_template_tree(repository_path)
-    if tree_hash is None:
-        raise TemplateError(f"Template {name} is no longer in Catalyst Lab")
-    import requests
-    from urllib.parse import quote
-    url = f"https://raw.githubusercontent.com/damiandudycz/catalyst-lab/{APP_TEMPLATE_BRANCH}/{quote(repository_path + '/' + TEMPLATE_FILE, safe='/')}"
-    response = requests.get(url, headers={"User-Agent": "Catalyst-Lab"}, timeout=15)
-    response.raise_for_status()
-    if len(response.content) > 1_000_000:
-        raise TemplateError(f"{TEMPLATE_FILE} is too large")
     temporary_files = tempfile.TemporaryDirectory(prefix="app-template-definition-")
+    repository = os.path.join(temporary_files.name, "repository")
+    try:
+        _app_repository_checkout(repository)
+        tree_hash = _app_template_tree_in(repository, repository_path)
+        if tree_hash is None:
+            raise TemplateError(f"Template {name} is no longer in Catalyst Lab")
+        content = _app_git_output(repository, "show", f"HEAD:{repository_path}/{TEMPLATE_FILE}")
+    except Exception:
+        temporary_files.cleanup()
+        raise
+    if len(content) > 1_000_000:
+        temporary_files.cleanup()
+        raise TemplateError(f"{TEMPLATE_FILE} is too large")
     path = os.path.join(temporary_files.name, name)
     os.makedirs(path)
     with open(os.path.join(path, TEMPLATE_FILE), "wb") as file:
-        file.write(response.content)
+        file.write(content)
     template = ProjectTemplate.load(path, repository_path=repository_path, source_kind="app", source_tree=tree_hash,
                                     files_available=False)
     template.temporary_files = temporary_files
     return template
 
-def _github_contents(path: str) -> list[dict[str, Any]]:
-    import requests
-    from urllib.parse import quote
-    url = f"{APP_TEMPLATE_API_ROOT}/{quote(path, safe='/')}?ref={APP_TEMPLATE_BRANCH}"
-    response = requests.get(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "Catalyst-Lab"}, timeout=15)
-    response.raise_for_status()
-    data = response.json()
-    if not isinstance(data, list):
-        raise TemplateError(f"GitHub did not return a directory listing for {path}")
-    return data
-
 def app_template_tree(repository_path: str) -> str | None:
-    """Reads only the immediate template directory entry from GitHub's tree listing; unrelated files and history
-    aren't fetched."""
+    """Reads a template's tree hash from a shallow, blob-filtered checkout of the app repository."""
     name = repository_path.removeprefix(APP_TEMPLATE_ROOT + "/")
     if not _TEMPLATE_DIRECTORY.fullmatch(name) or name in (".", ".."):
         raise TemplateError("Invalid in-app template path")
-    entries = _github_contents(APP_TEMPLATE_ROOT)
-    for entry in entries:
-        if entry.get("path") == repository_path and entry.get("type") == "dir":
-            return entry.get("sha")
-    return None
+    with tempfile.TemporaryDirectory(prefix="app-template-tree-") as temporary:
+        repository = os.path.join(temporary, "repository")
+        _app_repository_checkout(repository)
+        return _app_template_tree_in(repository, repository_path)
 
 def download_app_template(repository_path: str, expected_tree: str | None = None,
                           temporary_parent: str | None = None) -> tuple[ProjectTemplate, str]:
@@ -873,58 +896,22 @@ def download_app_template(repository_path: str, expected_tree: str | None = None
     if not _TEMPLATE_DIRECTORY.fullmatch(name) or name in (".", ".."):
         raise TemplateError("Invalid in-app template path")
     root = tempfile.mkdtemp(prefix="app-template-", dir=temporary_parent)
-    target = os.path.join(root, name)
-    os.makedirs(target)
+    repository = os.path.join(root, "repository")
     try:
-        tree_hash = app_template_tree(repository_path)
+        _app_repository_checkout(repository)
+        tree_hash = _app_template_tree_in(repository, repository_path)
         if tree_hash is None:
             raise TemplateError(f"Template {repository_path.rsplit('/', 1)[-1]} is no longer in Catalyst Lab")
         if expected_tree and tree_hash != expected_tree:
             raise TemplateError("Template changed while it was being selected; reopen the template picker and retry")
-        count = [0]
-        total_size = [0]
-
-        def download_directory(remote_path: str, local_path: str):
-            import requests
-            entries = _github_contents(remote_path)
-            for entry in entries:
-                name = entry.get("name", "")
-                if not name or name in (".", "..") or "/" in name or "\\" in name:
-                    raise TemplateError(f"Invalid path in template: {name!r}")
-                if entry.get("type") == "dir":
-                    if not entry.get("path", "").startswith(repository_path + "/"):
-                        raise TemplateError(f"Directory is outside the selected template: {entry.get('path')}")
-                    child = os.path.join(local_path, name)
-                    os.makedirs(child)
-                    download_directory(entry["path"], child)
-                    continue
-                if entry.get("type") != "file":
-                    raise TemplateError(f"Template contains unsupported item {entry.get('path')}")
-                count[0] += 1
-                if count[0] > _REPOSITORY_MAX_FILES:
-                    raise TemplateError(f"Template has more than {_REPOSITORY_MAX_FILES} files")
-                url = entry.get("download_url")
-                if not url or not url.startswith("https://raw.githubusercontent.com/damiandudycz/catalyst-lab/"):
-                    raise TemplateError(f"No download URL for {entry.get('path')}")
-                response = requests.get(url, headers={"User-Agent": "Catalyst-Lab"}, timeout=30)
-                response.raise_for_status()
-                content = response.content
-                if len(content) > _REPOSITORY_MAX_FILE_SIZE:
-                    raise TemplateError(f"{name} is larger than {_REPOSITORY_MAX_FILE_SIZE // 1024 // 1024} MB")
-                total_size[0] += len(content)
-                if total_size[0] > _REPOSITORY_MAX_TOTAL_SIZE:
-                    raise TemplateError(f"Template is larger than {_REPOSITORY_MAX_TOTAL_SIZE // 1024 // 1024} MB")
-                with open(os.path.join(local_path, name), "wb") as file:
-                    file.write(content)
-
-        download_directory(repository_path, target)
-        if TEMPLATE_FILE not in os.listdir(target):
+        _run_git(["git", "-C", repository, "sparse-checkout", "set", "--no-cone", f"/{repository_path}/"])
+        _run_git(["git", "-C", repository, "checkout", "--quiet"])
+        target = os.path.join(repository, *repository_path.split("/"))
+        if not os.path.isfile(os.path.join(target, TEMPLATE_FILE)):
             raise TemplateError(f"{TEMPLATE_FILE} not found in {repository_path}")
-        if app_template_tree(repository_path) != tree_hash:
-            raise TemplateError("Template changed while it was being downloaded; retry the update")
         template = ProjectTemplate.load(target, repository_path=repository_path, source_kind="app",
                                         source_tree=tree_hash)
-        validate_template_repository(root, check_sizes=True)
+        validate_downloaded_template(target)
         return template, root
     except Exception:
         shutil.rmtree(root, ignore_errors=True)
@@ -1008,6 +995,47 @@ def validate_template_repository(path: str, check_sizes: bool) -> list[str]:
     if not templates:
         raise TemplateError(f"Repository has no {TEMPLATE_FILE}")
     return sorted(templates)
+
+def validate_downloaded_template(path: str) -> None:
+    """Validates a single template downloaded as files from the app repository.
+
+    Unlike an external template repository, this directory is not a Git checkout, so
+    validation must inspect its filesystem rather than run git ls-tree against HEAD.
+    """
+    files = []
+    total_size = 0
+    for root, directories, filenames in os.walk(path, followlinks=False):
+        for name in list(directories):
+            directory = os.path.join(root, name)
+            if os.path.islink(directory) or not os.path.isdir(directory):
+                relative = os.path.relpath(directory, path).replace(os.sep, "/")
+                raise TemplateError(f"Template contains unsupported item ({relative})")
+        for name in filenames:
+            filename = os.path.join(root, name)
+            relative = os.path.relpath(filename, path).replace(os.sep, "/")
+            if os.path.islink(filename) or not os.path.isfile(filename):
+                raise TemplateError(f"Template contains unsupported item ({relative})")
+            mode = os.stat(filename, follow_symlinks=False).st_mode
+            if mode & 0o111:
+                raise TemplateError(f"Template can't contain executable files ({relative})")
+            files.append(relative)
+            size = os.path.getsize(filename)
+            if size > _REPOSITORY_MAX_FILE_SIZE:
+                raise TemplateError(f"{relative} is larger than {_REPOSITORY_MAX_FILE_SIZE // 1024 // 1024} MB")
+            total_size += size
+            if len(files) > _REPOSITORY_MAX_FILES:
+                raise TemplateError(f"Template has more than {_REPOSITORY_MAX_FILES} files")
+    if total_size > _REPOSITORY_MAX_TOTAL_SIZE:
+        raise TemplateError(f"Template is larger than {_REPOSITORY_MAX_TOTAL_SIZE // 1024 // 1024} MB")
+    if TEMPLATE_FILE not in files:
+        raise TemplateError(f"{TEMPLATE_FILE} not found in downloaded template")
+    for filename in files:
+        parts = filename.split("/")
+        if len(parts) == 1:
+            if not _TEMPLATE_FILES.match(parts[0]):
+                raise TemplateError(f"Template can contain only {TEMPLATE_FILE}, README and files/ ({filename} is not allowed)")
+        elif parts[0] != _REPOSITORY_FILES_DIRECTORY:
+            raise TemplateError(f"Template files must be in {_REPOSITORY_FILES_DIRECTORY}/ ({filename})")
 
 def fetch_template_repository(url: str) -> list[ProjectTemplate | tuple[str, TemplateError]]:
     """Downloads only template.toml files from latest commit of template repository, to show templates and their
