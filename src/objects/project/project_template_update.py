@@ -20,7 +20,8 @@ import json, os, shutil, subprocess, tempfile, uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from .project_template import (
-    ProjectTemplate, TemplateError, apply_project_template, validate_template_repository, _run_git
+    APP_REPOSITORY_URL, ProjectTemplate, TemplateError, app_template_tree, apply_project_template,
+    download_app_template, validate_template_repository, _run_git
 )
 
 TEMPLATE_STATE_FILE = "project-template.json"
@@ -39,16 +40,20 @@ class TemplateState:
     selected: dict[str, Any] # Values of options.
     stage_ids: dict[str, str] # Ids of project stages by ids of template stages.
     template_tree: str | None = None # Git tree of template directory, to check if template changed.
+    source_kind: str = "repository" # "app" for official templates stored in Catalyst Lab.
 
     @classmethod
     def load(cls, project_path: str) -> TemplateState | None:
         try:
             with open(os.path.join(project_path, TEMPLATE_STATE_FILE), encoding="utf-8") as file:
                 data = json.load(file)
-            return cls(repository_url=data["repository_url"], repository_path=data.get("repository_path", ""),
+            repository_url = data["repository_url"]
+            repository_path = data.get("repository_path", "")
+            source_kind = data.get("source_kind", "repository")
+            return cls(repository_url=repository_url, repository_path=repository_path,
                        template_name=data.get("template_name", ""), commit=data.get("commit"),
                        selected=data.get("selected", {}), stage_ids=data.get("stage_ids", {}),
-                       template_tree=data.get("template_tree"))
+                       template_tree=data.get("template_tree"), source_kind=source_kind)
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
@@ -62,6 +67,7 @@ class TemplateState:
             "selected": self.selected,
             "stage_ids": self.stage_ids,
             "template_tree": self.template_tree,
+            "source_kind": self.source_kind,
         }
         with open(os.path.join(project_path, TEMPLATE_STATE_FILE), "w", encoding="utf-8") as file:
             json.dump(data, file, indent=4)
@@ -74,9 +80,11 @@ class TemplateState:
 def record_template_state(project_path: str, template: ProjectTemplate, selected: dict[str, Any], commit: str | None,
                           stage_ids: dict[str, uuid.UUID], template_tree: str | None = None) -> TemplateState:
     """Saves state of project generated from template (committed with generated files)."""
-    state = TemplateState(repository_url=template.repository_url or "", repository_path=template.repository_path,
+    state = TemplateState(repository_url=template.repository_url or (APP_REPOSITORY_URL if template.source_kind == "app" else ""),
+                          repository_path=template.repository_path,
                           template_name=template.name, commit=commit, selected=selected,
-                          stage_ids={key: str(value) for key, value in stage_ids.items()}, template_tree=template_tree)
+                          stage_ids={key: str(value) for key, value in stage_ids.items()}, template_tree=template_tree,
+                          source_kind=template.source_kind)
     state.save(project_path)
     return state
 
@@ -91,13 +99,20 @@ def template_tree(repository: str, repository_path: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 def template_update_available(project_directory) -> bool | None:
-    """Update from template would change project: template directory changed in latest commit of its repository, or
-    project generated from the same template by this version of app differs from last generated version (eg. app
-    sets new settings or defaults). None when it can't be checked (eg. offline)."""
+    """Check whether the source template changed. In-app templates compare only their own directory tree; legacy
+    external templates also compare regenerated project output. None when it can't be checked (eg. offline)."""
     project_path = project_directory.directory_path()
     state = TemplateState.load(project_path)
     if state is None or not state.repository_url:
         return None
+    if state.source_kind == "app":
+        try:
+            latest_tree = app_template_tree(state.repository_path)
+        except Exception as e:
+            print(f"Failed to check updates of app template: {e}")
+            return None
+        # App code changes and other templates don't affect this project's template update state.
+        return latest_tree is None or latest_tree != state.template_tree
     with tempfile.TemporaryDirectory(prefix="template-check-") as temporary:
         repository = os.path.join(temporary, "repository")
         try:
@@ -110,13 +125,13 @@ def template_update_available(project_directory) -> bool | None:
                 return True
         elif repository_commit(repository) != state.commit:
             return True
+        template = ProjectTemplate.load(os.path.join(repository, state.repository_path),
+                                        repository_url=state.repository_url, repository_path=state.repository_path)
         # Same template, generated again and compared with last generated version.
         base = template_base_commit(project_path)
         if base is None:
             return None
         try:
-            template = ProjectTemplate.load(os.path.join(repository, state.repository_path),
-                                            repository_url=state.repository_url, repository_path=state.repository_path)
             generated = os.path.join(temporary, "template")
             os.makedirs(generated)
             apply_project_template(_RenderTarget(project_directory, generated), template,
@@ -578,13 +593,18 @@ def prepare_template_update(project_directory, log: Callable[[str], None],
         raise TemplateError(f"{TEMPLATE_STATE_FILE} isn't saved in project history")
     temporary = _new_temporary_directory("template-update-")
     try:
-        repository = os.path.join(temporary, "repository")
-        log(f"Downloading {state.repository_url}")
-        _run_git(["git", "clone", "--depth", "1", "--quiet", state.repository_url, repository])
-        if state.repository_path not in validate_template_repository(repository, check_sizes=True):
-            raise TemplateError(f"Template {state.repository_path or state.template_name} is not in repository anymore")
-        template = ProjectTemplate.load(os.path.join(repository, state.repository_path),
-                                        repository_url=state.repository_url, repository_path=state.repository_path)
+        if state.source_kind == "app":
+            log(f"Downloading template {state.template_name} from Catalyst Lab")
+            template, _ = download_app_template(state.repository_path, temporary_parent=temporary)
+            repository = None
+        else:
+            repository = os.path.join(temporary, "repository")
+            log(f"Downloading {state.repository_url}")
+            _run_git(["git", "clone", "--depth", "1", "--quiet", state.repository_url, repository])
+            if state.repository_path not in validate_template_repository(repository, check_sizes=True):
+                raise TemplateError(f"Template {state.repository_path or state.template_name} is not in repository anymore")
+            template = ProjectTemplate.load(os.path.join(repository, state.repository_path),
+                                            repository_url=state.repository_url, repository_path=state.repository_path)
         generated = os.path.join(temporary, "template")
         os.makedirs(generated)
         log(f"Generating project from {template.name}")
@@ -594,9 +614,11 @@ def prepare_template_update(project_directory, log: Callable[[str], None],
                                            log=log, stage_ids=state.uuid_stage_ids)
         base_version = _read_commit(project_path, base, os.path.join(temporary, "base"))
         changes = compare_versions(base_version, read_project_version(project_path), read_project_version(generated))
-        commit = repository_commit(repository)
+        commit = repository_commit(repository) if repository else None
         options_changed = selected is not None and selected != state.selected
-        if not changes and commit == state.commit and not options_changed and not force:
+        new_tree = template.source_tree if state.source_kind == "app" else template_tree(repository, state.repository_path)
+        source_unchanged = new_tree == state.template_tree if state.source_kind == "app" else commit == state.commit
+        if not changes and source_unchanged and not options_changed and not force:
             shutil.rmtree(temporary, ignore_errors=True)
             return None
         names = template.resolve(selected if selected is not None else state.selected, project_name=project_directory.name)
@@ -604,8 +626,7 @@ def prepare_template_update(project_directory, log: Callable[[str], None],
         # New version of template, as commit on top of base.
         if selected is not None:
             state.selected = selected
-        record_template_state(generated, template, state.selected, commit, stage_ids,
-                              template_tree(repository, state.repository_path))
+        record_template_state(generated, template, state.selected, commit, stage_ids, new_tree)
         onto = _commit_directory(project_path, generated, f"Update from template {template.name}", [base])
         if _git(project_path, "rev-parse", f"{onto}^{{tree}}") == _git(project_path, "rev-parse", f"{base}^{{tree}}"):
             onto = base # Template didn't change (prepared to drop changes of project), project returns to base.

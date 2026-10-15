@@ -1,6 +1,0 @@
-# Git repositories with project templates, offered when creating project from template. Catalyst Lab downloads this
-# list from main branch every time, so changes here are used by all versions of the app.
-# Each line has repository URL, optionally followed by title. Repository has one template (template.toml) in its root,
-# or many templates in its directories. See docs/project-templates.md to create and add a template.
-
-https://github.com/damiandudycz/catalystlab-templates.git Catalyst Lab templates

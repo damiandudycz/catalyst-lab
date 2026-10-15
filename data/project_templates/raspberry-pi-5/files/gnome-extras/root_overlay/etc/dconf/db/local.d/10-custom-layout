@@ -1,0 +1,8 @@
+[org/gnome/shell/extensions/dash-to-dock]
+dock-fixed=true
+
+[org/gnome/shell/extensions/paperwm]
+default-focus-mode=1
+selection-border-size=0
+show-window-position-bar=false
+show-workspace-indicator=false

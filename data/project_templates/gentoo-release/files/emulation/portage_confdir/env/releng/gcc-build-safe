@@ -1,0 +1,4 @@
+CFLAGS="-O2 -pipe -march=x86-64-v3"
+CXXFLAGS="-O2 -pipe -march=x86-64-v3"
+FCFLAGS="-O2 -pipe -march=x86-64-v3"
+FFLAGS="-O2 -pipe -march=x86-64-v3"

@@ -5,14 +5,13 @@ from typing import Any, Callable
 from gi.repository import Gtk, GLib, Adw
 from .project_template import (
     ProjectTemplate, TemplateError, TemplateVariableType, GeneratedProject, _GROUP_STAGES_NAME,
-    download_template_repositories, fetch_template_repository, find_overlay_for_url
+    load_app_templates, find_overlay_for_url
 )
 from .project_stage import stage_target_icon
 from .scroll_position import preserved_scroll_position
 
 class ProjectTemplateChooser(Gtk.Box):
-    """Templates from Git repositories. Latest list of repositories is downloaded every time (so templates removed from
-    it are not offered anymore), then definitions of templates in these repositories, to show them and their options."""
+    """Templates packaged with Catalyst Lab. Their files are updated from the app repository when updating a project."""
 
     def __init__(self):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -39,24 +38,12 @@ class ProjectTemplateChooser(Gtk.Box):
         loading_row.add_prefix(Adw.Spinner())
         self._set_rows([loading_row])
         def download():
-            # Repositories are downloaded at the same time, their templates are shown in order of the list.
             try:
-                repositories = download_template_repositories()
+                templates = load_app_templates()
             except Exception as e:
                 GLib.idle_add(self._show, None, e)
                 return
-            results: list = [None] * len(repositories)
-            def fetch(index: int, repository):
-                try:
-                    results[index] = (repository, fetch_template_repository(repository.url))
-                except Exception as e: # Also errors of git and files.
-                    results[index] = (repository, e)
-            threads = [threading.Thread(target=fetch, args=(index, repository), daemon=True) for index, repository in enumerate(repositories)]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join()
-            GLib.idle_add(self._show, results, None)
+            GLib.idle_add(self._show, templates, None)
         threading.Thread(target=download, daemon=True).start()
 
     def _error_row(self, title: str, subtitle: str, retry: bool) -> Adw.ActionRow:
@@ -71,27 +58,22 @@ class ProjectTemplateChooser(Gtk.Box):
 
     def _show(self, results, error):
         if results is None:
-            print(f"Failed to download list of template repositories: {error}")
+            print(f"Failed to load app templates: {error}")
             self._set_rows([self._error_row("Templates couldn't be loaded", "Check internet connection and try again.", retry=True)])
             return False
         rows = []
-        for repository, templates in results:
-            if isinstance(templates, Exception):
-                print(f"Failed to load templates from {repository.url}: {templates}")
-                rows.append(self._error_row(repository.title, f"{repository.url}\n{templates}", retry=True))
-                continue
-            for template in templates:
-                if isinstance(template, ProjectTemplate):
-                    subtitle = f"{template.description}\n{repository.title}" if template.description else repository.title
-                    row = Adw.ActionRow(title=GLib.markup_escape_text(template.name), subtitle=GLib.markup_escape_text(subtitle))
-                    self._add_check(row, lambda template=template: self._set_selected(template))
-                else:
-                    directory, template_error = template
-                    row = Adw.ActionRow(title=GLib.markup_escape_text(directory or repository.title),
-                                        subtitle=GLib.markup_escape_text(f"{repository.title}\n{template_error}"))
-                    row.add_css_class("dimmed")
-                    row.set_sensitive(False)
-                rows.append(row)
+        for template in results:
+            if isinstance(template, ProjectTemplate):
+                subtitle = f"{template.description}\nCatalyst Lab" if template.description else "Catalyst Lab"
+                row = Adw.ActionRow(title=GLib.markup_escape_text(template.name), subtitle=GLib.markup_escape_text(subtitle))
+                self._add_check(row, lambda template=template: self._set_selected(template))
+            else:
+                directory, template_error = template
+                row = Adw.ActionRow(title=GLib.markup_escape_text(directory),
+                                    subtitle=GLib.markup_escape_text(f"Catalyst Lab\n{template_error}"))
+                row.add_css_class("dimmed")
+                row.set_sensitive(False)
+            rows.append(row)
         if not rows:
             rows.append(Adw.ActionRow(title="No templates available"))
         self._set_rows(rows)

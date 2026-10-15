@@ -1,0 +1,223 @@
+format = 1
+min_app_version = "2.0.0"
+name = "PlayStation 3"
+description = "Gentoo for PlayStation 3 (Cell CPU): stages with PS3 kernel and tools from ps3-gentoo-overlay, optional Xfce desktop."
+architecture = "ppc64"
+groups_title = "Software"
+
+[[overlays]]
+id = "ps3"
+name = "ps3-gentoo-overlay"
+url = "https://github.com/damiandudycz/ps3-gentoo-overlay.git"
+
+[[variables]]
+id = "init"
+title = "Init system"
+description = "Services of stage4 are enabled automatically with OpenRC."
+default = "openrc"
+options = [
+    { value = "openrc", title = "OpenRC" },
+    { value = "systemd", title = "systemd" },
+]
+
+[[variables]]
+id = "lto"
+title = "Link-time optimization (LTO)"
+description = "Programs can be faster and smaller, but builds take longer and some packages may fail to build."
+type = "boolean"
+default = false
+
+[[variables]]
+id = "extra_stages"
+title = "Extra stages"
+section = "Extra stages"
+description = "Select the console stage4, optional Xfce stage4, or a live installation ISO. The ISO boots from petitboot."
+type = "multiple"
+default = []
+options = [
+    { value = "stage4", title = "Console stage4" },
+    { value = "xfce", title = "Xfce stage4", when = "init == 'openrc'" },
+    { value = "iso", title = "Installation ISO", when = "init == 'openrc'" },
+]
+
+[[variables]]
+id = "zram"
+title = "zram swap"
+description = "Compressed swap in memory, PlayStation 3 has 256 MB of memory. Video memory is also used as swap (ps3vram-swap)."
+default = "64"
+options = [
+    { value = "off", title = "Disabled" },
+    { value = "64", title = "64 MB" },
+    { value = "128", title = "128 MB" },
+]
+
+[values]
+openrc = "{{ init == 'openrc' }}"
+iso = "{{ 'iso' in extra_stages }}"
+with_desktop = "{{ 'xfce' in extra_stages }}"
+common_flags = "-O2 -pipe -mcpu=cell -mtune=cell -mabi=altivec -mno-string -mno-update -mno-multiple{{ ' -flto -Werror=odr -Werror=lto-type-mismatch -Werror=strict-aliasing' if lto else '' }}"
+stage1_name = "stage1-{{ init }}"
+stage4_name = "stage4-{{ init }}"
+desktop_stage3_name = "stage3-desktop-{{ init }}"
+desktop_stage4_name = "stage4-desktop-xfce-{{ init }}"
+iso_stage1_name = "livecd-stage1-{{ init }}"
+iso_stage2_name = "livecd-stage2-{{ init }}"
+# Installation tools of minimal installation ISO of Gentoo releases, with PS3 tools.
+iso_packages = "{{ ['sys-apps/ps3-gentoo-installer', 'sys-apps/ps3vram-swap', 'app-portage/gentoolkit', 'net-misc/chrony', 'net-misc/networkmanager', 'app-accessibility/brltty', 'app-admin/pwgen', 'app-arch/lbzip2', 'app-arch/pigz', 'app-arch/zstd', 'app-crypt/gnupg', 'app-misc/livecd-tools', 'app-portage/mirrorselect', 'app-shells/bash-completion', 'app-shells/gentoo-bashcomp', 'net-analyzer/tcptraceroute', 'net-analyzer/traceroute', 'net-misc/dhcpcd', 'net-misc/iputils', 'net-misc/openssh', 'net-misc/rdate', 'net-wireless/iw', 'net-wireless/iwd', 'net-wireless/wireless-tools', 'net-wireless/wpa_supplicant', 'sys-apps/busybox', 'sys-apps/ethtool', 'sys-apps/gptfdisk', 'sys-apps/hdparm', 'sys-apps/ipmitool', 'sys-apps/iproute2', 'sys-apps/memtester', 'sys-apps/sdparm', 'sys-apps/usbutils', 'sys-auth/ssh-import-id', 'sys-block/parted', 'sys-fs/bcache-tools', 'sys-fs/btrfs-progs', 'sys-fs/cryptsetup', 'sys-fs/dosfstools', 'sys-fs/e2fsprogs', 'sys-fs/f2fs-tools', 'sys-fs/iprutils', 'sys-fs/lsscsi', 'sys-fs/sysfsutils', 'sys-fs/xfsprogs', 'sys-libs/gpm', 'sys-process/lsof', 'www-client/links'] + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
+iso_services = "{{ ([] if zram == 'off' else ['zram-init|boot']) + ['ps3vram-swap|boot', 'NetworkManager|default', 'chronyd|default'] }}"
+base_packages = "{{ ['app-admin/sudo', 'app-misc/ps3pf_utils', 'app-portage/gentoolkit', 'net-misc/networkmanager', 'net-misc/chrony', 'sys-apps/ps3vram-swap', 'sys-kernel/gentoo-kernel-ps3'] + (['app-admin/sysklogd'] if openrc else []) + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
+base_services = "{{ (['ps3vram-swap|boot', 'dbus|default', 'NetworkManager|default', 'sysklogd|default', 'chronyd|default', 'sshd|default'] + ([] if zram == 'off' else ['zram-init|boot'])) if openrc else [] }}"
+
+[[stages]]
+id = "stage1"
+name = "{{ stage1_name }}"
+target = "stage1"
+releng_template = "stage1-{{ init }}-23.spec"
+[stages.arguments]
+subarch = "cell"
+common_flags = "{{ common_flags }}"
+catalyst_use = "{{ ['lto'] if lto else [] }}"
+rel_type = "{{ '23.0-ps3-lto' if lto else '23.0-ps3' }}"
+repos = [{ type = "Overlay", value = "ps3" }]
+
+[[stages]]
+id = "stage3"
+parent = "stage1"
+name = "stage3-{{ init }}"
+target = "stage3"
+releng_template = "stage3-{{ init }}-23.spec"
+
+[[stages]]
+id = "stage4"
+parent = "stage3"
+name = "{{ stage4_name }}"
+target = "stage4"
+when = "'stage4' in extra_stages"
+[stages.arguments]
+stage4_use = ["ps3", "dist-kernel"]
+stage4_packages = "{{ base_packages }}"
+stage4_rcadd = "{{ base_services }}"
+stage4_empty = ["/var/cache/distfiles"]
+stage4_rm = ["/root/.bash_history"]
+
+[[stages]]
+id = "stage3-desktop"
+parent = "stage1"
+name = "{{ desktop_stage3_name }}"
+target = "stage3"
+releng_template = "stage3-openrc-23.spec"
+when = "with_desktop"
+[stages.arguments]
+profile = { type = "PortageProfile", value = { path = "default/linux/ppc64/23.0/desktop", stability = "stable", repo = "gentoo" } }
+version_stamp = "desktop-openrc-@TIMESTAMP@"
+
+[[stages]]
+id = "stage4-desktop"
+parent = "stage3-desktop"
+name = "{{ desktop_stage4_name }}"
+target = "stage4"
+when = "with_desktop"
+[stages.arguments]
+version_stamp = "desktop-xfce-openrc-@TIMESTAMP@"
+stage4_use = ["ps3", "dist-kernel", "-qt5", "-qt6"]
+stage4_packages = "{{ base_packages + ['x11-base/xorg-server', 'x11-apps/xdm', 'xfce-base/xfce4-meta'] }}"
+stage4_rcadd = "{{ base_services + ['display-manager|default'] }}"
+stage4_empty = ["/var/cache/distfiles"]
+stage4_rm = ["/root/.bash_history"]
+
+# Installation ISO: live system with PS3 kernel, built by catalyst (boot/kernel). Kernel and initramfs are /boot/ps3 and
+# /boot/ps3.igz, loaded by petitboot with yaboot.conf on ISO (livecd/overlay). Volume label Gentoo-ps3 is used by it.
+[[stages]]
+id = "livecd-stage1"
+parent = "stage3"
+name = "{{ iso_stage1_name }}"
+target = "livecd_stage1"
+when = "iso"
+[stages.arguments]
+livecd_use = ["ps3", "compile-locales", "fbcon", "socks5", "unicode", "xml"]
+livecd_packages = "{{ iso_packages }}"
+
+[[stages]]
+id = "livecd-stage2"
+parent = "livecd-stage1"
+name = "{{ iso_stage2_name }}"
+target = "livecd_stage2"
+when = "iso"
+[stages.arguments]
+boot_kernel = ["ps3"]
+livecd_type = "gentoo-release-minimal"
+livecd_fstype = "squashfs"
+livecd_volid = "Gentoo-ps3"
+livecd_iso = "install-ps3-@TIMESTAMP@.iso"
+livecd_overlay = "@STAGE_DIR@/overlay"
+livecd_rcadd = "{{ iso_services }}"
+livecd_unmerge = ["app-portage/gentoolkit", "app-admin/eselect", "app-admin/eselect-ctags", "app-admin/eselect-vi", "app-admin/perl-cleaner", "app-admin/python-updater", "app-arch/cpio", "dev-libs/gmp", "dev-libs/libxml2", "dev-libs/mpfr", "dev-python/pycrypto", "dev-util/pkgconfig", "dev-util/pkgconf", "perl-core/PodParser", "perl-core/Test-Harness", "sys-apps/debianutils", "sys-apps/diffutils", "sys-apps/groff", "sys-apps/man-db", "sys-apps/man-pages", "sys-apps/miscfiles", "sys-apps/sandbox", "sys-apps/texinfo", "sys-devel/autoconf", "sys-devel/autoconf-wrapper", "sys-devel/automake", "sys-devel/automake-wrapper", "sys-devel/binutils", "sys-devel/binutils-config", "sys-devel/bison", "sys-devel/flex", "sys-devel/gcc", "sys-devel/gcc-config", "sys-devel/gettext", "sys-devel/gnuconfig", "sys-devel/libtool", "sys-devel/m4", "sys-devel/make", "sys-devel/patch", "sys-libs/db", "sys-libs/gdbm", "sys-kernel/genkernel", "sys-kernel/linux-headers"]
+livecd_empty = ["/boot", "/etc/cron.daily", "/etc/cron.hourly", "/etc/cron.monthly", "/etc/cron.weekly", "/etc/logrotate.d", "/etc/modules.autoload.d", "/etc/rsync", "/etc/runlevels/single", "/etc/skel", "/usr/lib/dev-state", "/usr/lib/udev-state", "/usr/lib64/dev-state", "/usr/lib64/udev-state", "/root/.ccache", "/tmp", "/usr/include", "/usr/lib64/X11/config", "/usr/lib64/X11/doc", "/usr/lib64/X11/etc", "/usr/lib64/awk", "/usr/lib64/ccache", "/usr/lib64/gcc-config", "/usr/lib64/nfs", "/usr/lib64/perl5/site_perl", "/usr/lib64/portage", "/usr/local", "/usr/portage", "/usr/powerpc64*-unknown-linux-gnu", "/usr/share/aclocal", "/usr/share/baselayout", "/usr/share/binutils-data", "/usr/share/consolefonts/partialfonts", "/usr/share/consoletrans", "/usr/share/dict", "/usr/share/doc", "/usr/share/emacs", "/usr/share/et", "/usr/share/gcc-data", "/usr/share/genkernel", "/usr/share/gettext", "/usr/share/glib-2.0", "/usr/share/gnuconfig", "/usr/share/gtk-doc", "/usr/share/i18n", "/usr/share/info", "/usr/share/lcms", "/usr/share/libtool", "/usr/share/locale", "/usr/share/man", "/usr/share/rfc", "/usr/share/ss", "/usr/share/state", "/usr/share/texinfo", "/usr/share/unimaps", "/usr/share/zoneinfo", "/usr/src", "/var/cache", "/var/empty", "/var/lib/portage", "/var/log", "/var/spool", "/var/state", "/var/tmp"]
+livecd_rm = ["/boot/System*", "/boot/initr*", "/boot/kernel*", "/etc/*-", "/etc/*.old", "/etc/default/audioctl", "/etc/dispatch-conf.conf", "/etc/env.d/05binutils", "/etc/env.d/05gcc", "/etc/etc-update.conf", "/etc/hosts.bck", "/etc/issue*", "/etc/genkernel.conf", "/etc/make.conf*", "/etc/make.globals", "/etc/make.profile", "/etc/man.conf", "/etc/resolv.conf", "/usr/lib*/*.a", "/usr/lib*/*.la", "/usr/lib*/cpp", "/root/.bash_history", "/root/.viminfo", "/usr/bin/*.static", "/usr/bin/fsck.cramfs", "/usr/bin/fsck.minix", "/usr/bin/mkfs.bfs", "/usr/bin/mkfs.cramfs", "/usr/bin/mkfs.minix", "/usr/bin/addr2line", "/usr/bin/ar", "/usr/bin/as", "/usr/bin/audioctl", "/usr/bin/c++*", "/usr/bin/cc", "/usr/bin/cjpeg", "/usr/bin/cpp", "/usr/bin/djpeg", "/usr/bin/ebuild", "/usr/bin/egencache", "/usr/bin/emerge", "/usr/bin/emerge-webrsync", "/usr/bin/emirrordist", "/usr/bin/elftoaout", "/usr/bin/f77", "/usr/bin/g++*", "/usr/bin/g77", "/usr/bin/gcc*", "/usr/bin/genkernel", "/usr/bin/gprof", "/usr/bin/jpegtran", "/usr/bin/ld", "/usr/bin/libpng*", "/usr/bin/nm", "/usr/bin/objcopy", "/usr/bin/objdump", "/usr/bin/piggyback*", "/usr/bin/portageq", "/usr/bin/ranlib", "/usr/bin/readelf", "/usr/bin/size", "/usr/bin/powerpc64*-unknown-linux-gnu-*", "/usr/bin/strings", "/usr/bin/strip", "/usr/bin/tbz2tool", "/usr/bin/xpak", "/usr/bin/yacc", "/usr/lib*/perl5/site_perl", "/usr/lib*/gcc-lib/*/*/libgcj*", "/usr/bin/archive-conf", "/usr/bin/dispatch-conf", "/usr/bin/emaint", "/usr/bin/env-update", "/usr/bin/etc-update", "/usr/bin/fb*", "/usr/bin/fixpackages", "/usr/bin/quickpkg", "/usr/bin/regenworld", "/usr/share/consolefonts/1*", "/usr/share/consolefonts/7*", "/usr/share/consolefonts/8*", "/usr/share/consolefonts/9*", "/usr/share/consolefonts/A*", "/usr/share/consolefonts/C*", "/usr/share/consolefonts/E*", "/usr/share/consolefonts/G*", "/usr/share/consolefonts/L*", "/usr/share/consolefonts/M*", "/usr/share/consolefonts/R*", "/usr/share/consolefonts/a*", "/usr/share/consolefonts/c*", "/usr/share/consolefonts/dr*", "/usr/share/consolefonts/g*", "/usr/share/consolefonts/i*", "/usr/share/consolefonts/k*", "/usr/share/consolefonts/l*", "/usr/share/consolefonts/r*", "/usr/share/consolefonts/s*", "/usr/share/consolefonts/t*", "/usr/share/consolefonts/v*", "/usr/share/misc/*.old"]
+[stages.arguments.boot_kernels.ps3]
+sources = "sys-kernel/gentoo-kernel-ps3"
+distkernel = true
+dracut_args = "--xz --no-hostonly -a dmsquash-live -o btrfs -o crypt -o i18n -o usrmount -o lunmask -o qemu -o qemu-net -o nvdimm -o multipath -o resume"
+extraversion = "ps3"
+
+# Cell CPU features and PowerPC 64 ABI fix of OpenSSL, inherited by all stages (parent overlay).
+[[files]]
+source = "files/stage1"
+destination = "stages/{{ stage1_name }}"
+
+# PS3 tools, input and video devices, kernel installation and zram.
+[[files]]
+source = "files/stage4"
+destination = "stages/{{ stage4_name }}"
+when = "'stage4' in extra_stages"
+
+[[files]]
+source = "files/stage4"
+destination = "stages/{{ desktop_stage4_name }}"
+when = "with_desktop"
+
+[[files]]
+source = "files/desktop-stage3"
+destination = "stages/{{ desktop_stage3_name }}"
+when = "with_desktop"
+
+[[files]]
+source = "files/desktop"
+destination = "stages/{{ desktop_stage4_name }}"
+when = "with_desktop"
+
+[[groups]]
+id = "development"
+title = "Development tools"
+description = "git, eselect-repository, distcc and kernel headers."
+default = true
+stages = ["stage4", "stage4-desktop"]
+when = "'stage4' in extra_stages or 'xfce' in extra_stages"
+[groups.arguments]
+stage4_packages = ["dev-vcs/git", "app-eselect/eselect-repository", "sys-devel/distcc", "sys-kernel/linux-headers"]
+
+# Installation ISO: PS3 devices and kernel installation (like stage4), boot menu of petitboot, zram and memory settings
+# of live system.
+[[files]]
+source = "files/stage4/portage"
+destination = "stages/{{ iso_stage1_name }}/portage"
+when = "iso"
+
+[[files]]
+source = "files/stage4/portage"
+destination = "stages/{{ iso_stage2_name }}/portage"
+when = "iso"
+
+[[files]]
+source = "files/iso"
+destination = "stages/{{ iso_stage2_name }}"
+when = "iso"
+
+[[files]]
+source = "files/stage4/root_overlay"
+destination = "stages/{{ iso_stage2_name }}/root_overlay"
+when = "iso and zram != 'off'"
+
+[[files]]
+source = "files/project.gitignore"
+destination = ".gitignore"

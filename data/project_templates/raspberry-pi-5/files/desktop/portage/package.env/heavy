@@ -1,0 +1,4 @@
+# Large C++ sources, each compiler job can need 2-3 GB of memory.
+net-libs/webkit-gtk heavy.conf
+dev-qt/qtwebengine heavy.conf
+net-libs/nodejs heavy.conf

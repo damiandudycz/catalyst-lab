@@ -1,0 +1,2 @@
+[org/gnome/shell]
+enabled-extensions=['paperwm@paperwm.github.com', 'blur-my-shell@aunetx', 'focus@scaryrawr.github.io', 'dash-to-dock@micxgx.gmail.com']

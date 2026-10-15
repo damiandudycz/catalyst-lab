@@ -1,0 +1,2 @@
+# Packages compiling some files with their own -march conflict with -mcpu and LTO.
+dev-lang/spidermonkey no-lto-march.conf

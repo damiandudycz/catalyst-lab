@@ -5,7 +5,7 @@ from .cl_toggle_group import CLToggle, CLToggleGroup
 from .project_template_update import (
     prepare_template_update, prepare_repository_update, describe_value, TemplateChange, TemplateState, own_commits_count
 )
-from .project_template import fetch_template_repository, ProjectTemplate
+from .project_template import load_app_template_definition, fetch_template_repository, ProjectTemplate
 from .project_template_views import ProjectTemplateOptionsView
 
 class ProjectUpdateView(Gtk.Box):
@@ -64,12 +64,15 @@ class ProjectUpdateView(Gtk.Box):
         try:
             if state is None:
                 raise RuntimeError("Project wasn't created from template")
-            templates = fetch_template_repository(state.repository_url)
-            template = next((item for item in templates if isinstance(item, ProjectTemplate)
-                             and item.repository_path == state.repository_path), None)
-            if template is None:
-                error = next((item[1] for item in templates if not isinstance(item, ProjectTemplate) and item[0] == state.repository_path), None)
-                raise RuntimeError(str(error) if error else f"Template {state.template_name} is not in repository anymore")
+            if state.source_kind == "app":
+                template = load_app_template_definition(state.repository_path)
+            else:
+                templates = fetch_template_repository(state.repository_url)
+                template = next((item for item in templates if isinstance(item, ProjectTemplate)
+                                 and item.repository_path == state.repository_path), None)
+                if template is None:
+                    error = next((item[1] for item in templates if not isinstance(item, ProjectTemplate) and item[0] == state.repository_path), None)
+                    raise RuntimeError(str(error) if error else f"Template {state.template_name} is not in repository anymore")
             GLib.idle_add(self._show_options, template, state.selected, None)
         except Exception as e:
             GLib.idle_add(self._show_options, None, None, e)

@@ -8,7 +8,7 @@ from .releng_directory import RelengDirectory
 from .snapshot import Snapshot, LATEST_SNAPSHOT
 from .project_directory import ProjectConfiguration
 from .architecture import Architecture
-from .project_template import apply_project_template, load_cloned_template, ensure_template_overlays
+from .project_template import apply_project_template, load_cloned_template, download_app_template, ensure_template_overlays
 from .project_template_update import record_template_state, repository_commit, template_tree
 import os, shutil
 from .multistage_process import (
@@ -145,9 +145,15 @@ class ProjectInstallationStepApplyTemplate(MultiStageProcessStage):
             selection = self.multistage_process.configuration.data
             template = selection.template
             temporary_directory = None
-            # Commit of template repository (cloned as project), recorded for updates of template.
-            template_commit = repository_commit(directory.directory_path()) if selection.repository_url else None
-            template_directory_tree = template_tree(directory.directory_path(), selection.template.repository_path) if selection.repository_url else None
+            # External repository templates are cloned as the project; in-app templates start a normal project Git
+            # repository and remember the source template's tree hash for narrow update checks.
+            is_repository_template = selection.repository_url is not None
+            template_commit = repository_commit(directory.directory_path()) if is_repository_template else None
+            if template.source_kind == "app" and not template.files_available:
+                template, temporary_directory = download_app_template(template.repository_path,
+                                                                      expected_tree=template.source_tree)
+            template_directory_tree = (template_tree(directory.directory_path(), selection.template.repository_path)
+                                       if is_repository_template else selection.template.source_tree)
             if selection.repository_url:
                 # Options were read from template.toml downloaded alone, files come from cloned repository.
                 template, temporary_directory = load_cloned_template(directory.directory_path(), selection.repository_url,
@@ -159,7 +165,7 @@ class ProjectInstallationStepApplyTemplate(MultiStageProcessStage):
                     self.log(f"{variable.title}: {names[variable.id]}")
                 # Cloned template repository is replaced with generated content, its history is kept.
                 stage_ids = apply_project_template(project_directory=directory, template=template, names=names, log=self.log,
-                                                   replace_content=selection.repository_url is not None,
+                                                   replace_content=is_repository_template,
                                                    overlay_ids=getattr(self.multistage_process, "template_overlay_ids", None))
                 # Template and generated files are remembered, so project can be updated when template changes.
                 record_template_state(directory.directory_path(), template, dict(selection.selected), template_commit, stage_ids,

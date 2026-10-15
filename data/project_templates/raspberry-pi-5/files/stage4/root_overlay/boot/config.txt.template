@@ -1,0 +1,5 @@
+# Raspberry Pi 5 boot configuration: https://www.raspberrypi.com/documentation/computers/config_txt.html
+arm_64bit=1
+dtparam=audio=on
+dtoverlay=vc4-kms-v3d-pi5
+{{ join('\n', (['enable_uart=1'] if serial_console else []) + ([] if overclock == 'stock' else ['arm_freq=' + overclock] + (['over_voltage_delta=50000'] if overclock == '2800' else []))) }}

@@ -1,0 +1,379 @@
+format = 1
+min_app_version = "2.0.0"
+name = "ASUS ROG Ally / Ally X"
+description = "Gentoo for the ASUS ROG Ally and Ally X, with AMD graphics, firmware, optional GNOME or KDE Plasma, and ISO builds."
+groups_title = "Software"
+architecture = "amd64"
+
+[[variables]]
+id = "init"
+title = "Init system"
+description = "Services of stage4 are enabled automatically with OpenRC."
+default = "openrc"
+options = [
+    { value = "openrc", title = "OpenRC" },
+    { value = "systemd", title = "systemd" },
+]
+
+[[variables]]
+id = "optimization"
+title = "CPU target"
+description = "The Ally and Ally X use AMD Zen 4 processors. Generic amd64 builds are more portable to other computers."
+default = "znver4"
+options = [
+    { value = "znver4", title = "AMD Zen 4 (znver4)" },
+    { value = "generic", title = "Generic baseline" },
+]
+
+[[variables]]
+id = "strip_avx512_for_emulation"
+title = "Strip AVX-512 instructions for emulation"
+description = "Only enable this when building the x86_64 stages under QEMU on a different architecture. Disables AVX-512 code generation to avoid instructions unsupported by the emulator."
+type = "boolean"
+default = false
+when = "optimization == 'znver4'"
+
+[[variables]]
+id = "lto"
+title = "Link-time optimization (LTO)"
+description = "Programs can be faster and smaller, but builds take longer and some packages may fail to build."
+type = "boolean"
+default = false
+
+[[variables]]
+id = "extra_stages"
+title = "Extra stages"
+section = "Extra stages"
+previous_id = "desktop"
+description = "Select the console stage4, optional GNOME and KDE Plasma stage4 systems, a minimal install ISO, or a Plasma live ISO."
+type = "multiple"
+default = []
+options = [
+    { value = "stage4", title = "Console stage4" },
+    { value = "gnome", title = "GNOME stage4" },
+    { value = "gnome_customized", title = "Customized GNOME stage4", when = "'gnome' in extra_stages" },
+    { value = "plasma", title = "KDE Plasma stage4" },
+    { value = "iso", title = "Installation ISO" },
+    { value = "iso_gui", title = "Live ISO with KDE Plasma" },
+]
+
+[[variables]]
+id = "zram"
+title = "zram swap"
+description = "Compressed swap in memory."
+default = "4096"
+options = [
+    { value = "off", title = "Disabled" },
+    { value = "2048", title = "2 GB" },
+    { value = "4096", title = "4 GB" },
+    { value = "8192", title = "8 GB" },
+]
+
+[values]
+openrc = "{{ init == 'openrc' }}"
+znver4 = "{{ optimization == 'znver4' }}"
+cpu_flags = "{{ '-O2 -pipe -march=znver4 -mtune=znver4' if znver4 else '-O2 -pipe' }}"
+avx512_compat_flags = "{{ ' -mno-avx512f -mno-avx512vl -mno-avx512bw -mno-avx512dq -mno-avx512cd' if strip_avx512_for_emulation else '' }}"
+optimizations = "{{ (['znver4'] if znver4 else []) + (['lto'] if lto else []) }}"
+rel_type = "{{ '23.0-' + join('-', optimizations) if optimizations else '' }}"
+common_flags = "{{ cpu_flags + avx512_compat_flags + (' -flto -Werror=odr -Werror=lto-type-mismatch -Werror=strict-aliasing' if lto else '') if znver4 or lto else None }}"
+hostname = "{{ replace(lower(project_name), ' ', '-') or 'rog-ally' }}"
+stage1_name = "stage1-{{ init }}"
+stage4_name = "stage4-{{ init }}"
+gnome_customizations = "{{ 'gnome_customized' in extra_stages }}"
+with_desktop = "{{ 'gnome' in extra_stages or 'plasma' in extra_stages }}"
+desktop_stage3_name = "stage3-desktop-{{ init }}"
+iso_stage1_name = "livecd-stage1-{{ init }}"
+iso_stage2_name = "livecd-stage2-{{ init }}"
+livegui_stage1_name = "livegui-stage1-{{ init }}"
+livegui_stage2_name = "livegui-stage2-{{ init }}"
+gnome_stage4_name = "stage4-gnome-{{ init }}"
+gnome_extras_stage4_name = "stage4-gnome-customized-{{ init }}"
+plasma_stage4_name = "stage4-plasma-{{ init }}"
+desktop_profile_suffix = "{{ '/systemd' if init == 'systemd' else '' }}"
+zram_packages = "{{ [] if zram == 'off' else ['sys-block/zram-init'] }}"
+base_packages = "{{ ['app-admin/sudo', 'app-portage/gentoolkit', 'net-misc/networkmanager', 'net-misc/chrony', 'sys-power/cpupower', 'sys-kernel/gentoo-kernel-bin', 'sys-kernel/linux-firmware', 'sys-boot/grub'] + (['app-admin/sysklogd'] if openrc else []) + zram_packages }}"
+base_services = "{{ (['cpupower|boot', 'dbus|default', 'NetworkManager|default', 'sysklogd|default', 'chronyd|default', 'sshd|default'] + ([] if zram == 'off' else ['zram-init|boot'])) if openrc else [] }}"
+iso_extra_packages = "{{ ['app-portage/gentoolkit', 'net-misc/networkmanager', 'app-accessibility/brltty', 'app-admin/pwgen', 'app-arch/lbzip2', 'app-arch/pigz', 'app-arch/zstd', 'app-crypt/gnupg', 'app-misc/livecd-tools', 'app-portage/mirrorselect', 'app-shells/bash-completion', 'app-shells/gentoo-bashcomp', 'net-analyzer/traceroute', 'net-misc/dhcpcd', 'net-misc/iputils', 'net-misc/openssh', 'net-misc/rdate', 'net-wireless/iw', 'net-wireless/iwd', 'net-wireless/wireless-tools', 'net-wireless/wpa_supplicant', 'sys-apps/busybox', 'sys-apps/ethtool', 'sys-apps/gptfdisk', 'sys-apps/hdparm', 'sys-apps/iproute2', 'sys-apps/memtester', 'sys-apps/sdparm', 'sys-apps/usbutils', 'sys-auth/ssh-import-id', 'sys-block/parted', 'sys-fs/btrfs-progs', 'sys-fs/cryptsetup', 'sys-fs/dosfstools', 'sys-fs/e2fsprogs', 'sys-fs/f2fs-tools', 'sys-fs/lsscsi', 'sys-fs/sysfsutils', 'sys-fs/xfsprogs', 'sys-kernel/linux-firmware', 'sys-libs/gpm', 'sys-process/lsof', 'www-client/links', 'sys-devel/bc', 'sys-devel/bison', 'sys-devel/flex'] + zram_packages }}"
+livegui_packages = "{{ iso_extra_packages + ['kde-plasma/plasma-meta', 'x11-misc/sddm', 'kde-apps/konsole', 'kde-apps/dolphin', 'kde-apps/kate', 'www-client/firefox-bin', 'sys-block/gparted', 'app-admin/sudo', 'app-editors/nano', 'app-misc/tmux', 'sys-apps/pciutils', 'sys-process/htop', 'sys-kernel/gentoo-kernel-bin', 'sys-kernel/linux-firmware'] }}"
+livegui_services = "{{ (([] if zram == 'off' else ['zram-init|boot']) + ['udev|sysinit', 'udev-mount|sysinit', 'elogind|boot', 'dbus|default', 'NetworkManager|default', 'display-manager|default']) if openrc else [] }}"
+
+[[stages]]
+id = "stage1"
+name = "{{ stage1_name }}"
+target = "stage1"
+releng_template = "stage1-{{ init }}-23.spec"
+[stages.arguments]
+common_flags = "{{ common_flags }}"
+catalyst_use = "{{ ['lto'] if lto else [] }}"
+rel_type = "{{ rel_type }}"
+
+[[stages]]
+id = "stage3"
+parent = "stage1"
+name = "stage3-{{ init }}"
+target = "stage3"
+releng_template = "stage3-{{ init }}-23.spec"
+
+[[stages]]
+id = "stage4"
+parent = "stage3"
+name = "{{ stage4_name }}"
+target = "stage4"
+when = "'stage4' in extra_stages"
+[stages.arguments]
+stage4_use = ["networkmanager", "bluetooth"]
+stage4_packages = "{{ base_packages }}"
+stage4_rcadd = "{{ base_services }}"
+stage4_empty = ["/var/cache/distfiles"]
+stage4_rm = ["/root/.bash_history"]
+
+[[stages]]
+id = "stage3-desktop"
+parent = "stage1"
+name = "{{ desktop_stage3_name }}"
+target = "stage3"
+releng_template = "stage3d-{{ init }}-23.spec"
+when = "with_desktop or 'iso_gui' in extra_stages"
+
+[[stages]]
+id = "stage4-gnome"
+parent = "stage3-desktop"
+name = "{{ gnome_stage4_name }}"
+target = "stage4"
+when = "'gnome' in extra_stages"
+[stages.arguments]
+profile = { type = "PortageProfile", value = { path = "default/linux/amd64/23.0/desktop/gnome{{ desktop_profile_suffix }}", stability = "stable", repo = "gentoo" } }
+version_stamp = "gnome-{{ init }}-@TIMESTAMP@"
+stage4_use = ["networkmanager", "bluetooth", "pulseaudio"]
+stage4_packages = "{{ base_packages + ['gnome-base/gnome', 'gnome-base/gdm'] }}"
+stage4_rcadd = "{{ base_services + (['display-manager|default'] if openrc else []) }}"
+stage4_empty = ["/var/cache/distfiles"]
+stage4_rm = ["/root/.bash_history"]
+
+[[stages]]
+id = "stage4-gnome-extras"
+parent = "stage4-gnome"
+name = "{{ gnome_extras_stage4_name }}"
+target = "stage4"
+when = "'gnome' in extra_stages and gnome_customizations"
+[stages.arguments]
+stage4_packages = ["sys-apps/flatpak", "net-misc/curl", "app-arch/unzip"]
+version_stamp = "gnome-customized-{{ init }}-@TIMESTAMP@"
+stage4_fsscript = "@STAGE_DIR@/install-gnome-extras.sh"
+
+[[stages]]
+id = "stage4-plasma"
+parent = "stage3-desktop"
+name = "{{ plasma_stage4_name }}"
+target = "stage4"
+when = "'plasma' in extra_stages"
+[stages.arguments]
+profile = { type = "PortageProfile", value = { path = "default/linux/amd64/23.0/desktop/plasma{{ desktop_profile_suffix }}", stability = "stable", repo = "gentoo" } }
+version_stamp = "plasma-{{ init }}-@TIMESTAMP@"
+stage4_use = ["networkmanager", "bluetooth", "pulseaudio"]
+stage4_packages = "{{ base_packages + ['kde-plasma/plasma-meta', 'x11-misc/sddm'] }}"
+stage4_rcadd = "{{ base_services + (['display-manager|default'] if openrc else []) }}"
+stage4_empty = ["/var/cache/distfiles"]
+stage4_rm = ["/root/.bash_history"]
+
+# Minimal installer ISO, following the Gentoo amd64 releng installcd specifications.
+[[stages]]
+id = "livecd-stage1"
+parent = "stage3"
+name = "{{ iso_stage1_name }}"
+target = "livecd_stage1"
+releng_template = "installcd-stage1.spec"
+when = "'iso' in extra_stages"
+[stages.arguments]
+livecd_packages = "{{ ['@releng'] + iso_extra_packages }}"
+
+[[stages]]
+id = "livecd-stage2"
+parent = "livecd-stage1"
+name = "{{ iso_stage2_name }}"
+target = "livecd_stage2"
+releng_template = "installcd-stage2-minimal.spec"
+when = "'iso' in extra_stages"
+[stages.arguments]
+livecd_volid = "Gentoo-ROG-Ally"
+livecd_iso = "install-rog-ally-@TIMESTAMP@.iso"
+livecd_rcadd = "{{ ['@releng'] + (['zram-init|boot'] if openrc and zram != 'off' else []) }}"
+
+# Desktop live ISO, based on the machine's desktop stage3 like the Raspberry Pi template.
+[[stages]]
+id = "livegui-stage1"
+parent = "stage3-desktop"
+name = "{{ livegui_stage1_name }}"
+target = "livecd_stage1"
+when = "'iso_gui' in extra_stages"
+[stages.arguments]
+profile = { type = "PortageProfile", value = { path = "default/linux/amd64/23.0/desktop/plasma{{ desktop_profile_suffix }}", stability = "stable", repo = "gentoo" } }
+version_stamp = "plasma-@TIMESTAMP@"
+livecd_use = ["accessibility", "compile-locales", "fbcon", "livecd", "networkmanager", "pulseaudio", "python"]
+livecd_packages = "{{ livegui_packages }}"
+
+[[stages]]
+id = "livegui-stage2"
+parent = "livegui-stage1"
+name = "{{ livegui_stage2_name }}"
+target = "livecd_stage2"
+releng_template = "livegui/livegui-stage2.spec"
+when = "'iso_gui' in extra_stages"
+[stages.arguments]
+boot_kernel = ["@releng"]
+livecd_type = "gentoo-release-livecd"
+livecd_bootargs = "nodhcp"
+livecd_depclean = "no"
+livecd_fstype = "squashfs"
+livecd_volid = "Gentoo-ROG-Ally-Live"
+livecd_iso = "livegui-rog-ally-@TIMESTAMP@.iso"
+livecd_fsscript = "@STAGE_DIR@/fsscript.sh"
+livecd_rcadd = "{{ livegui_services }}"
+livecd_unmerge = ["net-misc/netifrc"]
+livecd_empty = ["/var/db/repos", "/usr/src"]
+
+[[files]]
+source = "files/emulation/portage_confdir"
+destination = "stages/{{ stage1_name }}/portage"
+when = "strip_avx512_for_emulation"
+
+[[files]]
+source = "files/stage4"
+destination = "stages/{{ stage4_name }}"
+when = "'stage4' in extra_stages"
+
+[[files]]
+source = "files/zram"
+destination = "stages/{{ stage4_name }}/root_overlay"
+when = "'stage4' in extra_stages and zram != 'off'"
+
+[[files]]
+source = "files/stage4"
+destination = "stages/{{ gnome_stage4_name }}"
+when = "'gnome' in extra_stages"
+
+[[files]]
+source = "files/zram"
+destination = "stages/{{ gnome_stage4_name }}/root_overlay"
+when = "zram != 'off' and 'gnome' in extra_stages"
+
+[[files]]
+source = "files/desktop"
+destination = "stages/{{ gnome_stage4_name }}"
+when = "'gnome' in extra_stages"
+
+[[files]]
+source = "files/desktop/portage"
+destination = "stages/{{ gnome_stage4_name }}/portage"
+when = "'gnome' in extra_stages"
+
+[[files]]
+source = "files/desktop-gnome"
+destination = "stages/{{ gnome_stage4_name }}"
+when = "'gnome' in extra_stages"
+
+[[files]]
+source = "files/gnome-extras/install-gnome-extras.sh"
+destination = "stages/{{ gnome_extras_stage4_name }}/install-gnome-extras.sh"
+when = "'gnome' in extra_stages and gnome_customizations"
+
+[[files]]
+source = "files/gnome-extras/root_overlay"
+destination = "stages/{{ gnome_extras_stage4_name }}/root_overlay"
+when = "'gnome' in extra_stages and gnome_customizations"
+
+[[files]]
+source = "files/stage4"
+destination = "stages/{{ plasma_stage4_name }}"
+when = "'plasma' in extra_stages"
+
+[[files]]
+source = "files/zram"
+destination = "stages/{{ plasma_stage4_name }}/root_overlay"
+when = "zram != 'off' and 'plasma' in extra_stages"
+
+[[files]]
+source = "files/desktop"
+destination = "stages/{{ plasma_stage4_name }}"
+when = "'plasma' in extra_stages"
+
+[[files]]
+source = "files/desktop/portage"
+destination = "stages/{{ plasma_stage4_name }}/portage"
+when = "'plasma' in extra_stages"
+
+[[files]]
+source = "files/desktop-plasma"
+destination = "stages/{{ plasma_stage4_name }}"
+when = "'plasma' in extra_stages"
+
+[[files]]
+source = "files/stage4/portage"
+destination = "stages/{{ iso_stage1_name }}/portage"
+when = "'iso' in extra_stages"
+
+[[files]]
+source = "files/stage4/portage"
+destination = "stages/{{ iso_stage2_name }}/portage"
+when = "'iso' in extra_stages"
+
+[[files]]
+source = "files/stage4/portage"
+destination = "stages/{{ livegui_stage1_name }}/portage"
+when = "'iso_gui' in extra_stages"
+
+[[files]]
+source = "files/stage4/portage"
+destination = "stages/{{ livegui_stage2_name }}/portage"
+when = "'iso_gui' in extra_stages"
+
+[[files]]
+source = "files/desktop/portage"
+destination = "stages/{{ livegui_stage1_name }}/portage"
+when = "'iso_gui' in extra_stages"
+
+[[files]]
+source = "files/desktop/portage"
+destination = "stages/{{ livegui_stage2_name }}/portage"
+when = "'iso_gui' in extra_stages"
+
+[[files]]
+source = "files/livegui/fsscript.sh"
+destination = "stages/{{ livegui_stage2_name }}/fsscript.sh"
+when = "'iso_gui' in extra_stages"
+
+[[groups]]
+id = "wireless"
+title = "Wi-Fi and Bluetooth"
+description = "Bluetooth support and the Wi-Fi supplicant; firmware is provided by linux-firmware."
+default = true
+when = "'stage4' in extra_stages or 'gnome' in extra_stages or 'plasma' in extra_stages or 'iso' in extra_stages or 'iso_gui' in extra_stages"
+stages = ["stage4", "stage4-gnome", "stage4-plasma", "livecd-stage1", "livegui-stage1"]
+[groups.arguments]
+stage4_packages = ["net-wireless/bluez", "net-wireless/wpa_supplicant"]
+livecd_packages = ["net-wireless/bluez", "net-wireless/wpa_supplicant"]
+stage4_rcadd = "{{ ['bluetooth|default'] if openrc else [] }}"
+
+[[groups]]
+id = "development"
+title = "Development tools"
+description = "git, eselect-repository, distcc and kernel headers."
+when = "'stage4' in extra_stages or 'gnome' in extra_stages or 'plasma' in extra_stages"
+stages = ["stage4", "stage4-gnome", "stage4-plasma"]
+[groups.arguments]
+stage4_packages = ["dev-vcs/git", "app-eselect/eselect-repository", "sys-devel/distcc", "sys-kernel/linux-headers"]
+
+[[groups]]
+id = "docker"
+title = "Docker"
+description = "Container engine, started at boot."
+when = "'stage4' in extra_stages or 'gnome' in extra_stages or 'plasma' in extra_stages"
+stages = ["stage4", "stage4-gnome", "stage4-plasma"]
+[groups.arguments]
+stage4_packages = ["app-containers/docker", "app-containers/docker-cli"]
+stage4_rcadd = "{{ ['docker|default'] if openrc else [] }}"
+
+[[files]]
+source = "files/project.gitignore"
+destination = ".gitignore"

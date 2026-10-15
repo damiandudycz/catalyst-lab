@@ -3,42 +3,37 @@
 New projects can be created from a template. A template describes the stages of a project (and optionally files like
 Portage configuration), and can have options, like architecture or init system, that change what is created.
 
-Templates come from Git repositories listed in
-[`data/project_templates/repositories.txt`](../data/project_templates/repositories.txt). The app always downloads this
-list from the `main` branch, so templates removed from it are not offered anymore. Then it downloads only the
-`template.toml` files of these repositories, to show their templates and options. When a project is created, the
-repository is cloned under the project name and its content is replaced with the generated project, so the project
-keeps the history of the template repository.
+Official templates live in [`data/project_templates`](../data/project_templates) in the Catalyst Lab repository. The
+app loads the current template list and definitions from the `main` branch when opening the template chooser. It does
+not use local copies bundled with the app. Existing projects created from these templates can receive template
+changes through **Update template**. The app checks the Git tree hash of only that template's directory. Changes
+elsewhere in the application repository do not make the template appear out of date. When an update is opened, the app
+downloads only the selected template directory and its files.
 
-Templates included in the official list are in
-[catalystlab-templates](https://github.com/damiandudycz/catalystlab-templates), for example
-[Gentoo release](https://github.com/damiandudycz/catalystlab-templates/tree/main/gentoo-release).
+Templates do not have a separate Git repository, and new projects begin as normal Catalyst Lab project repositories.
+Projects created from external template repositories keep their existing update source. The in-app template source
+applies to projects created from these templates going forward; prior template project metadata is left unchanged.
 
 Templates can't run code. Values are generated with small expressions (see [Expressions](#expressions)) that only
-allow a fixed set of operations, so templates from other repositories are safe to use.
+allow a fixed set of operations.
 
 ## Repository layout
 
-A repository has one template in its root, or many templates, each in its own directory:
+Each official template is stored in its own directory:
 
 ```
-gentoo-release/                 Directory of template, its name is used only in repository.
+data/project_templates/gentoo-release/
     template.toml               Required, definition of template.
     files/                      Optional, files copied to projects (see [[files]]).
     README.md                   Optional.
-raspberry-pi-5/
+data/project_templates/raspberry-pi-5/
     template.toml
     ...
-README.md                       Optional, also LICENSE, COPYING (with any extension), .gitignore, .gitattributes.
 ```
 
-With one template, `template.toml`, `files/` and other files are in the root of the repository.
-
-Repositories are checked when they are downloaded, and are rejected if their latest commit contains anything else:
-
-- other files or directories (also directories of templates without `template.toml`),
-- symbolic links, submodules or executable files,
-- more than 2000 files, files larger than 10 MB, or more than 50 MB of files in total.
+Template directories are checked when downloaded. They may contain `template.toml`, an optional `README`, and a
+`files/` directory. The app rejects symbolic links, executable or special files, more than 2000 files, files larger
+than 10 MB, or more than 50 MB in total.
 
 ## template.toml
 
@@ -292,34 +287,18 @@ rejected. Expressions are limited in length, complexity and size of their result
 
 ## Testing a template
 
-Write a list of repositories in the format of `repositories.txt` and start Catalyst Lab with
-`CATALYSTLAB_TEMPLATE_REPOSITORIES` set to its `file://` (or `https://`) URL, which replaces the list from `main`.
-Local repositories can be added to it with `file://` URLs, for example `file:///home/me/my-templates`. Only committed
-files are used.
-
-Then create a new project, select **From template** and your template. Errors in `template.toml` are shown in the list
-of templates or on the options page. Check that every combination of options creates the stages you expect: the
-options page lists them as you change options.
+Put it in `data/project_templates/<template-id>/` and run Catalyst Lab from the checkout. Select **From template**;
+errors in `template.toml` are shown in the list or options page. Check that each combination of options creates the
+stages you expect. The options page lists the generated stages as you change options.
 
 ## Adding a template to Catalyst Lab
 
-Templates in Git repositories are added to the list in the app with a pull request:
+Templates are added to Catalyst Lab with a pull request:
 
-1. Create a public Git repository with your template, following the [repository layout](#repository-layout).
-2. Fork [catalyst-lab](https://github.com/damiandudycz/catalyst-lab) and add a line to
-   [`data/project_templates/repositories.txt`](../data/project_templates/repositories.txt):
-   ```
-   https://github.com/you/your-template.git Title of your template
-   ```
-   The URL is followed by an optional title, shown with templates of the repository and in errors.
-   A template can also be added to an existing repository with templates, like
-   [catalystlab-templates](https://github.com/damiandudycz/catalystlab-templates), with a pull request there.
-3. Open a pull request that changes only this file. Describe what the template creates and which architectures and
-   Releng specs it was tested with.
+1. Add `data/project_templates/<template-id>/` following the [layout](#repository-layout).
+2. Open a pull request describing the template, its supported architectures, and the Releng specs it was checked with.
 
-Catalyst Lab downloads the latest list from the `main` branch of catalyst-lab when templates are shown, so a merged
-template is available without updating the app, and a template removed from the list (for example when it's broken
-or unsafe) is not offered anymore.
-Repository URLs have to use `https://`. Templates are downloaded from the default branch of their repository, so later
-changes are available without changing the list. Use `min_app_version` when a template needs features of newer
-Catalyst Lab: older versions show it as unavailable, with the version it needs.
+Use `min_app_version` when a template needs features of a newer Catalyst Lab. The app checks updates by comparing
+the Git tree hash of each template directory with the matching path on `main`, so unrelated code commits do not
+trigger template updates. The check downloads directory metadata only; template files are fetched only when the user
+opens an update.

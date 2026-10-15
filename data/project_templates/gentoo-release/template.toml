@@ -1,0 +1,279 @@
+format = 1
+min_app_version = "2.0.0"
+name = "Gentoo release"
+description = "Stages built like official Gentoo releases, with optional stage4 systems, minimal installation ISO, and amd64 LiveGUI ISO."
+
+groups_title = "Software"
+
+[[variables]]
+id = "architecture"
+title = "Architecture"
+type = "architecture"
+default = "amd64"
+options = [
+    { value = "amd64", title = "amd64" },
+    { value = "arm64", title = "arm64" },
+    { value = "arm", title = "arm" },
+    { value = "ppc", title = "ppc (32-bit)" },
+    { value = "ppc64", title = "ppc64" },
+    { value = "ppc64le", title = "ppc64le" },
+    { value = "s390x", title = "s390x" },
+    { value = "sparc", title = "sparc" },
+    { value = "x86", title = "x86" },
+]
+
+[[variables]]
+id = "variant"
+title = "Variant"
+description = "Directory of releng specs for this architecture."
+when = "architecture in ['arm', 'sparc', 'x86']"
+options = [
+    { value = "armv7a", title = "ARMv7-A", when = "architecture == 'arm'" },
+    { value = "armv6j", title = "ARMv6", when = "architecture == 'arm'" },
+    { value = "armv5tel", title = "ARMv5TE", when = "architecture == 'arm'" },
+    { value = "armv4tl", title = "ARMv4T", when = "architecture == 'arm'" },
+    { value = "sparc64", title = "SPARC64", when = "architecture == 'sparc'" },
+    { value = "sparc", title = "SPARC (32-bit userland)", when = "architecture == 'sparc'" },
+    { value = "i686", title = "i686", when = "architecture == 'x86'" },
+    { value = "i686-ssemath", title = "i686 with SSE math", when = "architecture == 'x86'" },
+    { value = "i486", title = "i486", when = "architecture == 'x86'" },
+]
+
+[[variables]]
+id = "hardfloat"
+title = "Hard float"
+description = "Floating point unit used for floating point calculations."
+type = "boolean"
+default = true
+when = "variant in ['armv7a', 'armv6j']"
+
+[[variables]]
+id = "cpu_target"
+title = "CPU target"
+description = "Select an instruction set supported by the target machines. More specific targets can make binaries unusable on older CPUs. x86-64-v4 requires AVX-512."
+default = "generic"
+when = "architecture in ['amd64', 'arm64', 'ppc64', 's390x']"
+options = [
+    { value = "generic", title = "Generic baseline", when = "architecture in ['amd64', 'arm64', 'ppc64', 's390x']" },
+    { value = "x86-64-v2", title = "x86-64-v2", when = "architecture == 'amd64'" },
+    { value = "x86-64-v3", title = "x86-64-v3 (AVX2)", when = "architecture == 'amd64'" },
+    { value = "x86-64-v4", title = "x86-64-v4 (AVX-512)", when = "architecture == 'amd64'" },
+    { value = "znver1", title = "AMD Zen 1 (znver1)", when = "architecture == 'amd64'" },
+    { value = "znver2", title = "AMD Zen 2 (znver2)", when = "architecture == 'amd64'" },
+    { value = "znver3", title = "AMD Zen 3 (znver3)", when = "architecture == 'amd64'" },
+    { value = "znver4", title = "AMD Zen 4 (znver4)", when = "architecture == 'amd64'" },
+    { value = "znver5", title = "AMD Zen 5 (znver5)", when = "architecture == 'amd64'" },
+    { value = "armv8.2-a", title = "Armv8.2-A", when = "architecture == 'arm64'" },
+    { value = "armv8.4-a", title = "Armv8.4-A", when = "architecture == 'arm64'" },
+    { value = "armv9-a", title = "Armv9-A", when = "architecture == 'arm64'" },
+    { value = "power8", title = "POWER8", when = "architecture == 'ppc64'" },
+    { value = "power9", title = "POWER9", when = "architecture == 'ppc64'" },
+    { value = "z13", title = "IBM z13", when = "architecture == 's390x'" },
+    { value = "z15", title = "IBM z15", when = "architecture == 's390x'" },
+]
+
+[[variables]]
+id = "strip_avx512_for_emulation"
+title = "Strip AVX-512 instructions for emulation"
+description = "Only enable this when building x86_64 stages under QEMU on a different architecture. Disables AVX-512 code generation to avoid instructions unsupported by the emulator."
+type = "boolean"
+default = false
+when = "architecture == 'amd64' and cpu_target in ['x86-64-v4', 'znver4', 'znver5']"
+
+[[variables]]
+id = "power9"
+title = "POWER9"
+description = "Use the POWER9 releng specs and compiler flags."
+type = "boolean"
+default = false
+when = "architecture == 'ppc64le'"
+
+[[variables]]
+id = "lto"
+title = "Link-time optimization (LTO)"
+description = "Programs can be faster and smaller, but builds take longer and some packages may fail to build."
+type = "boolean"
+default = false
+
+[[variables]]
+id = "init"
+title = "Init system"
+default = "openrc"
+options = [
+    { value = "openrc", title = "OpenRC" },
+    { value = "systemd", title = "systemd" },
+]
+
+[[variables]]
+id = "network"
+title = "Network"
+default = "networkmanager"
+options = [
+    { value = "networkmanager", title = "NetworkManager" },
+    { value = "dhcpcd", title = "dhcpcd", when = "init == 'openrc'" },
+    { value = "networkd", title = "systemd-networkd", when = "init == 'systemd'" },
+]
+
+[[variables]]
+id = "extra_stages"
+title = "Extra stages"
+section = "Extra stages"
+description = "Select optional stage4 systems and ISO builds based on official Gentoo Releng specifications."
+type = "multiple"
+default = []
+options = [
+    { value = "stage4", title = "Stage4" },
+    { value = "iso", title = "Installation ISO", when = "init == 'openrc' and (architecture in ['amd64', 'arm64', 'ppc', 'ppc64le'] or variant in ['sparc64', 'i486'])" },
+    { value = "livegui", title = "LiveGUI ISO", when = "architecture == 'amd64' and init == 'openrc'" },
+]
+
+[values]
+# Releng spec names, eg. armv7a/stage1-hardfloat-openrc-23.spec, stage3-systemd-power9le-23.spec.
+spec_directory = "{{ f'{variant}/' if variant else '' }}"
+spec_flavor = "{{ init + ('-power9le' if power9 else '') }}"
+spec_prefix = "{{ 'hardfloat-' if hardfloat else '' }}"
+iso_suffix = "{{ '-openrc' if variant == 'i486' else '' }}"
+stage4_name = "stage4-{{ init }}"
+iso = "{{ 'iso' in extra_stages }}"
+livegui = "{{ 'livegui' in extra_stages }}"
+# Release type names optimizations (eg. 23.0-power9-lto), stages without them use 23.0-default of releng specs.
+optimizations = "{{ (['power9'] if power9 else []) + ([cpu_target] if cpu_target and cpu_target != 'generic' else []) + (['lto'] if lto else []) }}"
+rel_type = "{{ '23.0-' + join('-', optimizations) if optimizations else '' }}"
+# Default flags of Catalyst for subarch of the spec, LTO flags are added to them.
+arm_float_abi = "{{ 'hard' if hardfloat else 'softfp' }}"
+subarch_flags = "{{ '-O2 -pipe -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=' + arm_float_abi if variant == 'armv7a' else '-O2 -pipe -march=armv6j -mfpu=vfp -mfloat-abi=' + arm_float_abi if variant == 'armv6j' else '-O2 -pipe -march=armv5te' if variant == 'armv5tel' else '-O2 -pipe -march=armv4t' if variant == 'armv4tl' else '-O2 -mcpu=ultrasparc -pipe' if architecture == 'sparc' else '-O2 -march=i686 -msse2 -mfpmath=sse -pipe' if variant == 'i686-ssemath' else '-O2 -march=i686 -pipe' if variant == 'i686' else '-O2 -march=i486 -pipe' if variant == 'i486' else '-O2 -mcpu=powerpc -mtune=powerpc -pipe' if architecture == 'ppc' else '-O2 -pipe -mcpu=power9 -mtune=power9' if power9 else '-O2 -pipe -march=z10' if architecture == 's390x' else '-O2 -pipe' }}"
+cpu_target_flags = "{{ '-march=x86-64-v2' if cpu_target == 'x86-64-v2' else '-march=x86-64-v3' if cpu_target == 'x86-64-v3' else '-march=x86-64-v4' if cpu_target == 'x86-64-v4' else '-march=' + cpu_target if architecture == 'amd64' and cpu_target in ['znver1', 'znver2', 'znver3', 'znver4', 'znver5'] else '-march=' + cpu_target if architecture == 'arm64' and cpu_target and cpu_target != 'generic' else '-mcpu=' + cpu_target + ' -mtune=' + cpu_target if architecture == 'ppc64' and cpu_target and cpu_target != 'generic' else '-march=' + cpu_target if architecture == 's390x' and cpu_target and cpu_target != 'generic' else '' }}"
+avx512_compat_flags = "{{ ' -mno-avx512f -mno-avx512vl -mno-avx512bw -mno-avx512dq -mno-avx512cd' if strip_avx512_for_emulation else '' }}"
+stage4_packages = "{{ ['app-portage/gentoolkit', 'net-misc/chrony'] + (['app-admin/sysklogd'] if init == 'openrc' else []) + (['net-misc/networkmanager'] if network == 'networkmanager' else ['net-misc/dhcpcd'] if network == 'dhcpcd' else []) }}"
+stage4_services = "{{ ['sysklogd|default', 'chronyd|default', 'sshd|default', 'NetworkManager|default' if network == 'networkmanager' else 'dhcpcd|default'] if init == 'openrc' else [] }}"
+
+[[files]]
+source = "files/emulation/portage_confdir"
+destination = "stages/stage1-{{ init }}/portage"
+when = "strip_avx512_for_emulation"
+
+[[stages]]
+id = "stage1"
+name = "stage1-{{ init }}"
+target = "stage1"
+releng_template = "{{ spec_directory }}stage1-{{ spec_prefix }}{{ spec_flavor }}-23.spec"
+[stages.arguments]
+common_flags = "{{ subarch_flags + (' ' + cpu_target_flags if cpu_target_flags else '') + avx512_compat_flags + (' -flto -Werror=odr -Werror=lto-type-mismatch -Werror=strict-aliasing' if lto else '') if lto or cpu_target_flags or strip_avx512_for_emulation else None }}"
+catalyst_use = "{{ ['lto'] if lto else [] }}"
+rel_type = "{{ rel_type }}"
+
+[[stages]]
+id = "stage3"
+parent = "stage1"
+name = "stage3-{{ init }}"
+target = "stage3"
+releng_template = "{{ spec_directory }}stage3-{{ spec_prefix }}{{ spec_flavor }}-23.spec"
+
+[[stages]]
+id = "stage4"
+parent = "stage3"
+name = "{{ stage4_name }}"
+target = "stage4"
+when = "'stage4' in extra_stages"
+[stages.arguments]
+stage4_packages = "{{ stage4_packages }}"
+stage4_rcadd = "{{ stage4_services }}"
+
+[[stages]]
+id = "livecd-stage1"
+parent = "stage3"
+name = "livecd-stage1"
+target = "livecd_stage1"
+releng_template = "{{ spec_directory }}installcd-stage1{{ iso_suffix }}.spec"
+when = "iso"
+
+[[stages]]
+id = "livecd-stage2"
+parent = "livecd-stage1"
+name = "livecd-stage2"
+target = "livecd_stage2"
+releng_template = "{{ spec_directory }}installcd-stage2-minimal{{ iso_suffix }}.spec"
+when = "iso"
+
+[[stages]]
+id = "stage3-desktop"
+parent = "stage1"
+name = "stage3-desktop-openrc"
+target = "stage3"
+releng_template = "stage3d-openrc-23.spec"
+when = "livegui"
+
+[[stages]]
+id = "livegui-stage1"
+parent = "stage3-desktop"
+name = "livegui-stage1-openrc"
+target = "livecd_stage1"
+releng_template = "livegui/livegui-stage1.spec"
+when = "livegui"
+
+[[stages]]
+id = "livegui-stage2"
+parent = "livegui-stage1"
+name = "livegui-stage2-openrc"
+target = "livecd_stage2"
+releng_template = "livegui/livegui-stage2.spec"
+when = "livegui"
+[stages.arguments]
+boot_kernel = ["@releng"]
+
+[[groups]]
+id = "kernel"
+title = "Kernel and firmware"
+description = "Distribution kernel (gentoo-kernel-bin) with initramfs, and firmware."
+default = true
+when = "'stage4' in extra_stages and architecture in ['amd64', 'arm64', 'ppc64', 'ppc64le', 'x86']"
+stages = ["stage4"]
+[groups.arguments]
+stage4_packages = ["sys-kernel/gentoo-kernel-bin", "sys-kernel/linux-firmware"]
+[[groups.files]]
+source = "files/kernel"
+destination = "portage"   # Portage configuration of stage.
+
+[[groups]]
+id = "bootloader"
+title = "GRUB bootloader"
+description = "Installed in system, configured when deploying."
+default = true
+when = "'stage4' in extra_stages and architecture in ['amd64', 'arm64', 'ppc64', 'ppc64le', 'x86']"
+stages = ["stage4"]
+[groups.arguments]
+stage4_packages = ["sys-boot/grub"]
+
+[[groups]]
+id = "sudo"
+title = "sudo"
+description = "Members of wheel group can run commands as root."
+default = true
+stages = ["stage4"]
+when = "'stage4' in extra_stages"
+[groups.arguments]
+stage4_packages = ["app-admin/sudo"]
+[[groups.files]]
+source = "files/sudo"
+destination = "root_overlay"   # Files added to root of stage.
+
+[[groups]]
+id = "editors"
+title = "vim"
+stages = ["stage4"]
+when = "'stage4' in extra_stages"
+[groups.arguments]
+stage4_packages = ["app-editors/vim"]
+
+[[groups]]
+id = "tools"
+title = "Administration tools"
+description = "htop, tmux, lsof, pciutils and usbutils."
+stages = ["stage4"]
+when = "'stage4' in extra_stages"
+[groups.arguments]
+stage4_packages = ["sys-process/htop", "app-misc/tmux", "sys-process/lsof", "sys-apps/pciutils", "sys-apps/usbutils"]
+
+[[files]]
+source = "files/project.gitignore"
+destination = ".gitignore"

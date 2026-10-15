@@ -1,0 +1,2 @@
+# Samba (needed by gnome-control-center[cups], pulled by gdm) requires ngtcp2 with gnutls.
+net-libs/ngtcp2 gnutls

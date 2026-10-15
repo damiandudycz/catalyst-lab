@@ -1,0 +1,3 @@
+# Genkernel (installed by catalyst to build kernel rpi) doesn't add linux-firmware to initramfs: Raspberry Pi doesn't
+# load initramfs, its firmware comes from raspberrypi-firmware and raspberrypi-wifi-ucode.
+sys-kernel/genkernel -firmware
