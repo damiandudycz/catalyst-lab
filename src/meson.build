@@ -140,6 +140,7 @@ catalystlab_sources = [
   'ui/components/packages_browser_view.py',
   'ui/components/files_browser_view.py',
   'ui/git_directory/git_directory_create_config_view.py',
+  'ui/name_suggestion.py',
   'ui/git_directory/git_directory_details_view.py',
   'ui/main_window/main_window_content.py',
   'ui/main_window/main_window.py',

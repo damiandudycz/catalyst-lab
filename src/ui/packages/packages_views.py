@@ -7,7 +7,7 @@ from .architecture import Architecture
 from .event_bus import SharedEvent
 from .status_indicator import StatusIndicatorState
 from .packages_directory import (
-    PackagesDirectory, create_packages_directory, delete_packages_directory, is_packages_name_available
+    PackagesDirectory, create_packages_directory, delete_packages_directory, is_packages_name_available, unique_packages_name
 )
 
 def format_size(size: int) -> str:
@@ -24,6 +24,7 @@ def open_folder(path: str):
 def present_new_packages_directory_dialog(parent: Gtk.Widget, architecture: Architecture | None = None,
                                           cpu_flags: str | None = None, name: str = "", on_created=None):
     """Dialog creating binary packages folder: name and architecture."""
+    name = unique_packages_name(name) if name else name
     name_row = Adw.EntryRow(title="Name", text=name)
     architectures = sorted(Architecture, key=lambda item: item.name)
     architecture_row = fit_popup_to_items(Adw.ComboRow(title="Architecture", model=Gtk.StringList.new([item.name for item in architectures])))

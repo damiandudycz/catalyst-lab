@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, threading, uuid
+import os, threading, uuid, json
 from typing import Self
 from .event_bus import EventBus, SharedEvent
 from .repository import Repository
@@ -23,6 +23,43 @@ class BuildMachine:
     COMMAND_USER = "Command" # User of single commands (not listed as user of machine).
 
     DEFAULT_SWAP_GIB = 16
+
+    @classmethod
+    def base_location(cls) -> str:
+        from .lima import machines_directory
+        return machines_directory()
+
+    @classmethod
+    def _metadata_path(cls, machine) -> str:
+        return os.path.join(machine.lima_home, machine.instance_name, "catalystlab.json")
+
+    @classmethod
+    def load_all(cls):
+        items = []
+        root = cls.base_location()
+        from .lima import default_lima_home
+        roots = {root, default_lima_home()}
+        for location in roots:
+            if not os.path.isdir(location):
+                continue
+            for entry in os.scandir(location):
+                if not entry.is_dir(follow_symlinks=False) or not entry.name.startswith("catalystlab-"):
+                    continue
+                path = os.path.join(entry.path, "catalystlab.json")
+                try:
+                    with open(path, encoding="utf-8") as file:
+                        items.append(cls.init_from(json.load(file)))
+                except (OSError, ValueError, json.JSONDecodeError) as error:
+                    print(f"Failed to load machine metadata in {entry.path}: {error}")
+        return items
+
+    @classmethod
+    def save_all(cls, items):
+        for item in items:
+            path = cls._metadata_path(item)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as file:
+                json.dump(item.serialize(), file, indent=2)
 
     def __init__(self, id: uuid.UUID | None = None, name: str = "", cpus: int = 4, memory_gib: int = 4, workspace_gib: int = 64,
                  lima_home: str | None = None, swap_gib: int = DEFAULT_SWAP_GIB):
@@ -393,13 +430,9 @@ class BuildMachine:
 
     @property
     def workspace_image_path(self) -> str:
-        """In folder of machine (removed with it). Machines in ~/.lima, which isn't shared with them, keep it in
-        machines directory."""
+        """In a dedicated shared folder, so both host management and the guest can access it."""
         from .lima import machines_directory
-        directory = machines_directory()
-        if self.machine_directory.startswith(directory + os.sep):
-            return os.path.join(self.machine_directory, "workspace.img")
-        return os.path.join(directory, self.instance_name, "workspace.img")
+        return os.path.join(machines_directory(), "workspaces", self.instance_name + ".img")
 
     @property
     def machine_directory(self) -> str:

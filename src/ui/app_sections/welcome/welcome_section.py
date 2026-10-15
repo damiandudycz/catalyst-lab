@@ -1,10 +1,8 @@
 from gi.repository import Gtk, Adw
 from .app_events import AppEvents, app_event_bus
 from .app_section import AppSection, app_section
-from .repository import Repository, RepositoryEvent, DEFAULT_LIBRARY_DIRECTORY, library_directory
+from .repository import Repository, RepositoryEvent
 from .initial_setup_page import InitialSetupPage
-from .library import is_library
-import os
 
 @app_section(title="Welcome", label="Home", icon="go-home-symbolic", show_in_side_bar=False, show_side_bar=False, order=1_000)
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/app_sections/welcome/welcome_section.ui')
@@ -25,11 +23,6 @@ class WelcomeSection(Gtk.Box):
 
     def setup_sections_visibility(self, _ = None):
         settings = Repository.Settings.value
-        default_library = os.path.abspath(os.path.expanduser(DEFAULT_LIBRARY_DIRECTORY))
-        if (not settings.initial_setup_done and
-                os.path.realpath(library_directory()) == os.path.realpath(default_library) and
-                is_library(default_library)):
-            settings.initial_setup_done = True
         initial_setup_done = settings.initial_setup_done
         self.default_actions_section.set_visible(initial_setup_done)
         self.first_run_section.set_visible(not initial_setup_done)

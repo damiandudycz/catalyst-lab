@@ -1,7 +1,7 @@
 # Managing GIT based directory (local or remote). Base for RelengDirectory and
 # OverlayDirectory.
 from __future__ import annotations
-import os, threading, subprocess, uuid
+import os, threading, subprocess, uuid, json
 from contextlib import contextmanager
 from gi.repository import GLib
 from enum import Enum, auto
@@ -28,6 +28,45 @@ class GitDirectoryStatus(Enum):
 _CONFLICT_STATUS_CODES = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
 
 class GitDirectory(Serializable, ABC):
+
+    APP_METADATA_FILE = "catalystlab.json"
+
+    @classmethod
+    def _app_metadata_path(cls, directory: str) -> str:
+        git_path = os.path.join(directory, ".git")
+        if os.path.isfile(git_path):
+            with open(git_path, encoding="utf-8") as file:
+                entry = file.readline().strip()
+            if not entry.startswith("gitdir:"):
+                raise ValueError(f"Invalid Git directory pointer in {git_path}")
+            git_path = os.path.normpath(os.path.join(directory, entry.split(":", 1)[1].strip()))
+        return os.path.join(git_path, cls.APP_METADATA_FILE)
+
+    @classmethod
+    def load_all(cls):
+        items = []
+        if not os.path.isdir(cls.base_location()):
+            return items
+        for entry in os.scandir(cls.base_location()):
+            if entry.name.startswith(".") or not entry.is_dir(follow_symlinks=False):
+                continue
+            try:
+                path = cls._app_metadata_path(entry.path)
+                with open(path, encoding="utf-8") as file:
+                    items.append(cls.init_from(json.load(file)))
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                # Non-Git folders are not entries in these collections.
+                if os.path.isdir(os.path.join(entry.path, ".git")) or os.path.isfile(os.path.join(entry.path, ".git")):
+                    print(f"Failed to load {cls.__name__} metadata in {entry.path}: {error}")
+        return items
+
+    @classmethod
+    def save_all(cls, items):
+        for item in items:
+            directory = item.directory_path()
+            if not os.path.isdir(directory):
+                continue
+            item.save_metadata()
 
     # Overwrite in subclassed
     @classmethod
@@ -114,28 +153,20 @@ class GitDirectory(Serializable, ABC):
         return None
 
     def serialize(self) -> dict:
-        return {
-            "name": self.name,
-            "id": str(self.id),
-            "last_commit_date": self.last_commit_date.isoformat() if self.last_commit_date else None,
-            "remote_url": self.remote_url,
-            "branch_name": self.branch_name,
-            "has_remote_changes": self.has_remote_changes,
-            "metadata": self.metadata.serialize() if self.metadata else None
-        }
+        return {"name": self.name, "id": str(self.id),
+                "metadata": self.metadata.serialize() if self.metadata else None}
+
+    def save_metadata(self):
+        path = self.__class__._app_metadata_path(self.directory_path())
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(self.serialize(), file, indent=2)
 
     @classmethod
     def init_from(cls, data: dict) -> Self:
         try:
             name = data["name"]
             id_value = uuid.UUID(data["id"])
-            last_commit_date = (
-                datetime.fromisoformat(data["last_commit_date"])
-                if data.get("last_commit_date") else None
-            )
-            remote_url = data.get("remote_url")
-            branch_name = data.get("branch_name")
-            has_remote_changes = data.get("has_remote_changes")
             metadata = (
                 cls.parse_metadata(dict=data.get("metadata"))
                 if data.get("metadata") else None
@@ -145,10 +176,6 @@ class GitDirectory(Serializable, ABC):
         return cls(
             name=name,
             id=id_value,
-            last_commit_date=last_commit_date,
-            remote_url=remote_url,
-            branch_name=branch_name,
-            has_remote_changes=has_remote_changes,
             metadata=metadata
         )
 

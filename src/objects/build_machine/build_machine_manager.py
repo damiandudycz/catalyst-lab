@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os, threading
-from .repository import Repository, library_directory
+from .repository import Repository, library_directory, library_path
 from .build_machine import BuildMachine
 from .lima import run_limactl
 
@@ -23,6 +23,11 @@ class BuildMachineManager:
         """Removes machine and deletes its Lima instance with its disk (in background). Toolsets linked to it are
         moved to this computer."""
         Repository.BuildMachine.value.remove(machine)
+        metadata_path = os.path.join(machine.machine_directory, "catalystlab.json")
+        try:
+            os.remove(metadata_path)
+        except FileNotFoundError:
+            pass
         for toolset in Repository.Toolset.value:
             if getattr(toolset, "machine_id", None) == machine.id:
                 toolset.machine_id = None
@@ -30,6 +35,10 @@ class BuildMachineManager:
         def delete():
             run_limactl(["delete", "--force", machine.instance_name], print, home=machine.lima_home)
             machine.delete_swap_disk()
+            try:
+                os.remove(machine.workspace_image_path)
+            except FileNotFoundError:
+                pass
         threading.Thread(target=delete, daemon=True).start()
 
     def is_name_available(self, name: str, machine: BuildMachine | None = None) -> bool:
@@ -38,12 +47,13 @@ class BuildMachineManager:
         return bool(name) and all(item.name != name for item in Repository.BuildMachine.value if item is not machine)
 
 def shared_paths() -> list[str]:
-    """Folders of Catalyst Lab shared with machines, mounted at the same paths. Locations inside other ones are skipped."""
-    settings = Repository.Settings.value
+    """Managed data folders shared with machines, all derived from the Library root."""
+    from .lima import machines_directory
     locations = [
-        library_directory(), settings.toolsets_location, settings.snapshots_location, settings.releng_location,
-        settings.overlay_location, settings.project_location, settings.builds_location, settings.cache_location,
-        settings.temporary_location, settings.packages_location
+        library_path("Toolsets"), library_path("Snapshots"), library_path("Releng"),
+        library_path("Overlays"), library_path("Projects"), library_path("Builds"),
+        library_path("Cache"), library_path("Temporary"), library_path("Packages"),
+        os.path.join(machines_directory(), "workspaces"),
     ]
     paths = []
     for location in sorted({os.path.realpath(os.path.expanduser(location)) for location in locations}, key=len):

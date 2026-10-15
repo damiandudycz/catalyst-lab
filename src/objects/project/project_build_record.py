@@ -28,6 +28,7 @@ def save_build_record(process):
         data = {"name": step.name, "description": step.description, "state": step.state.name, "progress": step.progress}
         if isinstance(step, ProjectBuildStepBuildStage):
             data["stage_name"] = step.stage.name
+            data["stage_id"] = str(step.stage.id)
             data["started"] = step.build is not None # Output is in build.log of stage build.
         else:
             data["output"] = step.output_lines[-_MAX_RECORDED_LINES:]
@@ -76,7 +77,11 @@ def load_build_record(project_directory, timestamp: str, builds: list) -> Record
         for data in record.get("steps", []):
             output = data.get("output")
             if output is None:
-                output = _stage_log(project_directory, data.get("stage_name"), timestamp) if data.get("started") else []
+                stage_id = data.get("stage_id")
+                if stage_id is None:
+                    stage_id = next((str(build.stage_id) for build in builds
+                                     if build.timestamp == timestamp and build.stage_name == data.get("stage_name")), None)
+                output = _stage_log(project_directory, stage_id, timestamp) if data.get("started") and stage_id else []
             steps.append((data["name"], data.get("description", ""), _step_state(data.get("state")), output, data.get("progress")))
         return RecordedBuild(project_directory, record.get("title") or f"Building {project_directory.name}",
                              record.get("status"), steps)
@@ -88,7 +93,7 @@ def load_build_record(project_directory, timestamp: str, builds: list) -> Record
         started = build.status.is_attempt
         state = (MultiStageProcessStageState.COMPLETED if build.status == StageBuildStatus.COMPLETED
                  else MultiStageProcessStageState.FAILED if started else MultiStageProcessStageState.SCHEDULED)
-        output = _stage_log(project_directory, build.stage_name, timestamp) if started else []
+        output = _stage_log(project_directory, str(build.stage_id), timestamp) if started else []
         steps.append((f"Build {build.stage_name}", "Builds stage with catalyst", state, output, None))
     stopped = any(build.status in (StageBuildStatus.STOPPED, StageBuildStatus.CANCELLED) for build in builds)
     failed = any(step[2] == MultiStageProcessStageState.FAILED for step in steps)
@@ -100,10 +105,11 @@ def _step_state(name: str | None) -> MultiStageProcessStageState:
     # Step running when record was saved was interrupted.
     return MultiStageProcessStageState.FAILED if state == MultiStageProcessStageState.IN_PROGRESS else state
 
-def _stage_log(project_directory, stage_name: str | None, timestamp: str) -> list[str]:
-    if not stage_name:
+def _stage_log(project_directory, stage_id: str | None, timestamp: str) -> list[str]:
+    if not stage_id:
         return []
-    path = os.path.join(stage_builds_directory(project_directory, stage_name), timestamp, "build.log")
+    import uuid
+    path = os.path.join(stage_builds_directory(project_directory, uuid.UUID(stage_id)), timestamp, "build.log")
     try:
         with open(path, encoding="utf-8", errors="replace") as file:
             lines = file.read().splitlines()

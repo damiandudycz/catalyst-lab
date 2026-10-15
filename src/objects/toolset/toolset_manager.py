@@ -1,5 +1,5 @@
 from .repository import Repository
-import os, shutil, uuid, subprocess, json
+import os, shutil
 from .toolset import Toolset, ToolsetEnv
 
 class ToolsetManager:
@@ -17,33 +17,12 @@ class ToolsetManager:
         toolsets = Repository.Toolset.value
         # Detect missing toolsets and add them to repository
         toolsets_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.toolsets_location))
-        # --- Step 1: Scan directory for existing .sqfs files ---
         if not os.path.isdir(toolsets_location):
-            os.makedirs(toolsets_location, exist_ok=True)
-        found_filenames = {
-            f for f in os.listdir(toolsets_location)
-            if f.endswith(".sqfs") and os.path.isfile(os.path.join(toolsets_location, f))
-        }
-        # --- Step 2: Check for new toolsets not in repository ---
-        existing_filenames = {toolset.filename for toolset in toolsets}
-        missing_files = found_filenames - existing_filenames
-        for filename in missing_files:
-            full_path = os.path.join(toolsets_location, filename)
-            # Load metadata from json file:
-            try:
-                output = subprocess.check_output(['unsquashfs', '-cat', full_path, "toolset.json"], text=True)
-                metadata = json.loads(output)
-                toolset = Toolset(
-                    env=ToolsetEnv.EXTERNAL,
-                    uuid=uuid.uuid4(),
-                    name=filename[:-5], # Removes .sqfs
-                    metadata=metadata
-                )
-                self.add_toolset(toolset)
-            except subprocess.CalledProcessError as e:
-                print(f"Error reading {full_path}: {e}")
-        # --- Step 3: Remove records for deleted toolset files ---
-        deleted_toolsets = [toolset for toolset in toolsets if toolset.filename not in found_filenames]
+            return
+        found_names = {entry.name for entry in os.scandir(toolsets_location)
+                       if entry.is_dir(follow_symlinks=False) and not entry.name.startswith(".")
+                       and os.path.isfile(os.path.join(entry.path, "toolset.sqfs"))}
+        deleted_toolsets = [toolset for toolset in toolsets if Toolset.sanitized_name_for_name(toolset.name) not in found_names]
         for toolset in deleted_toolsets:
             self.remove_toolset(toolset)
 
@@ -56,8 +35,8 @@ class ToolsetManager:
         from .rootless import remove_extracted_squashfs
         if toolset.machine is None or toolset.machine.is_running: # Stopped machine is not started only to clean up.
             remove_extracted_squashfs(toolset.file_path(), kind="toolsets", executor=toolset.executor)
-        if os.path.isfile(toolset.file_path()):
-            os.remove(toolset.file_path())
+        if os.path.isdir(os.path.dirname(toolset.file_path())):
+            shutil.rmtree(os.path.dirname(toolset.file_path()))
         Repository.Toolset.value.remove(toolset)
 
     def is_name_available(self, name: str) -> bool:
@@ -73,7 +52,7 @@ class ToolsetManager:
         from .rootless import remove_extracted_squashfs
         if toolset.machine is None or toolset.machine.is_running: # Extracted again for new file name when needed.
             remove_extracted_squashfs(toolset.file_path(), kind="toolsets", executor=toolset.executor)
-        shutil.move(toolset.file_path(), new_path)
+        shutil.move(os.path.dirname(toolset.file_path()), os.path.dirname(new_path))
         toolset.name = name
         Repository.Toolset.save()
 

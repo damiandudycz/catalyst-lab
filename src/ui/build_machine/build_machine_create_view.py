@@ -5,6 +5,7 @@ from .build_machine_installation import BuildMachineInstallation
 from .build_machine_manager import BuildMachineManager
 from .multistage_process import MultiStageProcessState
 from .wizard_view import WizardView
+from .name_suggestion import unique_name
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/build_machine/build_machine_create_view.ui')
 class BuildMachineCreateView(Gtk.Box):
@@ -34,10 +35,7 @@ class BuildMachineCreateView(Gtk.Box):
         self.wizard_view.set_installation(self.installation_in_progress)
 
     def _default_name(self) -> str:
-        index = 1
-        while not BuildMachineManager.shared().is_name_available("Build machine" if index == 1 else f"Build machine {index}"):
-            index += 1
-        return "Build machine" if index == 1 else f"Build machine {index}"
+        return unique_name("Build machine", BuildMachineManager.shared().is_name_available)
 
     @Gtk.Template.Callback()
     def on_name_changed(self, row):

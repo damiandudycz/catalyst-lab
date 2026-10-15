@@ -119,11 +119,6 @@ class RepositoryListView(Gtk.Box):
             self.items_container.insert(item_row, 0)
             self._item_rows.append(item_row)
 
-        for item in self.repository.broken_items:
-            item_row = self._broken_item_row(item.name, item.error)
-            self.items_container.insert(item_row, 0)
-            self._item_rows.append(item_row)
-
         for installation in (started_processes if self.show_installations else []):
             installation_row = ItemInstallationRow(installation, self.item_icon)
             installation_row.connect(

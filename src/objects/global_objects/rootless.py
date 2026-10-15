@@ -400,6 +400,7 @@ def remove_in_namespace(paths: list[str], output_handler, process_holder: list |
 # Folders of executor:
 # Cache/Distfiles             sources downloaded by portage
 # Cache/Extracted/<Kind>      extracted toolsets and snapshots
+# Cache/ToolsetStages         downloaded Gentoo stages used to create toolsets
 # Temporary/Sessions          builds and toolset environments
 # Temporary/Work              writable toolset copies, work directories and unfinished extractions
 # Temporary/Downloads         downloads of operations (this computer only)
@@ -409,6 +410,10 @@ def extracted_directory(kind: str, executor: Executor | None = None) -> str:
 
 def distfiles_directory(executor: Executor | None = None) -> str:
     return os.path.join((executor or LOCAL_EXECUTOR).cache_directory(), "Distfiles")
+
+def toolset_stages_directory() -> str:
+    """Downloaded Gentoo stage archives reused when creating toolsets."""
+    return os.path.join(LOCAL_EXECUTOR.cache_directory(), "ToolsetStages")
 
 def sessions_directory(executor: Executor | None = None) -> str:
     return os.path.join((executor or LOCAL_EXECUTOR).temporary_directory(), "Sessions")

@@ -10,7 +10,7 @@ from .project_stage_arguments import StageArgumentDetails
 # Stage builds storage:
 # <builds_location>/<project>/stages/<stage>/<timestamp>/build.json + build results.
 # <builds_location>/<project> is also used as catalyst builds directory when building, so it contains catalyst output
-# (moved to stage build directory after build), downloaded seeds (seeds/) and generated specs (work/).
+# (moved to stage build directory after build). Downloaded seeds are shared in Cache; generated files live in Temporary.
 
 class StageBuildStatus(Enum):
     SCHEDULED = "scheduled" # Part of build run, didn't start yet (or app was closed before it started).
@@ -103,7 +103,7 @@ class StageBuild:
         return os.path.join(self.path, self.artifact) if self.path and self.artifact else None
 
     def save(self, project_directory):
-        self.path = self.path or os.path.join(stage_builds_directory(project_directory, self.stage_name), self.timestamp)
+        self.path = self.path or os.path.join(stage_builds_directory(project_directory, self.stage_id), self.timestamp)
         os.makedirs(self.path, exist_ok=True)
         with open(os.path.join(self.path, StageBuild.METADATA_FILE), "w", encoding="utf-8") as file:
             json.dump(self.serialize(), file, indent=4)
@@ -124,10 +124,10 @@ def builds_location() -> str:
     return os.path.realpath(os.path.expanduser(Repository.Settings.value.builds_location))
 
 def project_builds_directory(project_directory) -> str:
-    return os.path.join(builds_location(), project_directory.sanitized_name())
+    return os.path.join(builds_location(), project_directory.id.hex)
 
 def delete_project_builds(project_directory):
-    """Removes all build output, logs, caches, seeds and run records of a project."""
+    """Removes all build output, logs, project caches and run records of a project."""
     root = builds_location()
     path = project_builds_directory(project_directory)
     real_path = os.path.realpath(path)
@@ -136,8 +136,8 @@ def delete_project_builds(project_directory):
     if os.path.isdir(real_path):
         shutil.rmtree(real_path)
 
-def stage_builds_directory(project_directory, stage_name: str) -> str:
-    return os.path.join(project_builds_directory(project_directory), "stages", project_directory.sanitized_name_for_name(stage_name))
+def stage_builds_directory(project_directory, stage_id: uuid.UUID) -> str:
+    return os.path.join(project_builds_directory(project_directory), "stages", stage_id.hex)
 
 def load_project_builds(project_directory) -> list[StageBuild]:
     """All builds of project stages, newest first. Builds are matched to stages by id, so renamed stages keep them."""

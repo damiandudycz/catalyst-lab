@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, uuid, shutil, tempfile, threading, re, random, string, requests, time
+import os, uuid, shutil, threading, re, random, string, requests, time
 from typing import final, Callable
 from pathlib import Path
 from .root_function import root_function, local_for_rootless_paths
@@ -7,7 +7,7 @@ from .root_helper_server import ServerResponse, ServerResponseStatusCode
 from .repository import Repository
 from .toolset import Toolset, ToolsetEnv
 from .helper_functions import create_work_directory, delete_work_directory, create_squashfs, extract
-from .rootless import rootless_toolset_unsupported_reason, extract_tarball, executor_for_machine, remove_in_namespace, downloads_directory
+from .rootless import rootless_toolset_unsupported_reason, extract_tarball, executor_for_machine, remove_in_namespace, toolset_stages_directory
 from .rootless import create_work_directory as create_rootless_work_directory
 from .toolset_manager import ToolsetManager
 
@@ -132,38 +132,43 @@ class ToolsetInstallationStepDownload(ToolsetInstallationStep):
         self.url = url
     def start(self):
         super().start()
+        partial_path = None
         try:
-            response = requests.get(self.url.geturl(), stream=True, timeout=10)
-            response.raise_for_status()
-            total_size = int(response.headers.get('content-length', 0))
-            downloaded = 0
-            chunk_size = 1024 * 1024 # 1MB chunks.
-            # Machines see only shared folders of Catalyst Lab.
-            with tempfile.NamedTemporaryFile(delete=False, dir=downloads_directory()) as tmp_file:
-                self.multistage_process.tmp_stage_file = tmp_file
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if self._cancel_event.is_set():
-                        return
-                    if chunk:
-                        tmp_file.write(chunk)
-                        downloaded += len(chunk)
-                        if total_size:
-                            progress = downloaded / total_size
-                            self._update_progress(progress)
+            cache_directory = toolset_stages_directory()
+            os.makedirs(cache_directory, exist_ok=True)
+            filename = os.path.basename(self.url.path)
+            cached_path = os.path.join(cache_directory, filename)
+            self.multistage_process.stage_tarball_path = cached_path
+            if os.path.isfile(cached_path):
+                self.log(f"Using cached stage archive {filename}")
+                self.complete(MultiStageProcessStageState.COMPLETED)
+                return
+
+            partial_path = os.path.join(cache_directory, f".{filename}.{uuid.uuid4().hex}.part")
+            with requests.get(self.url.geturl(), stream=True, timeout=10) as response:
+                response.raise_for_status()
+                total_size = int(response.headers.get('content-length', 0))
+                downloaded = 0
+                with open(partial_path, "wb") as stage_file:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if self._cancel_event.is_set():
+                            return
+                        if chunk:
+                            stage_file.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size:
+                                self._update_progress(downloaded / total_size)
+            os.replace(partial_path, cached_path)
+            partial_path = None
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
             print(f"Error during download: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
+        finally:
+            if partial_path and os.path.exists(partial_path):
+                os.remove(partial_path)
     def cleanup(self) -> bool:
-        if not super().cleanup():
-            return False
-        if hasattr(self.multistage_process, 'tmp_stage_file'):
-            try:
-                self.multistage_process.tmp_stage_file.close()
-                os.remove(self.multistage_process.tmp_stage_file.name)
-            except Exception as e:
-                print(f"Failed to delete temp file: {e}")
-        return True
+        return super().cleanup()
 
 @final
 class ToolsetInstallationStepExtract(ToolsetInstallationStep):
@@ -196,7 +201,7 @@ class ToolsetInstallationStepExtract(ToolsetInstallationStep):
                         pass
             if self.multistage_process.rootless:
                 return_value = extract_tarball(
-                    tarball=self.multistage_process.tmp_stage_file.name,
+                    tarball=self.multistage_process.stage_tarball_path,
                     directory=self.multistage_process.tmp_stage_extract_dir,
                     output_handler=output_handler,
                     process_holder=self.namespace_processes,
@@ -206,7 +211,7 @@ class ToolsetInstallationStepExtract(ToolsetInstallationStep):
                 self.server_call = extract._async_raw(
                     handler=output_handler,
                     completion_handler=completion_handler,
-                    tarball=self.multistage_process.tmp_stage_file.name,
+                    tarball=self.multistage_process.stage_tarball_path,
                     directory=self.multistage_process.tmp_stage_extract_dir
                 )
                 self.server_call.thread.join()
@@ -376,6 +381,10 @@ class ToolsetInstallationStepCompress(ToolsetInstallationStep):
                 os.remove(self.toolset_squashfs_file)
             if os.path.isfile(self.multistage_process.toolset.file_path()):
                 os.remove(self.multistage_process.toolset.file_path())
+            try:
+                os.rmdir(os.path.dirname(self.multistage_process.toolset.file_path()))
+            except OSError:
+                pass
         return True
     def cancel(self):
         super().cancel()

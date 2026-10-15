@@ -5,6 +5,7 @@ from .event_bus import EventBus
 from .git_installation import GitDirectorySetupConfiguration, GitDirectorySource
 from .git_directory_default_content_builder import DefaultDirContentBuilder
 from .cl_toggle_group import CLToggle, CLToggleGroup
+from .name_suggestion import unique_name
 
 # Import additional classed so that it can be parsed in repository_list_view:
 from .releng_manager import RelengManager
@@ -67,8 +68,10 @@ class GitDirectoryCreateConfigView(Gtk.Box):
             return
         current = self.directory_name_row.get_text()
         if current in ("", self.default_directory_name, self._suggested_directory_name):
-            self._suggested_directory_name = name
-            self.directory_name_row.set_text(name)
+            manager = self.manager_class.shared()
+            suggested = unique_name(name, lambda candidate: manager.is_name_available(name=candidate))
+            self._suggested_directory_name = suggested
+            self.directory_name_row.set_text(suggested)
 
     def on_realize(self, widget):
         self.manager_class = globals().get(self.manager_class_name)
@@ -84,6 +87,8 @@ class GitDirectoryCreateConfigView(Gtk.Box):
         self.directory_local_directory_button.set_sensitive(self.allow_changing_git_repository)
         self.directory_name_row.set_editable(self.allow_changing_directory_name)
         self.directory_name_row.set_sensitive(self.allow_changing_directory_name)
+        if self.default_directory_name:
+            self.suggest_directory_name(self.default_directory_name)
         self.check_if_configuration_ready()
 
     def get_configuration(self, default_dir_content_builder: DefaultDirContentBuilder | None = None, template_selection=None) -> GitDirectorySetupConfiguration:
@@ -167,7 +172,7 @@ class GitDirectoryCreateConfigView(Gtk.Box):
     def on_directory_url_activate(self, sender):
         self.get_root().set_focus(None)
         if self.allow_changing_directory_name:
-            self.directory_name_row.set_text(self.directory_url_row.get_text().rstrip('/').split('/')[-1])
+            self.suggest_directory_name(self.directory_url_row.get_text().rstrip('/').split('/')[-1])
         self.check_if_configuration_ready()
 
     @Gtk.Template.Callback()
@@ -180,7 +185,7 @@ class GitDirectoryCreateConfigView(Gtk.Box):
             try:
                 self.selected_local_directory = dialog.select_folder_finish(result)
                 if self.allow_changing_directory_name:
-                    self.directory_name_row.set_text(self.selected_local_directory.get_basename())
+                    self.suggest_directory_name(self.selected_local_directory.get_basename())
                 self.directory_local_directory_row.set_subtitle(self.selected_local_directory.get_path())
                 self.check_if_configuration_ready()
                 print("Selected folder:", self.selected_local_directory.get_path())

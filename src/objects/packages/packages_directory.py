@@ -6,7 +6,7 @@ of other architecture can't be used, and packages built with other CPU flags (eg
 machines of project. Inside folder, packages are kept in subfolders by release type of stages (rel_type), like before.
 """
 from __future__ import annotations
-import os, shutil, uuid
+import os, shutil, uuid, json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Self
@@ -16,6 +16,30 @@ from .event_bus import EventBus, SharedEvent
 from .status_indicator import StatusIndicatorState, StatusDetail, item_status
 
 class PackagesDirectory(Serializable):
+
+    @classmethod
+    def load_all(cls):
+        items = []
+        if not os.path.isdir(cls.base_location()):
+            return items
+        for entry in os.scandir(cls.base_location()):
+            if not entry.is_dir(follow_symlinks=False) or entry.name.startswith("."):
+                continue
+            path = os.path.join(entry.path, "metadata.json")
+            try:
+                with open(path, encoding="utf-8") as file:
+                    items.append(cls.init_from(json.load(file)))
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                print(f"Failed to load packages directory metadata in {entry.path}: {error}")
+        return items
+
+    @classmethod
+    def save_all(cls, items):
+        for item in items:
+            path = os.path.join(item.directory_path(), "metadata.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as file:
+                json.dump(item.serialize(), file, indent=2)
 
     def __init__(self, name: str, architecture: Architecture | None, cpu_flags: str | None = None,
                  id: uuid.UUID | None = None, created: datetime | None = None):
@@ -166,7 +190,7 @@ def is_packages_name_available(name: str) -> bool:
 def unique_packages_name(name: str) -> str:
     candidate, number = name, 2
     while not is_packages_name_available(candidate):
-        candidate, number = f"{name} {number}", number + 1
+        candidate, number = f"{name} - {number}", number + 1
     return candidate
 
 def create_packages_directory(name: str, architecture: Architecture | None, cpu_flags: str | None = None) -> PackagesDirectory:
@@ -195,25 +219,3 @@ def delete_packages_directory(directory: PackagesDirectory):
         project.metadata.packages_directory_id = None
     Repository.ProjectDirectory.save()
     Repository.PackagesDirectory.value.remove(directory)
-
-def migrate_project_packages():
-    """Projects without binary packages folder get one. Packages built before folders existed (packages folder in builds
-    of project) are moved to it."""
-    from .project_build import project_builds_directory
-    changed = False
-    for project in Repository.ProjectDirectory.value:
-        if project.metadata is not None and packages_directory_for_id(project.metadata.packages_directory_id):
-            continue
-        try:
-            directory = create_packages_directory_for_project(project)
-            old_packages = os.path.join(project_builds_directory(project), "packages")
-            if os.path.isdir(old_packages):
-                os.rmdir(directory.directory_path()) # Empty folder is replaced with packages of project.
-                shutil.move(old_packages, directory.directory_path())
-                print(f"Moved binary packages of {project.name} to {directory.directory_path()}")
-            project.initialize_metadata().packages_directory_id = directory.id
-            changed = True
-        except Exception as e:
-            print(f"Failed to create binary packages folder for {project.name}: {e}")
-    if changed:
-        Repository.ProjectDirectory.save()

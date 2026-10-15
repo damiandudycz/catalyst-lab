@@ -23,8 +23,8 @@ _LIMACTL_LOCATIONS = ["/opt/homebrew/bin/limactl", "/usr/local/bin/limactl"]
 LIMA_TEMPLATE = "template:_images/alpine-3.23"
 
 # Data that needs Linux file ownership (extracted toolsets, sessions, caches in use) can't be in shared folders (they
-# can't store owners and are case insensitive on macOS). It's kept in working space of machine: ext4 image file in
-# shared folder, mounted here while some operation needs it and deleted when no operation uses it.
+# can't store owners and are case insensitive on macOS). It's kept in a dedicated shared workspace folder as an ext4
+# image, mounted here while an operation needs it and deleted when no operation uses it.
 MACHINE_DATA_DIRECTORY = "/var/lib/catalystlab"
 
 # Machine disk contains only Alpine with tools, data of Catalyst Lab is in working space and shared folders.

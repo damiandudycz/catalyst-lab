@@ -26,33 +26,49 @@ class CatalystlabApplication(Adw.Application):
         self.create_action('about', self.on_about_action)
         self.create_action('preferences', self.on_preferences_action)
         scan_all_submodules("catalystlab")
-        # Before any operation starts, they keep their data there.
-        from .rootless import clear_temporary_directory
-        clear_temporary_directory()
-        # A killed app can leave the large sparse workspace image behind. It is safe to
-        # remove at startup because operation registrations are not restored across runs.
+        self._library_initialized = False
         from .repository import Repository
-        for machine in Repository.BuildMachine.value:
-            try:
-                machine.cleanup_workspace()
-            except Exception as e:
-                print(f"Failed to clean working space of virtual machine {machine.name}: {e}")
+        if Repository.Settings.value.initial_setup_done:
+            self.initialize_library()
+        # Initialize the in-memory queue of build operations.
+        from .build_queue import BuildQueue
+        BuildQueue.shared()
+
+    def initialize_library(self, reload_repositories: bool = False):
+        """Load Library data and perform startup cleanup after its location has been confirmed."""
+        from .repository import Repository
+        repositories = (
+            Repository.Toolset, Repository.Snapshot, Repository.RelengDirectory, Repository.OverlayDirectory,
+            Repository.ProjectDirectory, Repository.BuildMachine, Repository.PackagesDirectory,
+        )
+        if reload_repositories:
+            for repository in repositories:
+                repository.reload()
+        startup_cleanup_needed = not self._library_initialized
+        # Before any operation starts, they keep their data there.
+        if startup_cleanup_needed:
+            from .rootless import clear_temporary_directory
+            clear_temporary_directory()
+            # A killed app can leave the large sparse workspace image behind. It is safe to
+            # remove at startup because operation registrations are not restored across runs.
+            for machine in Repository.BuildMachine.value:
+                try:
+                    machine.cleanup_workspace()
+                except Exception as e:
+                    print(f"Failed to clean working space of virtual machine {machine.name}: {e}")
         ToolsetManager.shared().refresh()
         SnapshotManager.shared().refresh()
         RelengManager.shared().refresh()
         OverlayManager.shared().refresh()
         ProjectManager.shared().refresh()
         # Virtual machines (QEMU) left running by killed app.
-        from .qemu_run import stop_orphaned_runs
-        stop_orphaned_runs()
-        # Projects get binary packages folders, packages built before are moved to them.
-        from .packages_directory import migrate_project_packages
-        migrate_project_packages()
+        if startup_cleanup_needed:
+            from .qemu_run import stop_orphaned_runs
+            stop_orphaned_runs()
         # Unused snapshots are removed when enabled in Snapshots section.
-        SnapshotManager.shared().start_auto_clean()
-        # Queue of builds is restored (it waits until started again).
-        from .build_queue import BuildQueue
-        BuildQueue.shared()
+        if startup_cleanup_needed:
+            SnapshotManager.shared().start_auto_clean()
+        self._library_initialized = True
 
     def do_activate(self):
         """Called when the application is activated.

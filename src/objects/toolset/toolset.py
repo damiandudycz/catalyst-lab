@@ -756,8 +756,38 @@ class Toolset(Serializable):
 
     @staticmethod
     def file_path_for_name(name: str) -> str:
-        file_name = Toolset.sanitized_name_for_name(name) + ".sqfs"
-        return os.path.join(os.path.realpath(os.path.expanduser(Repository.Settings.value.toolsets_location)), file_name)
+        return os.path.join(Toolset.directory_path_for_name(name), "toolset.sqfs")
+
+    @staticmethod
+    def directory_path_for_name(name: str) -> str:
+        return os.path.join(os.path.realpath(os.path.expanduser(Repository.Settings.value.toolsets_location)),
+                            Toolset.sanitized_name_for_name(name))
+
+    @classmethod
+    def load_all(cls):
+        items = []
+        root = os.path.realpath(os.path.expanduser(Repository.Settings.value.toolsets_location))
+        if not os.path.isdir(root):
+            return items
+        for entry in os.scandir(root):
+            if not entry.is_dir(follow_symlinks=False) or entry.name.startswith("."):
+                continue
+            path = os.path.join(entry.path, "metadata.json")
+            try:
+                with open(path, encoding="utf-8") as file:
+                    items.append(cls.init_from(json.load(file)))
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                if os.path.isfile(os.path.join(entry.path, "toolset.sqfs")):
+                    print(f"Failed to load toolset metadata in {entry.path}: {error}")
+        return items
+
+    @classmethod
+    def save_all(cls, items):
+        for item in items:
+            path = os.path.join(cls.directory_path_for_name(item.name), "metadata.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as file:
+                json.dump(item.serialize(), file, indent=2)
 
     @staticmethod
     def sanitized_name_for_name(name: str) -> str:

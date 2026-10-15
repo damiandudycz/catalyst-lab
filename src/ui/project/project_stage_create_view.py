@@ -16,6 +16,7 @@ from .project_stage import ProjectStage, load_catalyst_targets, load_releng_temp
 from .project_stage_installation import ProjectStageInstallation
 from .project_manager import ProjectManager
 from .item_select_view import ItemRow
+from .name_suggestion import unique_name
 from enum import Enum, auto
 import os, threading, uuid
 
@@ -177,9 +178,15 @@ class ProjectStageCreateView(Gtk.Box):
 
     def _update_default_stage_name(self):
         if self.releng_base_selection_view.selected_item is not None:
-            self.stage_name_row.set_text(os.path.splitext(os.path.basename(self.releng_base_selection_view.selected_item))[0])
+            name = os.path.splitext(os.path.basename(self.releng_base_selection_view.selected_item))[0]
         elif self.spec_type_selection_view.selected_item is not None:
-            self.stage_name_row.set_text(self.spec_type_selection_view.selected_item)
+            name = self.spec_type_selection_view.selected_item
+        else:
+            return
+        self.stage_name_row.set_text(unique_name(
+            name,
+            lambda candidate: ProjectManager.shared().is_stage_name_available(project=self.project_directory, name=candidate),
+        ))
         self.check_filename_is_free()
 
     def _start_installation(

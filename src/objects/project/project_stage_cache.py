@@ -17,7 +17,7 @@ CACHE_ARGUMENTS = (StageArgumentDetails.pkgcache_path, StageArgumentDetails.kern
 # Folders of automatic caches inside project builds directory.
 _automatic_cache_folders = {
     StageArgumentDetails.pkgcache_path: "packages",
-    StageArgumentDetails.kerncache_path: "kerncache",
+    StageArgumentDetails.kerncache_path: os.path.join("caches", "kerncache"),
 }
 
 def is_automatic_cache(value) -> bool:

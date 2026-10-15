@@ -17,6 +17,7 @@ from .toolset_application import ToolsetApplication, ToolsetApplicationSelection
 from .wizard_view import WizardView
 from .item_select_view import ItemSelectionViewEvent
 from .cl_toggle_group import CLToggle, CLToggleGroup
+from .name_suggestion import unique_name
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/toolset/toolset_create_view.ui')
 class ToolsetCreateView(Gtk.Box):
@@ -344,5 +345,5 @@ class ToolsetCreateView(Gtk.Box):
             installer_name = " ".join(middle_parts)
         else:
             installer_name = filename_without_extension
-        return installer_name
+        return unique_name(installer_name, ToolsetManager.shared().is_name_available)
 

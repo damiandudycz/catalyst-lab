@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, uuid
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -11,7 +11,7 @@ from .multistage_process import MultiStageProcess, MultiStageProcessEvent, Multi
 # ------------------------------------------------------------------------------
 # Queue of builds of other projects, started one after another when running build finishes (completed or failed).
 # Builds are planned when they start (they can use stages built by previous builds). Every project can be queued
-# once, and not while it's being built. Queue is saved, after app restart it waits until it's started again.
+# once, and not while it's being built. The queue exists only for the current app session.
 
 class BuildQueueEvent(Enum):
     CHANGED = auto()
@@ -37,15 +37,6 @@ class QueuedBuild:
         stages = {stage.id: stage.name for stage in project.stages} if project else {}
         return [stages[stage_id] for stage_id in self.stage_ids if stage_id in stages]
 
-    def serialize(self) -> dict:
-        return {"id": self.id, "project_id": str(self.project_id), "stage_ids": [str(stage_id) for stage_id in self.stage_ids],
-                "snapshot": self.snapshot, "queued": self.queued.isoformat()}
-
-    @classmethod
-    def init_from(cls, data: dict) -> QueuedBuild:
-        return cls(project_id=uuid.UUID(data["project_id"]), stage_ids=[uuid.UUID(stage_id) for stage_id in data["stage_ids"]],
-                   snapshot=data.get("snapshot"), queued=datetime.fromisoformat(data["queued"]), id=data["id"])
-
 def running_build():
     """Build in progress (of any project)."""
     from .project_build_process import ProjectBuild
@@ -63,40 +54,14 @@ class BuildQueue:
 
     def __init__(self):
         self.event_bus = EventBus[BuildQueueEvent]()
-        self.entries: list[QueuedBuild] = self._load()
-        # Queue saved before app was closed waits until user starts it.
-        self.paused = bool(self.entries)
-        self.pause_reason: str | None = "Queue was restored after Catalyst Lab started" if self.entries else None
+        self.entries: list[QueuedBuild] = []
+        self.paused = False
+        self.pause_reason: str | None = None
         self._check_scheduled = False
         self._observed: set[int] = set()
         MultiStageProcess.event_bus.subscribe(MultiStageProcessEvent.STARTED_PROCESSES_CHANGED, self._on_processes_changed)
 
-    # Persistence:
-
-    @staticmethod
-    def _path() -> str:
-        from .repository import config_directory
-        return os.path.join(config_directory(), "build_queue.json")
-
-    def _load(self) -> list[QueuedBuild]:
-        try:
-            with open(self._path(), encoding="utf-8") as file:
-                return [QueuedBuild.init_from(item) for item in json.load(file).get("items", [])]
-        except (OSError, ValueError, KeyError) as e:
-            if not isinstance(e, FileNotFoundError):
-                print(f"Failed to read build queue: {e}")
-            return []
-
-    def _save(self):
-        try:
-            os.makedirs(os.path.dirname(self._path()), exist_ok=True)
-            with open(self._path(), "w", encoding="utf-8") as file:
-                json.dump({"items": [entry.serialize() for entry in self.entries]}, file, indent=2)
-        except OSError as e:
-            print(f"Failed to save build queue: {e}")
-
     def _changed(self):
-        self._save()
         self.event_bus.emit(BuildQueueEvent.CHANGED)
         self._schedule_check()
 

@@ -101,6 +101,7 @@ class ProjectInstallationStepSaveConfig(MultiStageProcessStage):
                 latest_snapshot=self.multistage_process.latest_snapshot, # Builds get latest snapshot.
                 architecture=self.architecture
             )
+            self.multistage_process.directory.save_metadata()
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
             print(f"Error during '{self.name}': {e}")

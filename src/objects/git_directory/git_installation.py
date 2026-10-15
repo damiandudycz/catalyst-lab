@@ -358,8 +358,14 @@ class GitInstallationStepSetupRepository(MultiStageProcessStage):
         super().start()
         try:
             path = self.multistage_process.directory.directory_path()
-            git_dir_path = os.path.join(path, '.git')
-            if not os.path.exists(git_dir_path):
+            result = subprocess.run(
+                ["git", "-C", path, "rev-parse", "--show-toplevel"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            is_repository = result.returncode == 0 and os.path.realpath(result.stdout.strip()) == os.path.realpath(path)
+            if not is_repository:
                 # Initialize repo:
                 commands = [
                     ["git", "init", "--initial-branch=main", path],

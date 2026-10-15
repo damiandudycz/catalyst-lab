@@ -150,15 +150,33 @@ class ShutdownDialog(Adw.Dialog):
             return
         for index, (label, action) in enumerate(self._steps):
             self._current = index
-            GLib.idle_add(self._show_step_started, index, label, index, total)
+            self._run_on_ui(self._show_step_started, index, label, index, total)
             try:
-                action()
+                result = action()
+                if result is False:
+                    raise RuntimeError("Operation reported that it did not complete")
             except Exception as error:
                 self._errors.append((label, str(error)))
-                GLib.idle_add(self._show_step_failed, index, str(error), index + 1, total)
+                print(f"Shutdown step failed: {label}: {error}")
+                self._run_on_ui(self._show_step_failed, index, str(error), index + 1, total)
             else:
-                GLib.idle_add(self._show_step_finished, index, index + 1, total)
-        GLib.idle_add(self._all_steps_finished)
+                self._run_on_ui(self._show_step_finished, index, index + 1, total)
+        self._run_on_ui(self._all_steps_finished)
+
+    @staticmethod
+    def _run_on_ui(callback, *args):
+        """Run a GTK update on the main loop and wait for it before advancing cleanup."""
+        completed = threading.Event()
+
+        def invoke():
+            try:
+                callback(*args)
+            finally:
+                completed.set()
+            return GLib.SOURCE_REMOVE
+
+        GLib.idle_add(invoke)
+        completed.wait()
 
     def _show_step_started(self, index, label, completed, total):
         row, icon, spinner = self._rows[index]

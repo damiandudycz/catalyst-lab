@@ -254,9 +254,11 @@ class MultiStageProcessStage(ABC):
             error = sys.exc_info()[1]
             if error is not None:
                 self.log(f"Error: {error}" if str(error) else f"Error: {type(error).__name__}")
+        if state == MultiStageProcessStageState.COMPLETED:
+            # Set progress before publishing completion. A fast step (for example, a cache hit)
+            # can finish between UI updates; observers of STATE_CHANGED should already see 100%.
+            self._update_progress(1.0)
         self._update_state(state=state)
-        if self.state == MultiStageProcessStageState.COMPLETED:
-           self._update_progress(1.0)
         # Continue process
         GLib.idle_add(self.multistage_process._continue_process)
     def _update_state(self, state: MultiStageProcessStageState):

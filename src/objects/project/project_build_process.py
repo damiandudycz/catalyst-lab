@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, re, threading, shutil
+import json, os, re, threading, shutil, uuid
 from datetime import datetime, timezone
 from gi.repository import GLib
 from .multistage_process import (
@@ -24,6 +24,10 @@ from .project_build_spec import (
 
 # Paths used by catalyst inside toolset.
 CATALYST_BUILDS_PATH = "/var/tmp/catalyst/builds"
+CATALYST_STAGE_ARTIFACTS_PATH = "/var/tmp/catalystlab-stage-artifacts"
+CATALYST_SEEDS_PATH = "/var/tmp/catalystlab-seeds"
+CATALYST_KERNEL_CACHE_PATH = "/var/tmp/catalystlab-kerncache"
+CATALYST_WORK_PATH = "/var/tmp/catalystlab-work"
 CATALYST_SNAPSHOTS_PATH = "/var/tmp/catalyst/snapshots"
 # Folders mounted in toolset whose paths contain whitespace are mounted here: catalyst splits spec values on whitespace,
 # so their paths can't be used in specs (eg. project "Raspberry Pi 5").
@@ -51,6 +55,11 @@ class ProjectBuild(MultiStageProcess):
         self.toolset = project_directory.get_toolset()
         self.timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") # @TIMESTAMP@ for all stages of this build.
         self.builds_directory = project_builds_directory(project_directory)
+        self.catalyst_builds_directory = os.path.join(self.builds_directory, "Catalyst")
+        self.stage_artifacts_directory = os.path.join(self.builds_directory, "stages")
+        self.kernel_cache_directory = os.path.join(self.builds_directory, "caches", "kerncache")
+        self.work_root = os.path.join(Repository.Settings.value.temporary_location, "CatalystBuilds",
+                                      project_directory.id.hex, f"{self.timestamp}-{uuid.uuid4().hex}")
         self.seed_subpaths: dict = {} # Downloaded seeds of root stages, relative to builds directory.
         self.stage_builds: dict = {} # Builds made in this run, by stage id.
         self.failed_stage_ids: set = set()
@@ -109,11 +118,31 @@ class ProjectBuild(MultiStageProcess):
     def _in_builds_directory(self, host_path: str) -> bool:
         return host_path == self.builds_directory or host_path.startswith(self.builds_directory + os.sep)
 
+    @staticmethod
+    def _path_in(host_path: str, root: str) -> bool:
+        return host_path == root or host_path.startswith(root + os.sep)
+
+    @property
+    def seed_cache_directory(self) -> str:
+        """Shared Library cache directory for downloaded source stage archives."""
+        return os.path.join(Repository.Settings.value.cache_location, "catalyst-seeds")
+
+    def stage_work_directory(self, stage) -> str:
+        """Transient generated files used while building this stage."""
+        return os.path.join(self.work_root, stage.id.hex)
+
     def container_path(self, host_path: str) -> str:
         """Path inside toolset of file in project builds directory, or in mirrored folder (mounted at the same location,
         or under CATALYST_MIRRORS_PATH when its path contains whitespace). Other paths are the same."""
-        if self._in_builds_directory(host_path):
-            return os.path.join(CATALYST_BUILDS_PATH, os.path.relpath(host_path, self.builds_directory))
+        if host_path == self.work_root or host_path.startswith(self.work_root + os.sep):
+            relative = os.path.relpath(host_path, self.work_root)
+            return CATALYST_WORK_PATH if relative == "." else os.path.join(CATALYST_WORK_PATH, relative)
+        if self._path_in(host_path, self.catalyst_builds_directory):
+            relative = os.path.relpath(host_path, self.catalyst_builds_directory)
+            return CATALYST_BUILDS_PATH if relative == "." else os.path.join(CATALYST_BUILDS_PATH, relative)
+        if self._path_in(host_path, self.kernel_cache_directory):
+            relative = os.path.relpath(host_path, self.kernel_cache_directory)
+            return CATALYST_KERNEL_CACHE_PATH if relative == "." else os.path.join(CATALYST_KERNEL_CACHE_PATH, relative)
         for root in sorted(self.mirrored_paths(), key=len, reverse=True):
             if host_path == root or host_path.startswith(root + os.sep):
                 return self.mirror_path(root) + host_path[len(root):]
@@ -207,7 +236,10 @@ class ProjectBuild(MultiStageProcess):
         build = self.stage_builds.get(parent.id) or self.plan.entries[parent.id].reused_build
         if build is None or not build.artifact_path:
             return None
-        return _strip_archive_extension(os.path.relpath(build.artifact_path, self.builds_directory))
+        return _strip_archive_extension(os.path.join(
+            "..", "..", os.path.basename(CATALYST_STAGE_ARTIFACTS_PATH),
+            os.path.relpath(build.artifact_path, self.stage_artifacts_directory),
+        ))
 
     def is_blocked(self, step: MultiStageProcessStage) -> str | None:
         """Reason why step can't run because something it depends on failed."""
@@ -287,7 +319,7 @@ class ProjectBuild(MultiStageProcess):
     def complete_process(self, success: bool):
         status = StageBuildStatus.CANCELLED if getattr(self, "cancelled", False) else StageBuildStatus.SKIPPED
         for stage in self.plan.build_order():
-            path = os.path.join(stage_builds_directory(self.project_directory, stage.name), self.timestamp)
+            path = os.path.join(stage_builds_directory(self.project_directory, stage.id), self.timestamp)
             try:
                 with open(os.path.join(path, StageBuild.METADATA_FILE), encoding="utf-8") as file:
                     build = StageBuild.init_from(json.load(file), path=path)
@@ -461,7 +493,10 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
             if not toolset.reserve():
                 raise RuntimeError(f"Toolset {toolset.name} is used by another operation")
             self.reserved = True
-            os.makedirs(self.multistage_process.builds_directory, exist_ok=True)
+            process = self.multistage_process
+            for directory in (process.builds_directory, process.catalyst_builds_directory,
+                              process.stage_artifacts_directory, process.kernel_cache_directory):
+                os.makedirs(directory, exist_ok=True)
             if self.multistage_process.rootless:
                 self._prepare_rootless()
                 self.complete(MultiStageProcessStageState.COMPLETED)
@@ -502,12 +537,19 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
                 raise RuntimeError("Build has no snapshot")
             process.rootless_snapshot_path = extracted_squashfs(
                 snapshot.file_path(), "snapshots", self.log, self.namespace_processes, check_path="profiles", executor=executor)
-        process.make_directories([distfiles_directory(executor)] + process.mirrored_paths())
+        process.make_directories([distfiles_directory(executor), process.seed_cache_directory, process.work_root] + process.mirrored_paths())
     def required_bindings(self) -> list[BindMount]:
         process = self.multistage_process
         bindings = [
-            # Catalyst writes builds here and reads seeds from it.
-            BindMount(mount_path=CATALYST_BUILDS_PATH, host_path=process.builds_directory, store_changes=True, create_if_missing=True),
+            # Catalyst keeps rel_type output inside this dedicated folder, separate from app-owned build data.
+            BindMount(mount_path=CATALYST_BUILDS_PATH, host_path=process.catalyst_builds_directory, store_changes=True, create_if_missing=True),
+            # Stage inputs and downloaded seeds are mounted alongside Catalyst's builds directory. Their source_subpath
+            # values use ../ so arbitrary rel_type names cannot collide with these input mounts.
+            BindMount(mount_path=CATALYST_STAGE_ARTIFACTS_PATH, host_path=process.stage_artifacts_directory, store_changes=True, create_if_missing=True),
+            BindMount(mount_path=CATALYST_SEEDS_PATH, host_path=process.seed_cache_directory, store_changes=True, create_if_missing=True),
+            BindMount(mount_path=CATALYST_KERNEL_CACHE_PATH, host_path=process.kernel_cache_directory, store_changes=True, create_if_missing=True),
+            # Generated specs and scripts for this build run only.
+            BindMount(mount_path=CATALYST_WORK_PATH, host_path=process.work_root, store_changes=True, create_if_missing=True),
             BindMount(mount_path=CATALYST_SNAPSHOTS_PATH, host_path=Repository.Settings.value.snapshots_location, store_changes=True),
         ]
         # Directories referenced by spec values with host paths (@REPO_DIR@, root_overlay, repos, cache folders) are
@@ -529,6 +571,7 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
             except Exception as e:
                 self.log(f"Failed to save caches: {e}")
             self.multistage_process.machine.release_workspace(self.log, user=self.workspace_user)
+        shutil.rmtree(self.multistage_process.work_root, ignore_errors=True)
         if self.reserved:
             toolset.release()
         return True
@@ -556,27 +599,39 @@ class ProjectBuildStepDownloadSeed(ProjectBuildStep):
             if url is None:
                 raise RuntimeError(f"No {prefix} found in latest stage3 files")
             filename = os.path.basename(url.path)
-            seeds_directory = os.path.join(process.builds_directory, "seeds")
+            seeds_directory = process.seed_cache_directory
             path = os.path.join(seeds_directory, filename)
+            previous_path = os.path.join(process.builds_directory, "seeds", filename)
             if os.path.isfile(path):
                 self.log(f"Using already downloaded {filename}")
+            elif os.path.isfile(previous_path):
+                os.makedirs(seeds_directory, exist_ok=True)
+                os.replace(previous_path, path)
+                self.log(f"Reused cached seed {filename}")
             else:
                 os.makedirs(seeds_directory, exist_ok=True)
                 self.log(f"Downloading {url.geturl()}")
-                with requests.get(url.geturl(), stream=True, timeout=60) as response:
-                    response.raise_for_status()
-                    total = int(response.headers.get("content-length", 0))
-                    downloaded = 0
-                    with open(path + ".part", "wb") as file:
-                        for chunk in response.iter_content(chunk_size=1024 * 1024):
-                            if self._cancel_event.is_set():
-                                raise RuntimeError("Cancelled")
-                            file.write(chunk)
-                            downloaded += len(chunk)
-                            if total:
-                                self._update_progress(downloaded / total)
-                os.replace(path + ".part", path)
-            process.seed_subpaths[self.stage.id] = _strip_archive_extension(os.path.relpath(path, process.builds_directory))
+                partial_path = f"{path}.{uuid.uuid4().hex}.part"
+                try:
+                    with requests.get(url.geturl(), stream=True, timeout=60) as response:
+                        response.raise_for_status()
+                        total = int(response.headers.get("content-length", 0))
+                        downloaded = 0
+                        with open(partial_path, "wb") as file:
+                            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                                if self._cancel_event.is_set():
+                                    raise RuntimeError("Cancelled")
+                                file.write(chunk)
+                                downloaded += len(chunk)
+                                if total:
+                                    self._update_progress(downloaded / total)
+                    os.replace(partial_path, path)
+                finally:
+                    if os.path.exists(partial_path):
+                        os.remove(partial_path)
+            process.seed_subpaths[self.stage.id] = os.path.join(
+                "..", "..", os.path.basename(CATALYST_SEEDS_PATH), _strip_archive_extension(filename)
+            )
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
             print(f"Error during '{self.name}': {e}")
@@ -649,7 +704,7 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             if source_subpath is None:
                 raise RuntimeError("Seed of stage is not available")
             # Portage configuration and spec:
-            work_directory = os.path.join(process.builds_directory, "work", process.timestamp, project.sanitized_name_for_name(self.stage.name))
+            work_directory = process.stage_work_directory(self.stage)
             if os.path.isdir(work_directory):
                 shutil.rmtree(work_directory)
             os.makedirs(work_directory)
@@ -715,7 +770,9 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
                 raise RuntimeError("Catalyst build failed")
             # Move results to stage build directory (catalyst writes them to builds/<rel_type>/):
             output_name = f"{values['target']}-{values['subarch']}-{values['version_stamp']}"
-            output_directory = os.path.join(process.builds_directory, values["rel_type"])
+            output_directory = os.path.abspath(os.path.join(process.catalyst_builds_directory, values["rel_type"]))
+            if os.path.commonpath((process.catalyst_builds_directory, output_directory)) != process.catalyst_builds_directory:
+                raise RuntimeError(f"Catalyst rel_type escapes its output directory: {values['rel_type']}")
             # ISO of livecd-stage2 is written to path from livecd/iso (relative paths are in builds/<rel_type>/ too).
             iso = values.get("livecd/iso") or None
             iso_name = iso if iso and "/" not in iso else None
@@ -727,6 +784,10 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             artifact = next((filename for filename in moved if filename.endswith(STAGE_ARCHIVE_EXTENSIONS)), None)
             if artifact is None:
                 raise RuntimeError(f"Built stage {output_name} not found in {output_directory}")
+            try:
+                os.rmdir(output_directory)
+            except OSError:
+                pass # Keep the folder if Catalyst or another process left any files there.
             self.log(f"Saved {', '.join(moved)} to {self.build.path}")
             self.build.artifact = artifact
             self.build.status = StageBuildStatus.COMPLETED
@@ -776,7 +837,11 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
         process = self.multistage_process
         diagnostics_path = self._write_diagnostics_script(spec=spec, work_directory=work_directory, rootless=True)
         bindings = [
-            (process.builds_directory, CATALYST_BUILDS_PATH),
+            (process.catalyst_builds_directory, CATALYST_BUILDS_PATH),
+            (process.stage_artifacts_directory, CATALYST_STAGE_ARTIFACTS_PATH),
+            (process.seed_cache_directory, CATALYST_SEEDS_PATH),
+            (process.kernel_cache_directory, CATALYST_KERNEL_CACHE_PATH),
+            (process.work_root, CATALYST_WORK_PATH),
             (process.rootless_snapshot_path, f"{CATALYST_SNAPSHOTS_PATH}/gentoo-{snapshot_treeish(process.project_directory, process.snapshot)}.sqfs"),
             (distfiles_directory(process.executor), "/var/cache/distfiles"),
         ] + [(path, process.mirror_path(path)) for path in process.mirrored_paths()]

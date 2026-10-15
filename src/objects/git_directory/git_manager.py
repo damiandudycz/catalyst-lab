@@ -31,10 +31,12 @@ class GitManager(ABC):
         storage_location = self.__class__.repository()._cls.base_location()
         # --- Step 1: Scan directory for existing directories ---
         if not os.path.isdir(storage_location):
-            os.makedirs(storage_location, exist_ok=True)
+            return
         found_directories = {
             f for f in os.listdir(storage_location)
-            if os.path.isdir(os.path.join(storage_location, f))
+            if not f.startswith(".") and os.path.isdir(os.path.join(storage_location, f))
+            and (os.path.isdir(os.path.join(storage_location, f, ".git"))
+                 or os.path.isfile(os.path.join(storage_location, f, ".git")))
         }
         # --- Step 2: Check for new directories not in repository ---
         existing_dirnames = {

@@ -5,13 +5,14 @@ from enum import Enum
 from .repository import library_directory, store_library_directory, collapse_home
 
 # ------------------------------------------------------------------------------
-# Library is folder with all data of Catalyst Lab (toolsets, snapshots, projects, builds, machines) and its
-# configuration (Config). It can be moved or copied to other place, or other library (new or existing) can be used.
-# Locations stored in configuration that point into library are changed to new place. App is restarted after library
-# changes, so nothing uses the old one.
+# Library contains app data and object-local metadata. User preferences are stored separately.
 
 LIBRARY_FOLDER_NAME = "CatalystLab" # Library made in chosen folder that contains other files.
 _SKIPPED_FOLDERS = {"Temporary"} # Data of running operations, emptied when app starts.
+LIBRARY_DIRECTORIES = (
+    "Toolsets", "Snapshots", "Releng", "Overlays", "Projects", "Builds", "Packages", "Machines", "Cache",
+    "Temporary",
+)
 
 class LibraryChange(Enum):
     MOVE = "move"
@@ -20,12 +21,9 @@ class LibraryChange(Enum):
     SWITCH = "switch" # Existing library.
 
 def is_library(path: str) -> bool:
-    """Folder with configuration of Catalyst Lab."""
-    config = os.path.join(path, "Config")
-    try:
-        return any(name.endswith(".json") for name in os.listdir(config))
-    except OSError:
-        return False
+    """A Library has the canonical object directories, not a central Config folder."""
+    required = ("Toolsets", "Snapshots", "Releng", "Overlays", "Projects", "Packages")
+    return os.path.isdir(path) and all(os.path.isdir(os.path.join(path, name)) for name in required)
 
 def _is_empty_folder(path: str) -> bool:
     """Doesn't exist or contains only hidden files of system (eg. .DS_Store)."""
@@ -41,22 +39,36 @@ class LibraryTarget:
     path: str
     existing: bool # Contains library, it's used as it is.
 
-def library_target(chosen: str) -> LibraryTarget:
+def library_target(chosen: str, allow_current: bool = False) -> LibraryTarget:
     """Library at chosen folder: library in it, or folder itself when it's empty, or new folder in it. Raises
     ValueError with reason when it can't be used."""
     chosen = os.path.abspath(os.path.expanduser(chosen))
     current = library_directory()
-    for path in (chosen, os.path.join(chosen, LIBRARY_FOLDER_NAME)):
-        if _same_path(path, current):
-            raise ValueError("This is the current library.")
+    nested = os.path.join(chosen, LIBRARY_FOLDER_NAME)
+    for path in (chosen, nested):
         if is_library(path):
+            if _same_path(path, current) and not allow_current:
+                raise ValueError("This is the current library.")
             return LibraryTarget(path, existing=True)
-        if _is_empty_folder(path):
-            if _inside(path, current) or _inside(current, path):
-                raise ValueError("Library can't be kept inside the current library, or contain it.")
-            return LibraryTarget(path, existing=False)
-    raise ValueError(f"{collapse_home(chosen)} and {LIBRARY_FOLDER_NAME} folder in it contain other files. Choose an "
-                     "empty folder or a folder with a library.")
+    if _is_empty_folder(chosen):
+        target = chosen
+    elif _is_empty_folder(nested):
+        target = nested
+    elif os.path.isdir(chosen) and not os.path.exists(nested):
+        # The user selected a parent folder that already contains other files; keep the Library in its own subfolder.
+        target = nested
+    else:
+        raise ValueError(f"{collapse_home(chosen)} and its {LIBRARY_FOLDER_NAME} subfolder contain other files, "
+                         "but no Catalyst Lab Library was found.")
+    if (_inside(target, current) or _inside(current, target)) and not (allow_current and _same_path(target, current)):
+        raise ValueError("Library can't be kept inside the current library, or contain it.")
+    return LibraryTarget(target, existing=False)
+
+def create_library(path: str):
+    """Create the standard Library folders after the user confirms the chosen location."""
+    os.makedirs(path, exist_ok=True)
+    for name in LIBRARY_DIRECTORIES:
+        os.makedirs(os.path.join(path, name), exist_ok=True)
 
 def change_problem(target: LibraryTarget, change: LibraryChange) -> str | None:
     """Reason why library can't be changed this way, None when it can."""
@@ -83,7 +95,9 @@ def change_library(target: LibraryTarget, change: LibraryChange, progress=lambda
     warnings = []
     match change:
         case LibraryChange.SWITCH | LibraryChange.NEW:
-            os.makedirs(target.path, exist_ok=True)
+            # A switched Library may be missing newer standard folders, and a newly
+            # created Library needs the full layout before repositories reload.
+            create_library(target.path)
         case LibraryChange.MOVE if _same_device(old, _existing_ancestor(target.path)):
             progress(0, "Moving library")
             if os.path.isdir(target.path):
@@ -91,10 +105,10 @@ def change_library(target: LibraryTarget, change: LibraryChange, progress=lambda
                 os.rmdir(target.path)
             os.makedirs(os.path.dirname(target.path), exist_ok=True)
             os.rename(old, target.path)
-            _rewrite_config_locations(target.path, old)
+            _rewrite_object_paths(target.path, old)
         case LibraryChange.MOVE | LibraryChange.COPY:
             _copy_library(old, target.path, progress)
-            _rewrite_config_locations(target.path, old)
+            _rewrite_object_paths(target.path, old)
             if change == LibraryChange.MOVE:
                 progress(1, "Removing old library")
                 _remove_folder(old, warnings)
@@ -195,9 +209,8 @@ def _library_size(path: str) -> int:
 
 # Locations:
 
-def _rewrite_config_locations(library: str, old: str):
-    """Locations in configuration of library pointing into old library point to the same places in new one (settings,
-    machines). Locations elsewhere stay unchanged."""
+def _rewrite_object_paths(library: str, old: str):
+    """Update object metadata paths when a Library is moved; external paths stay unchanged."""
     old_paths = {old, os.path.realpath(old)}
     def moved(value):
         if isinstance(value, dict):
@@ -212,21 +225,28 @@ def _rewrite_config_locations(library: str, old: str):
                 new_value = library + expanded[len(path):]
                 return collapse_home(new_value) if value.startswith("~") else new_value
         return value
-    config = os.path.join(library, "Config")
-    for name in os.listdir(config):
-        if not name.endswith(".json"):
-            continue
-        path = os.path.join(config, name)
-        try:
-            with open(path, encoding="utf-8") as file:
-                data = json.load(file)
-        except (OSError, ValueError) as e:
-            print(f"Failed to read {path}: {e}")
-            continue
-        changed = moved(data)
-        if changed != data:
-            with open(path, "w", encoding="utf-8") as file:
-                json.dump(changed, file, indent=2)
+    metadata_names = {"catalystlab.json", "metadata.json"}
+    for directory, folders, files in os.walk(library):
+        folders[:] = [folder for folder in folders if folder != ".git"]
+        candidates = [os.path.join(directory, name) for name in files
+                     if name in metadata_names or name.endswith(".sqfs.json")]
+        # Git metadata is intentionally kept out of the working tree.
+        git_dir = os.path.join(directory, ".git")
+        if os.path.isdir(git_dir):
+            candidate = os.path.join(git_dir, "catalystlab.json")
+            if os.path.isfile(candidate):
+                candidates.append(candidate)
+        for path in candidates:
+            try:
+                with open(path, encoding="utf-8") as file:
+                    data = json.load(file)
+            except (OSError, ValueError) as e:
+                print(f"Failed to read {path}: {e}")
+                continue
+            changed = moved(data)
+            if changed != data:
+                with open(path, "w", encoding="utf-8") as file:
+                    json.dump(changed, file, indent=2)
 
 # Helpers:
 
