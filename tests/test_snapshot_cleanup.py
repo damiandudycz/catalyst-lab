@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import patch
@@ -59,3 +60,38 @@ class SnapshotCleanupTests(unittest.TestCase):
     def test_empty_repository(self):
         self.repository.Snapshot.value = []
         self.assertEqual(self.manager.unused_snapshots(), [])
+
+    def test_remove_snapshot_clears_archive_marker_cache_and_repository_entry(self):
+        from catalystlab import rootless
+        snapshot = self.old
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary, snapshot.filename)
+            marker = Path(str(archive) + '.json')
+            archive.touch()
+            marker.write_text('{"from_file": true}')
+            self.repository.Snapshot.value = [snapshot]
+            with patch.object(manager.Snapshot, 'base_location', return_value=temporary), \
+                 patch.object(rootless, 'remove_extracted_squashfs') as remove_cache, \
+                 patch.object(manager.Repository, 'BuildMachine', types.SimpleNamespace(value=[]), create=True):
+                self.manager.remove_snapshot(snapshot)
+            remove_cache.assert_called_once_with(str(archive), kind='snapshots')
+            self.assertFalse(archive.exists())
+            self.assertFalse(marker.exists())
+            self.assertEqual(self.repository.Snapshot.value, [])
+
+    def test_remove_snapshot_clears_cache_on_running_build_machines(self):
+        from catalystlab import rootless
+        machine = types.SimpleNamespace(is_running=True)
+        self.repository.BuildMachine = types.SimpleNamespace(value=[machine])
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary, self.old.filename)
+            archive.touch()
+            self.repository.Snapshot.value = [self.old]
+            with patch.object(manager.Snapshot, 'base_location', return_value=temporary), \
+                 patch.object(rootless, 'remove_extracted_squashfs') as remove_cache, \
+                 patch.object(rootless, 'MachineExecutor', return_value='executor') as executor, \
+                 patch.object(manager.Repository, 'BuildMachine', self.repository.BuildMachine, create=True):
+                self.manager.remove_snapshot(self.old)
+            executor.assert_called_once_with(machine)
+            self.assertEqual(remove_cache.call_count, 2)
+            self.assertEqual(remove_cache.call_args_list[1].kwargs, {'kind': 'snapshots', 'executor': 'executor'})

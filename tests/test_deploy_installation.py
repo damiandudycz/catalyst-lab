@@ -3,7 +3,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if 'catalystlab' not in sys.modules:
@@ -112,6 +112,70 @@ class PackagePlanningTests(unittest.TestCase):
         self.assertEqual(disk.target_name, 'machine')
         disk.machine.local = True
         self.assertEqual(disk.target_name, '/dev/sda')
+
+
+class DeploymentPlanTests(unittest.TestCase):
+    def installation(self, *, image=False, compress=False, repository=DeployRepository.NONE,
+                     bootloader=Bootloader.NONE, network=NetworkService.NONE, kernel=Kernel.NONE):
+        plan = types.SimpleNamespace(
+            image=image, compress_image=compress, image_path='/temporary/test.img', root='/mnt/gentoo',
+            disk=types.SimpleNamespace(path='/dev/sda'),
+        )
+        settings = DeploySystemSettings(repository=repository, bootloader=bootloader, kernel=kernel,
+                                         network=NetworkSettings(network))
+        build = types.SimpleNamespace(stage_name='stage4', path=None, artifact_path='/build/stage4.tar.xz')
+        machine = TargetMachine('arm64', False, 0, 'builder')
+        return DeployInstallation(build, 'project', Mock(), machine, plan, settings, StageContents())
+
+    def test_disk_installation_schedules_only_required_steps_in_order(self):
+        process = self.installation()
+        self.assertEqual([stage.name for stage in process.stages], [
+            'Check machine', 'Partition disk', 'Format partitions', 'Mount partitions',
+            'Install stage', 'Configure system', 'Finish',
+        ])
+
+    def test_optional_repository_package_network_and_bootloader_steps_are_included(self):
+        process = self.installation(repository=DeployRepository.LATEST, bootloader=Bootloader.GRUB,
+                                    network=NetworkService.DHCPCD, kernel=Kernel.DISTRIBUTION_BINARY)
+        self.assertEqual([stage.name for stage in process.stages], [
+            'Check machine', 'Partition disk', 'Format partitions', 'Mount partitions',
+            'Install stage', 'Configure system', 'Install Gentoo repository', 'Install packages',
+            'Configure network', 'Install bootloader', 'Finish',
+        ])
+
+    def test_image_plan_adds_image_growth_shrink_compress_and_save_steps(self):
+        process = self.installation(image=True, compress=True)
+        self.assertEqual([stage.name for stage in process.stages], [
+            'Create image', 'Partition disk', 'Format partitions', 'Mount partitions',
+            'Install stage', 'Configure system', 'Grow at first start', 'Finish',
+            'Shrink image', 'Compress image', 'Save image',
+        ])
+
+    def test_uncompressed_image_skips_compress_step(self):
+        process = self.installation(image=True, compress=False)
+        self.assertNotIn('Compress image', [stage.name for stage in process.stages])
+        self.assertEqual(process.created_image_path, '/temporary/test.img')
+
+    def test_failed_image_deployment_detaches_and_removes_incomplete_outputs(self):
+        process = self.installation(image=True, compress=True)
+        with patch('catalystlab.deploy_image.detach_image_script', return_value='detach'):
+            process.complete_process(False)
+        script = process.connection.run.call_args.args[0]
+        self.assertIn('detach', script)
+        self.assertIn('rm -f', script)
+        self.assertIn('/temporary/test.img', script)
+        self.assertIn('/temporary/test.img.xz', script)
+        process.connection.close.assert_called_once_with()
+
+    def test_local_disk_cleanup_unmounts_after_success(self):
+        process = self.installation()
+        process.machine.local = True
+        process.mounted = True
+        process.complete_process(True)
+        script = process.connection.run.call_args.args[0]
+        self.assertIn('umount -R -l /mnt/gentoo', script)
+        self.assertFalse(process.mounted)
+        process.connection.close.assert_called_once_with()
 
 
 if __name__ == '__main__':
