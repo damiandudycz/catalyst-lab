@@ -25,14 +25,19 @@ class EnvironmentsSection(Gtk.Box):
                                + processes_status(ToolsetInstallation, ToolsetUpdate, BuildMachineInstallation))
 
     machines_list = Gtk.Template.Child()
-    machines_description_label = Gtk.Template.Child()
+    description_label = Gtk.Template.Child()
 
     def __init__(self, content_navigation_view: Adw.NavigationView, **kwargs):
         super().__init__(**kwargs)
         self.content_navigation_view = content_navigation_view
         # Virtual machines are used only where toolsets can't run on this computer (see virtual_machines_supported).
         self.machines_list.set_visible(virtual_machines_supported())
-        self.machines_description_label.set_visible(virtual_machines_supported())
+        if virtual_machines_supported():
+            self.description_label.set_label(
+                "Virtual machines run toolsets on systems that can't build stages themselves, like macOS, "
+                "so on such systems create one before toolsets. Toolsets linked to a virtual machine are "
+                "loaded inside it, so their builds, updates and snapshots run there.\n\n"
+                + self.description_label.get_label())
 
     @Gtk.Template.Callback()
     def on_item_row_pressed(self, sender, item):

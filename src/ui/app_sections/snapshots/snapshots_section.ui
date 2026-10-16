@@ -58,7 +58,7 @@
                 </child>
                 <child>
                   <object class="GtkLabel">
-                    <property name="label">Snapshots not used by any project are removed, the newest snapshot is always kept. Snapshots added from file are never removed, as they can contain own changes.</property>
+                    <property name="label">Only snapshots selected in project configuration and the newest snapshot are kept. Previous builds do not keep snapshots. Snapshots in use are kept until the operation finishes.</property>
                     <property name="xalign">0</property>
                     <property name="wrap">True</property>
                     <property name="margin-start">12</property>

@@ -36,7 +36,7 @@ class SnapshotsSection(Gtk.Box):
         """Enabling removes unused snapshots right away, they are listed before."""
         names = "\n".join(f"{snapshot.name} ({snapshot.short_details})" for snapshot in SnapshotManager.shared().unused_snapshots())
         dialog = Adw.AlertDialog(heading="Remove unused snapshots?",
-                                 body=f"These snapshots are not used by any project and will be removed:\n\n{names}")
+                                 body=f"These snapshots are not selected in project configuration, are not the newest, and are not currently in use. They will be removed even if referenced by previous builds or added from file:\n\n{names}")
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("enable", "Remove and enable")
         dialog.set_response_appearance("enable", Adw.ResponseAppearance.DESTRUCTIVE)

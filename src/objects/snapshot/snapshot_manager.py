@@ -1,5 +1,4 @@
 from typing import final
-from datetime import datetime
 from .repository import Repository
 import os
 from .snapshot import Snapshot
@@ -60,22 +59,21 @@ class SnapshotManager:
         GLib.idle_add(clean)
 
     def unused_snapshots(self) -> list[Snapshot]:
-        """Snapshots removed by auto clean: not used by projects, builds that can be deployed (their repository can be
-        installed with them) or running processes, not newest, and not added from file (these can contain own
-        changes)."""
+        """Remove snapshots unless selected by a project, newest, or currently in use.
+        Completed build references do not retain snapshots.
+        """
         from .multistage_process import MultiStageProcess, MultiStageProcessState
         snapshots = sorted_snapshots(Repository.Snapshot.value)
         used = {snapshot.filename for snapshot in snapshots[:1]}
         for project in Repository.ProjectDirectory.value:
             if snapshot := project.get_snapshot():
                 used.add(snapshot.filename)
-            used |= _deployable_builds_snapshots(project)
         for process in MultiStageProcess.started_processes:
             snapshot = getattr(process, "snapshot", None)
             if process.status == MultiStageProcessState.IN_PROGRESS and isinstance(snapshot, Snapshot):
                 used.add(snapshot.filename)
         return [snapshot for snapshot in snapshots
-                if snapshot.filename not in used and not snapshot.may_contain_own_changes]
+                if snapshot.filename not in used]
 
     def auto_clean(self):
         if not Repository.Settings.value.auto_clean_snapshots:
@@ -100,19 +98,3 @@ class SnapshotManager:
         if os.path.isfile(marker):
             os.remove(marker)
         Repository.Snapshot.value.remove(snapshot)
-
-
-def _deployable_builds_snapshots(project) -> set[str]:
-    """Snapshots used by completed builds of project that can be deployed (stage3, stage4, live CD)."""
-    from .project_build import load_project_builds
-    from .deploy_installation import is_deployable
-    from .deploy_live_iso import is_live_iso_build
-    files = set()
-    try:
-        for build in load_project_builds(project):
-            if is_deployable(project, build) or is_live_iso_build(build):
-                if name := (((build.details or {}).get("inputs") or {}).get("snapshot") or {}).get("file"):
-                    files.add(name)
-    except Exception as e:
-        print(f"Failed to read builds of {project.name}: {e}")
-    return files

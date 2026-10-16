@@ -60,22 +60,11 @@
             </child>
 
             <child>
-              <object class="GtkLabel" id="machines_description_label">
-                <property name="label">Virtual machines run toolsets on systems that can't build stages themselves, like macOS, so on such systems create one before toolsets. Toolsets linked to a virtual machine are loaded inside it, so their builds, updates and snapshots run there.</property>
-                <property name="halign">center</property>
-                <property name="wrap">True</property>
-                <property name="justify">fill</property>
-                <attributes>
-                  <attribute name="foreground" value="grey"/>
-                </attributes>
-              </object>
-            </child>
-            <child>
-              <object class="GtkLabel">
+              <object class="GtkLabel" id="description_label">
                 <property name="label">Toolsets are isolated Gentoo environments with tools needed to build stages, like Catalyst and QEMU. Each toolset is created from an official stage3 image and stored as a .squashfs file.</property>
-                <property name="halign">center</property>
+                <property name="halign">fill</property>
                 <property name="wrap">True</property>
-                <property name="justify">fill</property>
+                <property name="xalign">0</property>
                 <attributes>
                   <attribute name="foreground" value="grey"/>
                 </attributes>

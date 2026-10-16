@@ -72,6 +72,12 @@ class ProjectBuildView(Gtk.Box):
     def load_stages(self):
         for stage, depth in self._stages_in_tree_order():
             row = Adw.ActionRow(title=GLib.markup_escape_text(stage.name))
+            if getattr(stage, "is_broken", False):
+                row.set_subtitle(GLib.markup_escape_text(stage.warning_message))
+                row.add_prefix(Gtk.Image.new_from_icon_name("dialog-warning-symbolic"))
+                row.add_css_class("warning")
+                self.stages_group.add(row)
+                continue
             check_button = Gtk.CheckButton(valign=Gtk.Align.CENTER, margin_start=depth * 24)
             check_button.connect("toggled", self.on_stage_toggled, stage)
             row.add_prefix(check_button)

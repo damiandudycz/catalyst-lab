@@ -370,7 +370,13 @@ def apply_changes(project_path: str, changes: list[TemplateChange], project: Pro
                 os.rename(directory, renamed)
     # Directories of removed stages and files.
     for directory, directories, files in os.walk(os.path.join(project_path, _STAGES_DIRECTORY), topdown=False):
-        if not directories and not files and os.path.abspath(directory) != os.path.abspath(os.path.join(project_path, _STAGES_DIRECTORY)):
+        if os.path.abspath(directory) == os.path.abspath(os.path.join(project_path, _STAGES_DIRECTORY)):
+            continue
+        # os.walk's child list still includes directories removed earlier in this
+        # bottom-up traversal. Check the filesystem so empty parents disappear too.
+        with os.scandir(directory) as remaining:
+            empty = next(remaining, None) is None
+        if empty:
             os.rmdir(directory)
 
 # ------------------------------------------------------------------------------
