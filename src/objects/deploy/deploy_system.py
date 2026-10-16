@@ -81,20 +81,64 @@ class NetworkSettings:
     def dns_servers(self) -> list[str]:
         return self.dns.replace(",", " ").split()
 
+def init_system_script() -> str:
+    """Detect the installed system, never the live CD running deployment.
+
+    Read init symlink text without resolving absolute targets against the live CD.
+    Compatibility scripts and empty runlevel directories are weaker evidence.
+    """
+    return r'''CL_INIT_SYSTEM=
+for CL_INIT_PATH in usr/bin/init usr/sbin/init sbin/init bin/init; do
+    CL_INIT_TARGET=$(readlink "$ROOT/$CL_INIT_PATH" 2>/dev/null || true)
+    case "$CL_INIT_TARGET" in
+        */systemd|systemd) CL_INIT_SYSTEM=systemd; break ;;
+        */openrc-init|openrc-init|*/sysvinit|sysvinit|*/busybox|busybox) CL_INIT_SYSTEM=openrc; break ;;
+    esac
+done
+if [ -z "$CL_INIT_SYSTEM" ]; then
+    if [ -e "$ROOT/usr/lib/systemd/systemd" ] || [ -e "$ROOT/lib/systemd/systemd" ]; then
+        CL_INIT_SYSTEM=systemd
+    elif [ -x "$ROOT/sbin/openrc-run" ] || [ -x "$ROOT/usr/bin/openrc-run" ] || [ -x "$ROOT/usr/sbin/openrc-run" ] || [ -d "$ROOT/etc/runlevels" ]; then
+        CL_INIT_SYSTEM=openrc
+    elif [ -d "$ROOT/usr/lib/systemd/system" ] || [ -d "$ROOT/lib/systemd/system" ]; then
+        CL_INIT_SYSTEM=systemd
+    fi
+fi'''
+
+
 def enable_service_script(openrc: str | None, systemd: str | None) -> str:
-    """Enables service in installed system: OpenRC default runlevel, or systemd multi-user target."""
-    lines = []
+    """Enable only the service for the target's init system."""
+    lines = [init_system_script()]
     if openrc:
-        lines.append(f'[ -d "$ROOT/etc/runlevels/default" ] && [ -e "$ROOT/etc/init.d/{openrc}" ] && ln -sf /etc/init.d/{openrc} "$ROOT/etc/runlevels/default/{openrc}" && echo "Enabled {openrc} (OpenRC)"')
+        lines += [
+            f'if [ "$CL_INIT_SYSTEM" = openrc ] && [ -e "$ROOT/etc/init.d/{openrc}" ]; then',
+            '    mkdir -p "$ROOT/etc/runlevels/default"',
+            f'    ln -sf /etc/init.d/{openrc} "$ROOT/etc/runlevels/default/{openrc}"',
+            f'    echo "Enabled {openrc} (OpenRC)"',
+            'fi',
+        ]
     if systemd:
-        lines.append(f'if [ -e "$ROOT/usr/lib/systemd/system/{systemd}.service" ]; then mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants" && ln -sf /usr/lib/systemd/system/{systemd}.service "$ROOT/etc/systemd/system/multi-user.target.wants/{systemd}.service" && echo "Enabled {systemd} (systemd)"; fi')
+        lines += [
+            'if [ "$CL_INIT_SYSTEM" = systemd ]; then',
+            '    for CL_UNIT_BASE in usr/lib lib; do',
+            f'        if [ -e "$ROOT/$CL_UNIT_BASE/systemd/system/{systemd}.service" ]; then',
+            '            mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"',
+            f'            ln -sf "/$CL_UNIT_BASE/systemd/system/{systemd}.service" "$ROOT/etc/systemd/system/multi-user.target.wants/{systemd}.service"',
+            f'            echo "Enabled {systemd} (systemd)"',
+            '            break',
+            '        fi',
+            '    done',
+            'fi',
+        ]
     return "\n".join(lines)
 
+
 def enable_systemd_instance_script(unit: str, instance: str) -> str:
-    """Enables instance of systemd template unit (eg. wpa_supplicant@wlan0 of wpa_supplicant@.service)."""
+    """Enable a template unit only in a systemd target."""
     wants = "$ROOT/etc/systemd/system/multi-user.target.wants"
-    return (f'if [ -e "$ROOT/usr/lib/systemd/system/{unit}@.service" ]; then mkdir -p "{wants}" && '
-            f'ln -sf /usr/lib/systemd/system/{unit}@.service "{wants}/{unit}@{instance}.service" && echo "Enabled {unit}@{instance} (systemd)"; fi')
+    return init_system_script() + "\n" + (
+        f'if [ "$CL_INIT_SYSTEM" = systemd ] && [ -e "$ROOT/usr/lib/systemd/system/{unit}@.service" ]; then mkdir -p "{wants}" && '
+        f'ln -sf /usr/lib/systemd/system/{unit}@.service "{wants}/{unit}@{instance}.service" && echo "Enabled {unit}@{instance} (systemd)"; fi')
 
 def network_script(settings: NetworkSettings) -> str:
     service = settings.service
@@ -365,7 +409,8 @@ def wifi_script(settings: WifiSettings, service: NetworkService = NetworkService
         elif service == NetworkService.DHCPCD:
             # wpa_supplicant connects network, dhcpcd gets address of interface.
             script += [
-                'if [ -d "$ROOT/etc/runlevels" ]; then',
+                init_system_script(),
+                'if [ "$CL_INIT_SYSTEM" = openrc ]; then',
                 f'    [ -f "$ROOT/etc/conf.d/wpa_supplicant" ] && sed -i \'s|^wpa_supplicant_args=.*|wpa_supplicant_args="-i {interface}"|\' "$ROOT/etc/conf.d/wpa_supplicant"',
                 f'    grep -q "^wpa_supplicant_args=" "$ROOT/etc/conf.d/wpa_supplicant" 2>/dev/null || echo \'wpa_supplicant_args="-i {interface}"\' >> "$ROOT/etc/conf.d/wpa_supplicant"',
                 '    ' + enable_service_script("wpa_supplicant", None),

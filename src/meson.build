@@ -2,6 +2,18 @@ pkgdatadir = get_option('prefix') / get_option('datadir') / meson.project_name()
 moduledir = pkgdatadir / 'catalystlab'
 gnome = import('gnome')
 
+if host_machine.system() == 'darwin'
+  custom_target('libcatalystlab-apple-vm',
+    input: ['native/apple-vm.swift', 'native/apple-vm.entitlements'],
+    output: 'libcatalystlab-apple-vm.dylib',
+    command: ['sh', files('native/build-apple-vm.sh'), '@INPUT0@', '@INPUT1@', '@OUTPUT@'],
+    build_by_default: true,
+    install: true,
+    install_dir: moduledir,
+    install_mode: 'rwxr-xr-x',
+  )
+endif
+
 gnome.compile_resources('catalystlab',
   'catalystlab.gresource.xml',
   gresource_bundle: true,
@@ -51,6 +63,7 @@ catalystlab_sources = [
   'objects/deploy/deploy_image_steps.py',
   'objects/deploy/deploy_live_iso.py',
   'objects/qemu/qemu_run.py',
+  'objects/qemu/apple_virtualization.py',
   'objects/global_objects/library.py',
   'objects/global_objects/modules_scanner.py',
   'objects/global_objects/multistage_process.py',

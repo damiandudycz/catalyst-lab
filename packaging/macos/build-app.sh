@@ -160,7 +160,7 @@ APP="$WORK/dist/$APP_NAME.app"
 
 # Lima keeps its own signature, which has entitlement for Virtualization framework.
 cp -R "$LIMA" "$APP/Contents/Resources/lima"
-codesign --force --sign - "$APP" # Seals bundle again after adding Lima (ad-hoc signature).
+codesign --force --sign - --entitlements "$ROOT/src/native/apple-vm.entitlements" "$APP"
 codesign --verify --strict "$APP"
 codesign -d --entitlements - "$APP/Contents/Resources/lima/bin/limactl" 2>/dev/null | grep -q virtualization \
     || echo "Warning: limactl has no virtualization entitlement, virtual machines won't start"

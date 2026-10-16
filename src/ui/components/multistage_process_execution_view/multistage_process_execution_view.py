@@ -39,11 +39,11 @@ class MultistageProcessExecutionView(Gtk.Box):
             if multistage_process.status == MultiStageProcessState.SETUP:
                 raise RuntimeError("multistage_process needs to be started before connecting")
             self.multistage_process = multistage_process
+            self.bind_installation_events(multistage_process)
             self.process_steps_list.set_title(title=multistage_process.title)
             self.progress_bar.set_fraction(multistage_process.progress)
             self._update_installation_steps(steps=multistage_process.stages)
             self._set_current_stage(multistage_process.status)
-            self.bind_installation_events(multistage_process)
 
     def bind_installation_events(self, multistage_process: MultiStageProcess):
         multistage_process.event_bus.subscribe(
@@ -168,14 +168,11 @@ class MultiStageProcessStageRow(Adw.ActionRow):
         self.progress_label = Gtk.Label()
         self.progress_label.add_css_class("dim-label")
         self.progress_label.add_css_class("caption")
-        self._update_status_label()
         self.add_suffix(self.progress_label)
         self.output_arrow = Gtk.Image.new_from_icon_name("go-next-symbolic")
         self.add_suffix(self.output_arrow)
         self.connect("activated", self._on_activated)
         self._update_output_available()
-        self.set_sensitive(step.state != MultiStageProcessStageState.SCHEDULED)
-        self._set_status_icon(state=step.state)
         step.event_bus.subscribe(
             MultiStageProcessStageEvent.STATE_CHANGED,
             self._step_state_changed
@@ -188,6 +185,11 @@ class MultiStageProcessStageRow(Adw.ActionRow):
             MultiStageProcessStageEvent.OUTPUT_LINE_ADDED,
             self._step_output_line_added
         )
+        # A worker can finish while this row is being built. Read its current state
+        # after subscribing so completion cannot fall between the snapshot and subscription.
+        self.set_sensitive(step.state != MultiStageProcessStageState.SCHEDULED)
+        self._set_status_icon(state=step.state)
+        self._update_status_label()
         # View opened while step runs shows its last output line right away.
         if step.state == MultiStageProcessStageState.IN_PROGRESS:
             self._last_line = next((text for line in reversed(step.output_lines) if (text := _plain_text(line))), None)

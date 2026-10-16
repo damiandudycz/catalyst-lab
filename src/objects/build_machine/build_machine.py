@@ -22,6 +22,7 @@ class BuildMachine:
     IDLE_STOP_SECONDS = 2
     COMMAND_USER = "Command" # User of single commands (not listed as user of machine).
 
+    DEFAULT_MEMORY_GIB = 8
     DEFAULT_SWAP_GIB = 16
 
     @classmethod
@@ -61,7 +62,7 @@ class BuildMachine:
             with open(path, "w", encoding="utf-8") as file:
                 json.dump(item.serialize(), file, indent=2)
 
-    def __init__(self, id: uuid.UUID | None = None, name: str = "", cpus: int = 4, memory_gib: int = 4, workspace_gib: int = 64,
+    def __init__(self, id: uuid.UUID | None = None, name: str = "", cpus: int = 4, memory_gib: int = DEFAULT_MEMORY_GIB, workspace_gib: int = 64,
                  lima_home: str | None = None, swap_gib: int = DEFAULT_SWAP_GIB):
         self.id = id or uuid.uuid4()
         self.name = name
@@ -93,7 +94,7 @@ class BuildMachine:
     @classmethod
     def init_from(cls, data: dict) -> Self:
         return cls(id=uuid.UUID(data["id"]), name=data["name"], cpus=data.get("cpus", 4),
-                   memory_gib=data.get("memory_gib", 4), workspace_gib=data.get("workspace_gib", 64),
+                   memory_gib=data.get("memory_gib", cls.DEFAULT_MEMORY_GIB), workspace_gib=data.get("workspace_gib", 64),
                    swap_gib=data.get("swap_gib", cls.DEFAULT_SWAP_GIB),
                    # Machines created before machines directory are in ~/.lima.
                    lima_home=data.get("lima_home") or default_lima_home())

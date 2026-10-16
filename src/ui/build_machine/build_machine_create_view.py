@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 from gi.repository import Gtk, Adw
 from .build_machine_installation import BuildMachineInstallation
+from .build_machine import BuildMachine
 from .build_machine_manager import BuildMachineManager
 from .multistage_process import MultiStageProcessState
 from .wizard_view import WizardView
@@ -27,6 +28,7 @@ class BuildMachineCreateView(Gtk.Box):
         self.name_row.set_text(self._default_name())
         # Half of CPUs of this computer by default.
         self.cpus_row.set_value(max(1, min(8, (os.cpu_count() or 4) // 2)))
+        self.memory_row.set_value(BuildMachine.DEFAULT_MEMORY_GIB)
         self.connect("realize", self.on_realize)
 
     def on_realize(self, widget):

@@ -201,14 +201,14 @@ class QemuRunRow(Gtk.ListBoxRow):
     """Active QEMU machine; clicking returns to its existing view."""
 
     def __init__(self, run):
-        super().__init__(tooltip_text="Running in QEMU")
+        super().__init__(tooltip_text=f"Running with {run.backend_name}")
         self.run = run
         box = Gtk.Box(spacing=10, margin_start=6, margin_end=6, margin_top=4, margin_bottom=4)
         icon = Gtk.Image(icon_name="computer-symbolic", valign=Gtk.Align.CENTER)
         box.append(icon)
         labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
         labels.append(Gtk.Label(label=run.name, xalign=0, ellipsize=Pango.EllipsizeMode.END))
-        self.subtitle = Gtk.Label(label="Running in QEMU", xalign=0)
+        self.subtitle = Gtk.Label(label=f"Running with {run.backend_name}", xalign=0)
         self.subtitle.add_css_class("caption")
         self.subtitle.add_css_class("dim-label")
         labels.append(self.subtitle)
@@ -219,7 +219,7 @@ class QemuRunRow(Gtk.ListBoxRow):
         if not self.run.is_running:
             return
         speed = f" · {self.run.cpus} CPUs · {self.run.memory_mib // 1024} GiB"
-        self.subtitle.set_label("Running in QEMU" + speed)
+        self.subtitle.set_label(f"Running with {self.run.backend_name}" + speed)
 
     def open(self):
         from .qemu_run_view import present_qemu_run

@@ -138,7 +138,8 @@ _INITRAMFS = re.compile(r"^boot/(initramfs|initrd)[^/]*$")
 _FIRMWARE = re.compile(r"^var/db/pkg/sys-kernel/linux-firmware-[^/]+/")
 # Firmware packages that block linux-firmware (they install some of its files).
 # Line of tar -tv listing: permissions, owner, size, date, time and path (symbolic link with its target).
-_LISTING_LINE = re.compile(r"^\S+\s+\S+\s+\d+\s+\S+\s+\S+\s+(.*?)(?: -> .*)?$")
+_LISTING_LINE = re.compile(r"^\S+\s+\S+\s+\d+\s+\S+\s+\S+\s+(.*?)(?: -> (.*))?$")
+_BSD_LISTING_LINE = re.compile(r"^\S+\s+\d+\s+\S+\s+\S+\s+\d+\s+\S+\s+\d+\s+\S+\s+(.*?)(?: -> (.*))?$")
 # Groups of system: base ones of sys-apps/baselayout, others are created by acct-group packages.
 BASELAYOUT_GROUPS = frozenset("root bin daemon sys adm tty disk lp mem kmem wheel floppy news uucp console audio cdrom dialout "
                               "tape video cdrw usb users portage utmp nogroup".split())
@@ -152,6 +153,7 @@ class StageContents:
     kernels: list[str] = field(default_factory=list) # Files in /boot.
     initramfs: list[str] = field(default_factory=list)
     init: str | None = None # openrc or systemd.
+    _init_from_link: bool = field(default=False, init=False, repr=False)
     network_services: set[NetworkService] = field(default_factory=set)
     firmware: bool = False # linux-firmware is installed.
     wpa_supplicant: bool = False # Wi-Fi of network services other than NetworkManager.
@@ -174,23 +176,31 @@ class StageContents:
             with gzip.open(listing, "rt", encoding="utf-8", errors="replace") as file:
                 for line in file:
                     if match := _LISTING_LINE.match(line.rstrip("\n")):
-                        contents._add_path(match.group(1).removeprefix("./"))
+                        contents._add_path(match.group(1).removeprefix("./"), match.group(2))
             if contents.init or contents.kernels or contents.bootloaders:
                 return contents
             contents = cls() # Listing in other format, archive is listed.
-        process = subprocess.Popen(["tar", "-tf", archive_path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                   text=True, errors="replace")
+        process = subprocess.Popen(["tar", "-tvf", archive_path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   text=True, errors="replace", env={**os.environ, "LC_ALL": "C"})
         if process_holder is not None:
             process_holder.append(process)
-        for line in process.stdout:
-            contents._add_path(line.strip().removeprefix("./"))
+        with process.stdout as output:
+            for line in output:
+                match = _BSD_LISTING_LINE.match(line.rstrip("\n")) or _LISTING_LINE.match(line.rstrip("\n"))
+                if match:
+                    contents._add_path(match.group(1).removeprefix("./"), match.group(2))
         if process.wait() != 0:
             raise RuntimeError("Failed to list stage archive")
         return contents
 
-    def _add_path(self, path: str):
+    def _add_path(self, path: str, link_target: str | None = None):
         """Records what path of archive shows (bootloader, services, kernel, init system...)."""
         contents = self
+        if path in ("sbin/init", "bin/init", "usr/sbin/init", "usr/bin/init") and link_target:
+            target = link_target.rsplit("/", 1)[-1]
+            if target in ("systemd", "openrc-init", "sysvinit", "busybox"):
+                contents.init = "systemd" if target == "systemd" else "openrc"
+                contents._init_from_link = True
         for bootloader, pattern in _BOOTLOADER_FILES.items():
             if pattern.match(path):
                 contents.bootloaders.add(bootloader)
@@ -209,9 +219,9 @@ class StageContents:
             contents.kernels.append(path.removeprefix("boot/"))
         elif _INITRAMFS.match(path):
             contents.initramfs.append(path.removeprefix("boot/"))
-        elif path in ("sbin/openrc-run", "usr/sbin/openrc-run", "usr/bin/openrc-run"):
+        elif path in ("sbin/openrc-run", "usr/sbin/openrc-run", "usr/bin/openrc-run") and contents.init is None:
             contents.init = "openrc"
-        elif path in ("usr/lib/systemd/systemd", "lib/systemd/systemd") and contents.init is None:
+        elif path in ("usr/lib/systemd/systemd", "lib/systemd/systemd") and not contents._init_from_link:
             contents.init = "systemd"
 
     @property

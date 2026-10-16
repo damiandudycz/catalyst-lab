@@ -2,6 +2,7 @@ from __future__ import annotations
 import base64, os, shlex, sys
 from datetime import datetime
 from .ssh_connection import quote
+from .deploy_system import init_system_script
 
 # ------------------------------------------------------------------------------
 # Deploying to disk image file (.img): stage is installed like on disk of this computer, on loop device of image. Image
@@ -230,8 +231,9 @@ def grow_root_script() -> str:
 mkdir -p "$ROOT/usr/local/sbin"
 echo {program} | base64 -d > "$ROOT/usr/local/sbin/catalystlab-grow-root"
 chmod 755 "$ROOT/usr/local/sbin/catalystlab-grow-root"
-if [ -d "$ROOT/etc/runlevels" ]; then
-    mkdir -p "$ROOT/etc/local.d"
+{init_system_script()}
+if [ "$CL_INIT_SYSTEM" = openrc ]; then
+    mkdir -p "$ROOT/etc/local.d" "$ROOT/etc/runlevels/default"
     printf '#!/bin/sh\\n/usr/local/sbin/catalystlab-grow-root\\n' > "$ROOT/etc/local.d/catalystlab-grow-root.start"
     chmod 755 "$ROOT/etc/local.d/catalystlab-grow-root.start"
     [ -e "$ROOT/etc/runlevels/default/local" ] || ln -s /etc/init.d/local "$ROOT/etc/runlevels/default/local"

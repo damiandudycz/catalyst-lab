@@ -18,7 +18,10 @@ app_modules = ["catalystlab"] + sorted(
 a = Analysis(
     [os.path.join(HERE, "launcher.py")],
     pathex=[PKGDATADIR],
-    binaries=[(tool, "bin") for tool in TOOLS],
+    hookspath=[os.path.join(HERE, "hooks")],
+    binaries=[(tool, "bin") for tool in TOOLS] + [
+        (os.path.join(package_directory, "libcatalystlab-apple-vm.dylib"), "native"),
+    ],
     datas=[
         (os.path.join(PKGDATADIR, "catalystlab.gresource"), "share/catalystlab"),
         (os.path.join(PKGDATADIR, "VERSION"), "share/catalystlab"),
@@ -27,7 +30,7 @@ a = Analysis(
     ],
     hiddenimports=app_modules + [
         "gi.repository.Gtk", "gi.repository.Gdk", "gi.repository.Adw", "gi.repository.Gio", "gi.repository.GLib",
-        "gi.repository.GObject", "gi.repository.Pango", "gi.repository.GdkPixbuf", "gi.repository.cairo", "cairo",
+        "gi.repository.GObject", "gi.repository.Pango", "gi.repository.GdkPixbuf", "gi.repository.GdkMacos", "gi.repository.cairo", "cairo",
         "requests",
     ],
     hooksconfig={
@@ -50,6 +53,7 @@ exe = EXE(
     name="catalystlab",
     console=False,
     argv_emulation=False,
+    entitlements_file=os.path.join(HERE, "../../src/native/apple-vm.entitlements"),
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="catalystlab")
 app = BUNDLE(

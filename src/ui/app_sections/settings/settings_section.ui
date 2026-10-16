@@ -171,8 +171,8 @@
                 <property name="spacing">6</property>
                 <child>
                   <object class="AdwPreferencesGroup">
-                    <property name="title">QEMU</property>
-                    <property name="description">Default resources for virtual machines. You can adjust them before each run.</property>
+                    <property name="title">Test built images</property>
+                    <property name="description">Default CPU and memory limits when booting built ISO images or stages in a test virtual machine. You can adjust them before each run. Toolset virtual machines have their own resource settings.</property>
                     <child>
                       <object class="GtkListBox">
                         <property name="selection-mode">none</property>
@@ -203,22 +203,6 @@
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-
-            <child>
-              <object class="GtkSeparator"/>
-            </child>
-
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Library is the folder with all data of Catalyst Lab: toolsets, snapshots, releng and overlays, projects with their builds, binary packages, virtual machines and configuration.</property>
-                <property name="halign">center</property>
-                <property name="wrap">True</property>
-                <property name="justify">fill</property>
-                <attributes>
-                  <attribute name="foreground" value="grey"/>
-                </attributes>
               </object>
             </child>
 

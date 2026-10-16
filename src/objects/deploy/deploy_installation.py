@@ -7,7 +7,7 @@ from .ssh_connection import SSHConnection, quote
 from .deploy_target import TargetMachine, PartitionPlan, PartitionType
 from .deploy_boot import Bootloader, Kernel, FIRMWARE_PACKAGE, StageContents, packages_script, bootloader_script, grub_platform, CHROOT_SETUP
 from .deploy_system import (
-    NetworkService, NetworkSettings, LocalizationSettings, network_script, localization_script, authorized_keys_script
+    NetworkService, NetworkSettings, LocalizationSettings, network_script, localization_script, authorized_keys_script, init_system_script
 )
 
 # ------------------------------------------------------------------------------
@@ -144,11 +144,19 @@ def system_configuration_script(settings: DeploySystemSettings) -> list[str]:
         script += [f"echo {quote('root:' + settings.root_password)} | chroot \"$ROOT\" chpasswd", 'echo "Root password set"']
     if settings.enable_ssh:
         script += [
-            'if [ -x "$ROOT/sbin/openrc-run" ] || [ -x "$ROOT/usr/bin/openrc-run" ] || [ -d "$ROOT/etc/runlevels" ]; then',
-            '    if [ -e "$ROOT/etc/init.d/sshd" ]; then ln -sf /etc/init.d/sshd "$ROOT/etc/runlevels/default/sshd"; echo "SSH server enabled (OpenRC)"; else echo "Warning: SSH server is not installed in stage"; fi',
-            'elif [ -e "$ROOT/usr/lib/systemd/system/sshd.service" ]; then',
+            init_system_script(),
+            'echo "Target init system: ${CL_INIT_SYSTEM:-unknown}"',
+            'if [ "$CL_INIT_SYSTEM" = openrc ]; then',
+            '    if [ -e "$ROOT/etc/init.d/sshd" ]; then',
+            '        mkdir -p "$ROOT/etc/runlevels/default"',
+            '        ln -sf /etc/init.d/sshd "$ROOT/etc/runlevels/default/sshd"',
+            '        echo "SSH server enabled (OpenRC)"',
+            '    else echo "Warning: SSH server is not installed in stage"; fi',
+            'elif [ "$CL_INIT_SYSTEM" = systemd ] && { [ -e "$ROOT/usr/lib/systemd/system/sshd.service" ] || [ -e "$ROOT/lib/systemd/system/sshd.service" ]; }; then',
             '    mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"',
-            '    ln -sf /usr/lib/systemd/system/sshd.service "$ROOT/etc/systemd/system/multi-user.target.wants/sshd.service"',
+            '    CL_SSH_UNIT=/usr/lib/systemd/system/sshd.service',
+            '    [ -e "$ROOT$CL_SSH_UNIT" ] || CL_SSH_UNIT=/lib/systemd/system/sshd.service',
+            '    ln -sf "$CL_SSH_UNIT" "$ROOT/etc/systemd/system/multi-user.target.wants/sshd.service"',
             '    echo "SSH server enabled (systemd)"',
             'else',
             '    echo "Warning: SSH server is not installed in stage"',

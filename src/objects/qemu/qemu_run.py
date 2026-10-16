@@ -95,6 +95,7 @@ class QemuSupport:
     kernel: str | None = None     # Stage kernel and initramfs, in /boot.
     initramfs: str | None = None
     reason: str | None = None     # Why build can't run.
+    backend: str = "qemu"
 
     @property
     def available(self) -> bool:
@@ -182,7 +183,7 @@ def _stage_boot_files(build) -> tuple[list[str], list[str]]:
                 initramfs.append(match.group(1))
     return kernels, initramfs
 
-def qemu_support(project_directory, build) -> QemuSupport:
+def qemu_support(project_directory, build, *, check_runtime: bool = True) -> QemuSupport:
     """Whether build can run in QEMU, how, or why not."""
     from .project_build import StageBuildStatus
     from .deploy_live_iso import is_live_iso_build
@@ -219,6 +220,8 @@ def qemu_support(project_directory, build) -> QemuSupport:
         return QemuSupport(None, machine, reason="Only stage3, stage4 and live CD builds can run")
     if machine is None:
         return QemuSupport(kind, None, reason=f"Running {architecture.value if architecture else 'this architecture'} in QEMU isn't supported yet")
+    if not check_runtime:
+        return QemuSupport(kind, machine, kernel=kernel, initramfs=initramfs)
     if qemu_binary(machine.binary) is None:
         return QemuSupport(kind, machine, reason=f"QEMU for this architecture is not installed ({install_hint()})")
     if kind == QemuBuildKind.STAGE and qemu_binary("qemu-img") is None:
@@ -241,11 +244,11 @@ def accelerated(machine: QemuMachine) -> str | None:
 # ------------------------------------------------------------------------------
 # Disk image of stage (made once, next to build).
 
-def stage_image_directory(build) -> str:
-    return os.path.join(build.path, "qemu")
+def stage_image_directory(build, backend: str = "qemu") -> str:
+    return os.path.join(build.path, backend)
 
 def stage_image_ready(build, support: QemuSupport) -> bool:
-    directory = stage_image_directory(build)
+    directory = stage_image_directory(build, support.backend)
     return all(os.path.isfile(os.path.join(directory, name)) for name in
                ["root.img", support.kernel] + ([support.initramfs] if support.initramfs else []))
 
@@ -293,6 +296,7 @@ class QemuRun:
     running_runs: list[QemuRun] = []
     running_runs_event_bus = EventBus[QemuRunEvent]()
     _start_lock = threading.Lock()
+    backend_name = "QEMU"
 
     def __init__(self, project_directory, build, support: QemuSupport, memory_mib: int = 4096, cpus: int = 4):
         self.project_directory = project_directory
@@ -307,7 +311,7 @@ class QemuRun:
         self.vnc_socket = os.path.join(self.directory, "vnc")
         self.serial_socket = os.path.join(self.directory, "serial")
         self.qmp_socket = os.path.join(self.directory, "qmp")
-        self.ssh_port = _free_port()
+        self.ssh_port = _free_port() if self.backend_name == "QEMU" else None
         self.error: str | None = None
         self.output: list[str] = [] # QEMU own messages.
         self.serial_output = "" # Last MiB is retained while the view is closed and restored when reopened.

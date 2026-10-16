@@ -10,7 +10,7 @@ architecture = "arm64"
 [[variables]]
 id = "init"
 title = "Init system"
-description = "Services of stage4 are enabled automatically with OpenRC."
+description = "OpenRC services are enabled automatically. Plasma graphical login is enabled with either init system."
 default = "openrc"
 options = [
     { value = "openrc", title = "OpenRC" },
@@ -215,7 +215,7 @@ stage4_use = ["networkmanager", "bluetooth", "pulseaudio"]
 stage4_packages = "{{ base_packages + ['kde-plasma/plasma-meta', 'x11-misc/sddm'] }}"
 stage4_rcadd = "{{ base_services + (['display-manager|default'] if openrc else []) }}"
 stage4_empty = ["/var/cache/distfiles"]
-stage4_fsscript = "{{ kernel_fsscript }}"
+stage4_fsscript = "@STAGE_DIR@/configure-plasma.sh"
 boot_kernel = "{{ ['rpi'] if compiled_kernel else [] }}"
 stage4_rm = ["/root/.bash_history"]
 [stages.arguments.boot_kernels.rpi]
@@ -322,6 +322,12 @@ when = "compiled_kernel and 'plasma' in extra_stages"
 [[files]]
 source = "files/kernel-rebuild/build-kernel.sh"
 destination = "stages/{{ plasma_stage4_name }}/root_overlay/usr/local/sbin/build-raspberrypi-kernel"
+when = "compiled_kernel and 'plasma' in extra_stages"
+
+# Plasma's fsscript invokes this installer after Catalyst has built its kernel, then removes it.
+[[files]]
+source = "files/kernel-sources/install-kernel.sh"
+destination = "stages/{{ plasma_stage4_name }}/root_overlay/usr/local/libexec/catalystlab-install-kernel"
 when = "compiled_kernel and 'plasma' in extra_stages"
 
 # Raspberry Pi kernel, firmware and boot configuration.

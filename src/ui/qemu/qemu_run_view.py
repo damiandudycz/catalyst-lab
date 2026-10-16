@@ -2,6 +2,7 @@ from __future__ import annotations
 import os, re, threading
 from gi.repository import Gtk, Gdk, Adw, GLib, Pango
 from .qemu_run import QemuRun, QemuRunEvent, QemuBuildKind, qemu_support, stage_image_ready, stage_image_directory, stage_image_script
+from .apple_virtualization import AppleVirtualizationRun, apple_support
 from .vnc_view import VncView
 from .cl_toggle_group import CLToggle, CLToggleGroup
 from .usage_graph import UsageGraph, USAGE_INTERVAL_SECONDS
@@ -23,7 +24,7 @@ def present_qemu_run(run: QemuRun):
     view = getattr(run, "view", None)
     if view is None:
         view = QemuRunView(run.project_directory, run.build, run=run)
-        app_event_bus.emit(AppEvents.PRESENT_VIEW, view, f"{run.name} in QEMU", 1024, 768)
+        app_event_bus.emit(AppEvents.PRESENT_VIEW, view, f"{run.name} — {run.backend_name}", 1024, 768)
         return
     window = getattr(view, "_window", None)
     navigation = getattr(window, "navigation_view", None)
@@ -47,7 +48,7 @@ class QemuImagePreparation(MultiStageProcess):
         self.project_id = project_directory.id if project_directory else None
         self.build = build
         self.support = support
-        super().__init__(title="QEMU disk image")
+        super().__init__(title="Test VM disk image")
 
     def setup_stages(self):
         self.stages.append(_StepImage(multistage_process=self))
@@ -60,7 +61,7 @@ class QemuImagePreparation(MultiStageProcess):
 
 class _StepImage(MultiStageProcessStage):
     def __init__(self, multistage_process):
-        super().__init__(name="Create disk image", description="Extracts stage to disk image used by QEMU",
+        super().__init__(name="Create disk image", description="Extracts stage to a disk image for testing",
                          multistage_process=multistage_process)
 
     def start(self):
@@ -72,7 +73,7 @@ class _StepImage(MultiStageProcessStage):
             build = process.build
             if not process.support.kernel:
                 raise RuntimeError("Stage has no kernel to boot")
-            directory = stage_image_directory(build)
+            directory = stage_image_directory(build, process.support.backend)
             os.makedirs(directory, exist_ok=True)
             connection = image_connection(process.project_directory)
             if error := connection.connect():
@@ -99,14 +100,23 @@ class QemuRunView(Gtk.Box):
 
     def __init__(self, project_directory, build, content_navigation_view: Adw.NavigationView | None = None,
                  memory_mib: int = 4096, cpus: int = 4, start_immediately: bool = False,
-                 run: QemuRun | None = None):
+                 run: QemuRun | None = None, backend: str = "qemu"):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.project_directory = project_directory
         self.build = build
-        self.support = qemu_support(project_directory, build)
+        self.backend = "apple" if isinstance(run, AppleVirtualizationRun) else backend
+        self.backend_name = "Apple Virtualization" if self.backend == "apple" else "QEMU"
+        self.apple = apple_support(project_directory, build) if self.backend == "apple" else None
+        self.support = run.support if run is not None else (
+            self.apple.support if self.apple and self.apple.support else
+            qemu_support(project_directory, build, check_runtime=self.backend == "qemu"))
         self.run: QemuRun | None = None
         self._serial_pending = ""
         self._auto_console_detection = False
+        self._native_input_active = False
+        self._native_pressed_keys = {}
+        self._native_input_root = None
+        self._native_event_controller = None
         self.preparation: QemuImagePreparation | None = None
         self._launch_cpus = cpus
         self._launch_memory_mib = memory_mib
@@ -115,7 +125,7 @@ class QemuRunView(Gtk.Box):
         self.view_toggle = CLToggleGroup(valign=Gtk.Align.CENTER)
         self.view_toggle.add_css_class("round")
         self.view_toggle.add_css_class("caption")
-        for title in ("Screen", "Console", "QEMU"):
+        for title in ("Screen", "Console", "Log"):
             self.view_toggle.add(CLToggle(label=title))
         self.view_toggle.set_active(0)
         self.view_toggle.connect("notify::active", self._on_view_toggle)
@@ -136,24 +146,52 @@ class QemuRunView(Gtk.Box):
             button.connect("clicked", lambda _, handler=handler: self.run and GLib.idle_add(lambda: (handler(), False)[1]))
             bar.append(button)
             self.buttons.append(button)
+        if self.backend == "apple":
+            # Apple supplies a native NSView for input/display rather than a VNC server.
+            for button in self.buttons[1:3]:
+                button.set_visible(False)
+            self.keyboard_capture_button = Gtk.ToggleButton(icon_name="input-keyboard-symbolic",
+                tooltip_text="Capture keyboard for the VM (Ctrl+Alt+G releases it)", sensitive=False)
+            self.keyboard_capture_button.add_css_class("flat")
+            self.keyboard_capture_button.connect("toggled", lambda button: self._capture_native_input(button.get_active()))
+            bar.append(self.keyboard_capture_button)
+            self.buttons.append(self.keyboard_capture_button)
+        self.control_bar = bar
+        bar.set_visible(False)
         self.append(bar)
-        self.progress_bar = Gtk.ProgressBar(hexpand=True, show_text=True, margin_start=12, margin_end=12,
-                                            margin_bottom=6, visible=False)
-        self.progress_bar.add_css_class("osd")
-        self.append(self.progress_bar)
+        self.progress_bar = Gtk.ProgressBar(width_request=240, halign=Gtk.Align.CENTER, visible=False)
         self._progress_timer: int | None = None
-        # Screen, console and log.
+        # Status and display are separate pages so messages never overlap controls.
         self.vnc_view = VncView()
         self.vnc_view.status_handler = self._set_screen_status
-        screen = Gtk.Overlay(child=self.vnc_view)
+        screen = Gtk.Stack(vexpand=True, hexpand=True)
+        screen.add_named(self.vnc_view, "display")
+        status_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16,
+                             halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
+                             margin_start=32, margin_end=32, margin_top=32, margin_bottom=32)
+        self.status_spinner = Gtk.Spinner(width_request=32, height_request=32,
+                                          halign=Gtk.Align.CENTER, visible=False)
+        status_box.append(self.status_spinner)
+        self.status_heading = Gtk.Label(label="Virtual machine", wrap=True, justify=Gtk.Justification.CENTER)
+        self.status_heading.add_css_class("title-2")
+        status_box.append(self.status_heading)
+        self.screen_status = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=52)
+        self.screen_status.add_css_class("dim-label")
+        status_box.append(self.screen_status)
+        status_box.append(self.progress_bar)
+        screen.add_named(status_box, "status")
+        if self.backend == "apple":
+            self.native_display = Gtk.DrawingArea(hexpand=True, vexpand=True)
+            self.native_display.connect("map", self._sync_native_display)
+            self.native_display.connect("unmap", lambda _: self._detach_native_display())
+            self.native_display.add_tick_callback(self._sync_native_display)
+            screen.add_named(self.native_display, "native")
+        screen.set_visible_child_name("status")
         self._screen_widget = screen
         self._screen_css = Gtk.CssProvider()
         self._screen_css.load_from_data(b".qemu-screen { background-color: #000; }")
         Gtk.StyleContext.add_provider_for_display(self.get_display(), self._screen_css,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        self.screen_status = Gtk.Label(wrap=True, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER, visible=False)
-        self.screen_status.add_css_class("dimmed")
-        screen.add_overlay(self.screen_status)
         self.stack.add_titled_with_icon(screen, "screen", "Screen", "video-display-symbolic")
         self.console_view, console = self._text_view(editable_input=True)
         console_placeholder_text = (
@@ -169,14 +207,23 @@ class QemuRunView(Gtk.Box):
         console_page.add_overlay(self.console_placeholder)
         self.stack.add_titled_with_icon(console_page, "console", "Console", "utilities-terminal-symbolic")
         self.log_view, log = self._text_view(editable_input=False)
-        self.usage_cpu_row = self._usage_row("CPU (host)")
-        self.usage_memory_row = self._usage_row("Memory (resident)")
+        if self.backend == "apple":
+            self.usage_cpu_row = Adw.ActionRow(title="CPUs allocated")
+            self.usage_memory_row = Adw.ActionRow(title="Memory allocated")
+            self.usage_cpu_row.set_subtitle(f"{run.cpus if run else cpus} vCPUs")
+            self.usage_memory_row.set_subtitle(f"{(run.memory_mib if run else memory_mib) / 1024:g} GiB")
+            description = "CPU and memory show configured limits. Live host CPU and memory usage is unavailable for Apple Virtualization."
+        else:
+            self.usage_cpu_row = self._usage_row("CPU (host)")
+            self.usage_memory_row = self._usage_row("Memory (resident)")
+            description = "Host-side usage."
         self.usage_disk_row = self._usage_row("Disk storage (host)")
         self.usage_disk_row.set_visible(self.support.kind == QemuBuildKind.STAGE)
+        if self.support.kind == QemuBuildKind.STAGE:
+            description += " Disk shows storage allocated to the VM's writable image, not free space inside the guest."
         self.usage_group = Adw.PreferencesGroup(
-            title="VM usage",
-            description="Host-side usage. Disk shows storage allocated to the VM's writable image, not free space inside the guest.",
-            visible=False,
+            title="VM resources" if self.backend == "apple" else "VM usage",
+            description=description, visible=False,
         )
         self.usage_group.add(self.usage_cpu_row)
         self.usage_group.add(self.usage_memory_row)
@@ -184,12 +231,12 @@ class QemuRunView(Gtk.Box):
         qemu_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_start=24, margin_end=24,
                             margin_top=12, margin_bottom=24)
         qemu_page.append(self.usage_group)
-        log_title = Gtk.Label(label="QEMU log", xalign=0, margin_top=6)
+        log_title = Gtk.Label(label=f"{self.backend_name} log", xalign=0, margin_top=6)
         log_title.add_css_class("heading")
         log_content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         log_content.append(log_title)
         log_content.append(log)
-        self.log_placeholder = Gtk.Label(label="No QEMU log output to show yet.", wrap=True,
+        self.log_placeholder = Gtk.Label(label="No virtual machine log output to show yet.", wrap=True,
                                          halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
         self.log_placeholder.add_css_class("dimmed")
         self.log_stack = Gtk.Stack(vexpand=True, hexpand=True)
@@ -197,7 +244,7 @@ class QemuRunView(Gtk.Box):
         self.log_stack.add_named(log_content, "output")
         qemu_page.append(self.log_stack)
         self._update_log_page()
-        self.stack.add_titled_with_icon(qemu_page, "log", "QEMU", "text-x-generic-symbolic")
+        self.stack.add_titled_with_icon(qemu_page, "log", "Log", "text-x-generic-symbolic")
         self._usage_timer: int | None = None
         self._reading_usage = False
         self.connect("map", lambda _: self._start_usage_updates())
@@ -207,6 +254,7 @@ class QemuRunView(Gtk.Box):
         self.connect("realize", self._on_realize)
         self.connect("unrealize", lambda _: self._detach_run())
         self._set_status("Starting virtual machine…" if start_immediately else "Virtual machine stopped")
+        self._set_screen_status("Starting virtual machine…" if start_immediately else "Virtual machine stopped")
         if run is not None:
             self._attach_run(run)
         elif start_immediately:
@@ -224,6 +272,8 @@ class QemuRunView(Gtk.Box):
     def _on_stack_page_changed(self, stack, _param):
         names = ("screen", "console", "log")
         name = stack.get_visible_child_name()
+        if name != "screen":
+            self._detach_native_display()
         if name in names and self.view_toggle.get_active() != names.index(name):
             self.view_toggle.set_active(names.index(name))
 
@@ -271,7 +321,15 @@ class QemuRunView(Gtk.Box):
         self.status_label.set_label(text)
 
     def _show_progress(self, text: str):
-        self.progress_bar.set_text(text)
+        preparing = text.startswith("Preparing disk image")
+        self.status_heading.set_label("Preparing disk image" if preparing else "Starting virtual machine")
+        detail = text.split(" · ", 1)[-1] if " · " in text else text
+        self.screen_status.set_label(detail)
+        self.screen_status.set_visible(True)
+        self._screen_widget.set_visible_child_name("status")
+        self.control_bar.set_visible(False)
+        self.status_spinner.set_visible(True)
+        self.status_spinner.start()
         self.progress_bar.set_visible(True)
         if self._progress_timer is None:
             self._progress_timer = GLib.timeout_add(100, self._pulse_progress)
@@ -284,6 +342,8 @@ class QemuRunView(Gtk.Box):
         return GLib.SOURCE_CONTINUE
 
     def _hide_progress(self):
+        self.status_spinner.stop()
+        self.status_spinner.set_visible(False)
         self.progress_bar.set_visible(False)
         if self._progress_timer is not None:
             GLib.source_remove(self._progress_timer)
@@ -292,6 +352,11 @@ class QemuRunView(Gtk.Box):
     def _set_screen_status(self, text: str):
         self.screen_status.set_label(text)
         self.screen_status.set_visible(bool(text))
+        if text:
+            self.status_heading.set_label("Virtual machine")
+            self._screen_widget.set_visible_child_name("status")
+        else:
+            self._screen_widget.set_visible_child_name("native" if self.backend == "apple" else "display")
         if "display output is not active" in text.lower():
             self._switch_to_console()
             self._auto_console_detection = False
@@ -301,13 +366,17 @@ class QemuRunView(Gtk.Box):
             self.stack.set_visible_child_name("console")
 
     def _set_running(self, running: bool):
+        ready = running and (self.backend == "qemu" or self.run.ready)
+        self.control_bar.set_visible(ready)
+        if ready:
+            self._hide_progress()
+            self._set_screen_status("")
         for button in self.buttons:
-            button.set_sensitive(running)
-        if running:
+            button.set_sensitive(ready)
+        if ready:
             self._screen_widget.add_css_class("qemu-screen")
         else:
             self._screen_widget.remove_css_class("qemu-screen")
-            self.screen_status.set_visible(False)
 
     def _attach_run(self, run: QemuRun):
         self.run = run
@@ -322,15 +391,106 @@ class QemuRunView(Gtk.Box):
             self.console_view.get_buffer().set_text(text)
             self.console_placeholder.set_visible(not text)
         self._set_running(run.is_running)
+        self.usage_group.set_visible(run.is_running)
         if run.is_running:
-            speed = f"accelerated ({run.accelerator.upper()})" if run.accelerator else "emulated (slow)"
-            self._set_status(f"Running, {speed} · SSH: ssh -p {run.ssh_port} root@localhost")
-            self.vnc_view.connect_vnc(run.vnc_socket, lambda: self.run is run and run.is_running)
+            self._set_status(self._running_status(run))
+            if self.backend == "qemu":
+                self.vnc_view.connect_vnc(run.vnc_socket, lambda: self.run is run and run.is_running)
         else:
             self._set_status("Stopped: " + run.error if run.error else "Stopped")
         self._update_log_page()
 
+    def _detach_native_display(self):
+        self._capture_native_input(False)
+        if isinstance(self.run, AppleVirtualizationRun):
+            self.run.detach_display()
+
+    def _capture_native_input(self, active):
+        active = active and isinstance(self.run, AppleVirtualizationRun) and self.run.ready
+        if active == self._native_input_active:
+            return
+        self._native_input_active = active
+        if isinstance(self.run, AppleVirtualizationRun):
+            if not active:
+                # Release held keys/modifiers when switching tabs, losing focus or navigating away.
+                for code, text in self._native_pressed_keys.items():
+                    self.run.send_key(code, False, 0, text)
+                self._native_pressed_keys.clear()
+            self.run.focus_display(active)
+            self._set_status(self._running_status(self.run))
+        self.keyboard_capture_button.set_active(active)
+
+    def _native_pointer_press(self, gesture, count, x, y):
+        valid, bounds = self.native_display.compute_bounds(self._native_input_root)
+        inside = (valid and self.stack.get_visible_child_name() == "screen"
+                  and bounds.get_x() <= x < bounds.get_x() + bounds.get_width()
+                  and bounds.get_y() <= y < bounds.get_y() + bounds.get_height())
+        button_valid, button_bounds = self.keyboard_capture_button.compute_bounds(self._native_input_root)
+        over_button = (button_valid and button_bounds.get_x() <= x < button_bounds.get_x() + button_bounds.get_width()
+                       and button_bounds.get_y() <= y < button_bounds.get_y() + button_bounds.get_height())
+        if not over_button:
+            self._capture_native_input(inside)
+        gesture.set_state(Gtk.EventSequenceState.DENIED)
+
+    def _native_key(self, keyval, code, state, pressed):
+        if not self._native_input_active or not isinstance(self.run, AppleVirtualizationRun) or not self.run.ready:
+            return False
+        if (pressed and Gdk.keyval_to_lower(keyval) == Gdk.KEY_g
+                and state & Gdk.ModifierType.CONTROL_MASK and state & Gdk.ModifierType.ALT_MASK):
+            self._capture_native_input(False)
+            return True
+        flags = 0
+        for modifier, bit in ((Gdk.ModifierType.LOCK_MASK, 16), (Gdk.ModifierType.SHIFT_MASK, 17),
+                              (Gdk.ModifierType.CONTROL_MASK, 18), (Gdk.ModifierType.ALT_MASK, 19),
+                              (Gdk.ModifierType.META_MASK | Gdk.ModifierType.SUPER_MASK, 20)):
+            if state & modifier:
+                flags |= 1 << bit
+        character = Gdk.keyval_to_unicode(keyval)
+        text = chr(character) if character else ""
+        if pressed:
+            self._native_pressed_keys[code] = text
+        else:
+            self._native_pressed_keys.pop(code, None)
+        self.run.send_key(code, pressed, flags, text)
+        return True # Consume before GTK navigation and application shortcuts.
+
+    def _sync_native_display(self, widget, frame_clock=None):
+        if not isinstance(self.run, AppleVirtualizationRun) or not self.run.ready:
+            return True
+        native = widget.get_native()
+        if (not widget.get_mapped() or native is None or self.stack.get_visible_child_name() != "screen"
+                or self._screen_widget.get_visible_child_name() != "native"):
+            self.run.detach_display()
+            return True
+        import gi
+        gi.require_version("GdkMacos", "4.0")
+        from gi.repository import GdkMacos
+        surface = native.get_surface()
+        valid, bounds = widget.compute_bounds(native)
+        if not valid or not isinstance(surface, GdkMacos.MacosSurface):
+            self.run.detach_display()
+            return True
+        self.run.place_display(surface.get_native_window(), bounds.get_x(), bounds.get_y(),
+                               bounds.get_width(), bounds.get_height())
+        return True
+
+    def _running_status(self, run):
+        if self.backend == "apple":
+            if not run.ready:
+                return "Starting Apple Virtualization…"
+            return ("Keyboard captured · Ctrl+Alt+G to release" if self._native_input_active else
+                    "Running with Apple Virtualization · Click the screen to type")
+        speed = f"accelerated ({run.accelerator.upper()})" if run.accelerator else "emulated (slow)"
+        return f"Running, {speed} · SSH: ssh -p {run.ssh_port} root@localhost"
+
     def _detach_run(self):
+        self._detach_native_display()
+        if self._native_event_controller is not None:
+            self._native_input_root.remove_controller(self._native_event_controller)
+            self._native_input_root.remove_controller(self._native_pointer_controller)
+            self._native_input_root.disconnect(self._native_focus_handler)
+            self._native_event_controller = None
+            self._native_input_root = None
         self._stop_usage_updates()
         self._auto_console_detection = False
         if self.run is not None:
@@ -343,20 +503,25 @@ class QemuRunView(Gtk.Box):
         self.vnc_view.disconnect_vnc()
     def start(self, *_):
         if any(run is not self.run and run.is_running for run in QemuRun.running_runs):
-            self._set_status("Only one QEMU machine can run at a time")
-            self._set_screen_status("Another QEMU machine is already running")
+            self._set_status("Only one test virtual machine can run at a time")
+            self._set_screen_status("Another test virtual machine is already running")
             return
-        if not self.support.available:
-            self._set_status(self.support.reason or "QEMU is unavailable")
-            self._set_screen_status(self.support.reason or "QEMU is unavailable")
+        availability = self.apple if self.backend == "apple" else self.support
+        if not availability.available:
+            self._set_status(availability.reason or "Backend is unavailable")
+            self._set_screen_status(availability.reason or "Backend is unavailable")
             return
         self._auto_console_detection = True
         if self.support.kind == QemuBuildKind.STAGE and not stage_image_ready(self.build, self.support):
             self._prepare_image()
             return
         self._show_progress("Starting virtual machine…")
-        run = QemuRun(self.project_directory, self.build, self.support,
-                      memory_mib=self._launch_memory_mib, cpus=self._launch_cpus)
+        if self.backend == "apple":
+            run = AppleVirtualizationRun(self.project_directory, self.build, self.apple,
+                                        memory_mib=self._launch_memory_mib, cpus=self._launch_cpus)
+        else:
+            run = QemuRun(self.project_directory, self.build, self.support,
+                          memory_mib=self._launch_memory_mib, cpus=self._launch_cpus)
         self._attach_run(run)
         self.log_view.get_buffer().set_text("")
         self._update_log_page()
@@ -369,17 +534,18 @@ class QemuRunView(Gtk.Box):
             self._auto_console_detection = False
             self._detach_run()
             self.run = None
-            self._set_status(f"Failed to start QEMU: {e}")
-            self._set_screen_status(f"Failed to start QEMU: {e}")
+            self._set_status(f"Failed to start {self.backend_name}: {e}")
+            self._set_screen_status(f"Failed to start {self.backend_name}: {e}")
             return
-        self.vnc_view.connect_vnc(run.vnc_socket, lambda: self.run is run and run.is_running)
-        self._hide_progress()
-        self._set_screen_status("Starting machine…")
+        if self.backend == "qemu":
+            self.vnc_view.connect_vnc(run.vnc_socket, lambda: self.run is run and run.is_running)
+        if self.backend == "qemu":
+            self._hide_progress()
+            self._set_screen_status("Starting machine…")
 
     def _prepare_image(self):
-        self._set_status("Preparing disk image of stage (once, kept with build)…")
-        self._set_screen_status("Preparing disk image of stage…")
-        self._show_progress("Preparing disk image · starting")
+        self._set_status("Preparing disk image…")
+        self._show_progress("Preparing disk image · This is only needed the first time you run this build.")
         self.preparation = QemuImagePreparation(self.project_directory, self.build, self.support)
         from .multistage_process import MultiStageProcessStageEvent
         # Kept: event bus refers to handlers weakly.
@@ -402,7 +568,7 @@ class QemuRunView(Gtk.Box):
                 self.start()
             elif state == MultiStageProcessState.FAILED:
                 self._hide_progress()
-                self._set_status("Failed to prepare disk image, see QEMU tab")
+                self._set_status("Failed to prepare disk image, see Log tab")
                 self._set_screen_status("Failed to prepare disk image")
             return False
         GLib.idle_add(update)
@@ -414,17 +580,18 @@ class QemuRunView(Gtk.Box):
             running = run.is_running
             self._set_running(running)
             if running:
-                speed = f"accelerated ({run.accelerator.upper()})" if run.accelerator else "emulated (slow)"
-                self._set_status(f"Running, {speed} · SSH: ssh -p {run.ssh_port} root@localhost")
+                if isinstance(run, AppleVirtualizationRun) and run.ready:
+                    self._capture_native_input(run.input_captured)
+                self._set_status(self._running_status(run))
             else:
                 self._set_status(f"Stopped: {run.error}" if run.error else "Stopped")
-                self.screen_status.set_visible(False)
+                self._hide_progress()
+                self._set_screen_status(f"The virtual machine stopped: {run.error}" if run.error else "The virtual machine has stopped.")
                 self.vnc_view.disconnect_vnc()
                 self.vnc_view.clear()
                 self.console_view.get_buffer().set_text("")
                 self.console_placeholder.set_visible(True)
-                self.log_view.get_buffer().set_text("")
-            self.log_view.get_buffer().set_text(("\n".join(run.output) + "\n") if running else "")
+            self.log_view.get_buffer().set_text("\n".join(run.output) + "\n" if run.output else "")
             self._update_log_page()
             self.usage_group.set_visible(running)
             if not running:
@@ -475,16 +642,19 @@ class QemuRunView(Gtk.Box):
         if run is not self.run or not run.is_running:
             return False
         self.usage_group.set_visible(True)
-        if usage is None:
+        if self.backend == "apple":
+            self.usage_cpu_row.set_subtitle(f"{run.cpus} vCPUs")
+            self.usage_memory_row.set_subtitle(f"{run.memory_mib / 1024:g} GiB")
+        elif usage is None:
             self.usage_cpu_row.set_subtitle("Usage sample unavailable")
             self.usage_memory_row.set_subtitle("Usage sample unavailable")
-            return False
-        cpu_fraction, resident_bytes = usage
-        self.usage_cpu_row.graph.add(cpu_fraction)
-        self.usage_cpu_row.set_subtitle(f"{cpu_fraction:.0%} of {run.cpus} vCPUs")
-        memory_limit = run.memory_mib * 1024 * 1024
-        self.usage_memory_row.graph.add(min(resident_bytes / memory_limit, 1) if memory_limit else 0)
-        self.usage_memory_row.set_subtitle(f"{_gib(resident_bytes)} of {run.memory_mib / 1024:.1f} GiB configured")
+        else:
+            cpu_fraction, resident_bytes = usage
+            self.usage_cpu_row.graph.add(cpu_fraction)
+            self.usage_cpu_row.set_subtitle(f"{cpu_fraction:.0%} of {run.cpus} vCPUs")
+            memory_limit = run.memory_mib * 1024 * 1024
+            self.usage_memory_row.graph.add(min(resident_bytes / memory_limit, 1) if memory_limit else 0)
+            self.usage_memory_row.set_subtitle(f"{_gib(resident_bytes)} of {run.memory_mib / 1024:.1f} GiB configured")
         if self.support.kind == QemuBuildKind.STAGE:
             if disk_usage is None:
                 self.usage_disk_row.set_subtitle("Storage sample unavailable")
@@ -498,7 +668,10 @@ class QemuRunView(Gtk.Box):
         return False
 
     def _clear_usage(self):
-        for row in (self.usage_cpu_row, self.usage_memory_row, self.usage_disk_row):
+        rows = [self.usage_disk_row]
+        if self.backend == "qemu":
+            rows += [self.usage_cpu_row, self.usage_memory_row]
+        for row in rows:
             row.graph.clear()
             row.set_subtitle("Waiting for sample…")
 
@@ -519,6 +692,17 @@ class QemuRunView(Gtk.Box):
         GLib.idle_add(append)
 
     def _on_realize(self, widget):
+        if self.backend == "apple" and self._native_event_controller is None:
+            self._native_input_root = self.get_native()
+            self._native_event_controller = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+            self._native_event_controller.connect("key-pressed", lambda _, key, code, state: self._native_key(key, code, state, True))
+            self._native_event_controller.connect("key-released", lambda _, key, code, state: self._native_key(key, code, state, False))
+            self._native_input_root.add_controller(self._native_event_controller)
+            self._native_pointer_controller = Gtk.GestureClick(button=0, propagation_phase=Gtk.PropagationPhase.CAPTURE)
+            self._native_pointer_controller.connect("pressed", self._native_pointer_press)
+            self._native_input_root.add_controller(self._native_pointer_controller)
+            self._native_focus_handler = self._native_input_root.connect("notify::is-active", lambda window, _: (
+                self._capture_native_input(False) if not window.is_active() else None))
         page = self.get_ancestor(Adw.NavigationPage)
         navigation = self.get_ancestor(Adw.NavigationView)
         if page is not None and navigation is not None and not getattr(self, "_page_observed", False):

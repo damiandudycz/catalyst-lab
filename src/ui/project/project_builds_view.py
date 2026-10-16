@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os
+import os, sys
 from datetime import datetime, timezone
 from enum import Enum
 from gi.repository import Gtk, Adw, GLib, Gio
@@ -206,7 +206,10 @@ class ProjectBuildsView(Gtk.Box):
         qemu_tooltip = None
         if build and not running_build:
             from .qemu_run import QemuRun, qemu_support
+            from .apple_virtualization import apple_support
             support = qemu_support(self.project_directory, build)
+            apple = apple_support(self.project_directory, build)
+            available = support.available or apple.available
             running_qemu = QemuRun.running_for_build(self.project_directory, build)
             if support.kind is not None or running_qemu:
                 other_vm_running = any(run.is_running and run is not running_qemu for run in QemuRun.running_runs)
@@ -214,13 +217,14 @@ class ProjectBuildsView(Gtk.Box):
                     "Another virtual machine is running. Stop it before starting this one."
                     if other_vm_running else
                     "Open running virtual machine" if running_qemu else
-                    "Run in QEMU" if support.available else
-                    f"Can't run in QEMU: {support.reason}"
+                    "Run built image" if available else
+                    (f"QEMU: {support.reason}\nApple Virtualization: {apple.reason}" if sys.platform == "darwin"
+                     else f"Can't run in QEMU: {support.reason}")
                 )
                 qemu_button = Gtk.Button(icon_name="computer-symbolic", valign=Gtk.Align.CENTER)
                 qemu_button.add_css_class("flat")
-                qemu_button.set_sensitive(not other_vm_running and (support.available or running_qemu is not None))
-                if not support.available and not running_qemu:
+                qemu_button.set_sensitive(not other_vm_running and (available or running_qemu is not None))
+                if not available and not running_qemu:
                     qemu_button.add_css_class("dimmed")
                 qemu_button.connect("clicked", lambda _, build=build: self._run_in_qemu(build))
         action_slot(qemu_button, qemu_tooltip)
@@ -280,7 +284,7 @@ class ProjectBuildsView(Gtk.Box):
             return
         from .qemu_launch_wizard import QemuLaunchWizard
         app_event_bus.emit(AppEvents.PRESENT_VIEW, QemuLaunchWizard(self.project_directory, build),
-                           f"Run {build.stage_name} in QEMU", 1024, 768)
+                           f"Run {build.stage_name}", 1024, 768)
 
     def _deploy_live_iso(self, build):
         from .live_iso_deploy_view import LiveIsoDeployView

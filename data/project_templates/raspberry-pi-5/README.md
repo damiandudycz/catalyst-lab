@@ -18,7 +18,7 @@ The console stage4 is optional and off by default. It includes the Raspberry Pi 
 
 | Option | Values |
 |---|---|
-| Init system | OpenRC, systemd (services are enabled automatically with OpenRC only) |
+| Init system | OpenRC, systemd (OpenRC services are enabled automatically; Plasma graphical login is enabled for both) |
 | CPU target | ARM Cortex-A76 (cortex-a76), Generic baseline |
 | Link-time optimization (LTO) | Off by default. Includes workarounds for packages that fail with LTO |
 | Kernel | Compiled by Catalyst (default) as kernel `rpi` of every stage4 (genkernel, `raspberrypi-sources` with `bcm2712_defconfig`), installed like the prebuilt one (`kernel_2712.img`, device trees, overlays), or prebuilt (`raspberrypi-image`). Sources stay in the system, `build-raspberrypi-kernel` builds them again |
@@ -33,6 +33,17 @@ Software groups, each applied to selected stage4 stages: Wi-Fi and Bluetooth, Ra
 tools, Docker.
 
 The hostname is generated from the name of the project.
+
+## Desktop boot
+
+Desktop stage4 builds include an Xorg OutputClass rule selecting the VC4 display controller as the primary GPU. This
+avoids selecting the V3D render-only device when DRM card numbers change. ISO stages are unchanged.
+
+Plasma stage4 starts with a graphical login screen: systemd builds enable SDDM and set `graphical.target` offline
+inside the build, while OpenRC builds enable `display-manager` with SDDM selected in its configuration. Both compiled
+and prebuilt kernel options keep this behavior; the compiled-kernel installation still runs before desktop setup.
+
+Existing projects need **Update template** and a rebuild of the Plasma stage4 to include these changes in new images.
 
 ## Notes
 

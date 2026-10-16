@@ -100,17 +100,22 @@ The deploy wizard handles:
 - **Boot**: kernel (from the stage or a distribution kernel), linux-firmware and bootloader (GRUB, systemd-boot,
   rEFInd, EFI stub, or kboot for PS3 petitboot), with warnings about anything that needs manual updates later.
 
-### 🖥️ Run in QEMU *(being tested)*
+### 🖥️ Test built images *(being tested)*
 
 Builds with a generic kernel run in a virtual machine from their row in Builds:
-- **Live CD ISO images** boot with UEFI firmware of QEMU.
+- Choose an available backend before starting. Missing software and incompatible backends are shown with a reason.
+- **Apple Virtualization** on macOS 13 or later boots builds matching the Mac's CPU architecture. It uses the signed
+  native bridge included with Catalyst Lab, with an embedded display, serial console and power controls in the app, and
+  NAT networking. Click the display to capture keyboard input; Ctrl+Alt+G releases it.
+  QEMU is not required for this backend. ISO images must support EFI boot.
+- **QEMU** boots native or other supported architectures. Its screen is shown in the app with keyboard, mouse,
+  serial console and power controls; SSH is forwarded to a local port. Requires `brew install qemu` on macOS or
+  `app-emulation/qemu` on Gentoo. Native guests use HVF on macOS or KVM on Linux when available; other guests are emulated.
+- **Live CD ISO images** boot with EFI firmware.
 - **stage3 and stage4 with kernel** boot their own kernel and initramfs, with system in disk image made from the stage
   (once, kept with the build). Changes are discarded when the machine stops, root logs in without password.
-- Screen of the machine is shown in the app (keyboard and mouse), with its serial console and power controls. SSH is
-  forwarded to a local port.
-- Machines of the architecture of this computer are accelerated (HVF on macOS, KVM on Linux), others are emulated.
 - Kernels of devices QEMU doesn't emulate (Raspberry Pi, PS3) can't run, their builds show why.
-- Needs QEMU: `brew install qemu` on macOS, `app-emulation/qemu` on Gentoo.
+- Test VM CPU and memory defaults are under **Settings → Test built images**. Toolset VMs have separate resource settings.
 
 ### 🟢 Status indicators
 
@@ -229,12 +234,19 @@ tools and Lima, so it runs on Macs without Homebrew.
 
 ### Running from the checkout
 
-- **Linux:** use GNOME Builder with `packaging/flatpak/com.damiandudycz.CatalystLab.json`,
-  `packaging/flatpak/build.sh` or `install.sh`.
+- **Linux:** install Python 3 with PyGObject and requests, GTK 4, libadwaita 1.7 or newer, Meson, Ninja,
+  gettext and GLib development tools using your distribution's package manager, then run:
+  ```bash
+  ./run.sh
+  ```
+  It rebuilds changes and launches the app using a local installation in `.build-linux`, without `sudo`.
+  It uses your real Catalyst Lab folder and settings. Building toolsets also needs the Linux runtime requirements above.
+  Alternatively, use GNOME Builder with `packaging/flatpak/com.damiandudycz.CatalystLab.json` or
+  `packaging/flatpak/build.sh`.
 - **macOS:**
   ```bash
   brew install gtk4 libadwaita pygobject3 meson ninja squashfs lima
-  ./run-macos.sh
+  ./run.sh
   ```
   It uses your real Catalyst Lab folder and settings. Build files are kept in `.build-macos`.
 

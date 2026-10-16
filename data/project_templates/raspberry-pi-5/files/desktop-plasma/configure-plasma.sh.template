@@ -1,0 +1,16 @@
+#!/bin/bash
+# Run by Catalyst inside the stage, after packages, kernel and root overlay are installed.
+set -euo pipefail
+
+# Preserve the compiled-kernel installation when Plasma adds its own fsscript.
+if {{ 'true' if compiled_kernel else 'false' }}; then
+    bash /usr/local/libexec/catalystlab-install-kernel
+    rm -f /usr/local/libexec/catalystlab-install-kernel
+fi
+
+if {{ 'true' if init == 'systemd' else 'false' }}; then
+    # Configure the image offline; never start services inside the build chroot.
+    systemctl --root=/ enable sddm.service
+    systemctl --root=/ set-default graphical.target
+fi
+# OpenRC starts SDDM through display-manager, enabled by stage4/rcadd.

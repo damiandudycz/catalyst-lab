@@ -4,18 +4,25 @@ from gi.repository import Gtk, Adw, GLib
 from .wizard_view import WizardView
 from .qemu_run import QemuRun, QemuBuildKind, qemu_support
 from .qemu_run_view import QemuRunView
+from .apple_virtualization import apple_support
 from .repository import Repository
 from .app_events import app_event_bus, AppEvents
 
 
 class QemuLaunchWizard(Gtk.Box):
-    """Select QEMU resources and review the stage before launching it."""
+    """Select an available VM backend and resources before launching a build."""
 
     def __init__(self, project_directory, build):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.project_directory = project_directory
         self.build = build
         self.support = qemu_support(project_directory, build)
+        self.apple = apple_support(project_directory, build)
+        self.backends = []
+        if self.apple.available:
+            self.backends.append(("Apple Virtualization", "apple"))
+        if self.support.available:
+            self.backends.append(("QEMU", "qemu"))
         self.wizard_view = WizardView()
         self.wizard_view._window = None
         self.wizard_view.install_button_label = "Start virtual machine"
@@ -30,7 +37,7 @@ class QemuLaunchWizard(Gtk.Box):
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
                           margin_start=24, margin_end=24, margin_top=24, margin_bottom=24)
 
-        stage_group = Adw.PreferencesGroup(title="Selected stage", description="Review the build that will run in QEMU.")
+        stage_group = Adw.PreferencesGroup(title="Selected stage", description="Review the build to boot in a virtual machine.")
         architecture = project_directory.get_architecture()
         architecture_name = architecture.name if architecture else "Unknown"
         kind = "Live CD ISO" if self.support.kind == QemuBuildKind.ISO else "Stage archive"
@@ -41,7 +48,11 @@ class QemuLaunchWizard(Gtk.Box):
         content.append(stage_group)
 
         settings_group = Adw.PreferencesGroup(title="Run settings",
-                                               description="These values start with your app settings and can be adjusted for this run.")
+                                               description="Defaults come from app settings. Changes here apply only to this run.")
+        self.backend_row = Adw.ComboRow(title="Virtualization backend",
+            model=Gtk.StringList.new([name for name, _ in self.backends] or ["No backend available"]))
+        self.backend_row.set_sensitive(len(self.backends) > 1)
+        settings_group.add(self.backend_row)
         self.cpus_row = Adw.SpinRow(title="CPUs", adjustment=Gtk.Adjustment(
             lower=1, upper=64, step_increment=1, value=settings.qemu_cpus))
         self.memory_row = Adw.SpinRow(title="Memory (GiB)", adjustment=Gtk.Adjustment(
@@ -50,11 +61,18 @@ class QemuLaunchWizard(Gtk.Box):
         settings_group.add(self.memory_row)
         content.append(settings_group)
 
+        unavailable = []
         if not self.support.available:
-            self.reason = Gtk.Label(label=self.support.reason or "This build cannot run in QEMU.",
-                                    xalign=0, wrap=True)
-            self.reason.add_css_class("warning")
-            content.append(self.reason)
+            unavailable.append(f"QEMU: {self.support.reason}")
+        import sys
+        if sys.platform == "darwin" and not self.apple.available:
+            unavailable.append(f"Apple Virtualization: {self.apple.reason}")
+        if unavailable:
+            reason = Gtk.Label(label="\n".join(unavailable), xalign=0, wrap=True)
+            reason.add_css_class("dimmed" if self.backends else "warning")
+            content.append(reason)
+        self.backend_row.connect("notify::selected", self._backend_changed)
+        self._backend_changed()
         page.set_child(content)
         self.wizard_view.carousel.append(page)
         self.wizard_view.pages.append(page)
@@ -65,7 +83,19 @@ class QemuLaunchWizard(Gtk.Box):
         return []
 
     def _page_ready(self, _wizard, _page) -> bool:
-        return self.support.available and not any(run.is_running for run in QemuRun.running_runs)
+        return bool(self.backends) and not any(run.is_running for run in QemuRun.running_runs)
+
+    def _backend_changed(self, *_):
+        native = bool(self.backends) and self.backends[self.backend_row.get_selected()][1] == "apple"
+        self.backend_row.set_subtitle("Uses Apple Virtualization with an embedded display. Requires a matching CPU architecture."
+                                      if native else "Boots images using QEMU, including other CPU architectures.")
+        limits = self.apple.limits if native else None
+        cpu = self.cpus_row.get_adjustment()
+        memory = self.memory_row.get_adjustment()
+        cpu.set_lower(limits['min_cpus'] if limits else 1)
+        cpu.set_upper(limits['max_cpus'] if limits else 64)
+        memory.set_lower(max(1, (limits['min_memory'] + (1 << 30) - 1) // (1 << 30)) if limits else 1)
+        memory.set_upper(limits['max_memory'] // (1 << 30) if limits else 256)
 
     def _on_realize(self, _widget):
         self.wizard_view._window = self._window
@@ -73,22 +103,28 @@ class QemuLaunchWizard(Gtk.Box):
 
     def _start(self, _wizard):
         if any(run.is_running for run in QemuRun.running_runs):
-            dialog = Adw.AlertDialog(heading="A QEMU machine is already running",
+            dialog = Adw.AlertDialog(heading="A virtual machine is already running",
                                      body="Stop the running machine before starting another one.")
             dialog.add_response("ok", "OK")
             dialog.set_default_response("ok")
             dialog.present(self.get_root())
             return
 
-        settings = Repository.Settings.value
+        if not self.backends:
+            return
+        backend = self.backends[self.backend_row.get_selected()][1]
+        # Do not launch a backend that disappeared after the wizard was opened.
+        available = apple_support(self.project_directory, self.build) if backend == "apple" else qemu_support(self.project_directory, self.build)
+        if not available.available:
+            dialog = Adw.AlertDialog(heading="Backend unavailable", body=available.reason)
+            dialog.add_response("ok", "OK")
+            dialog.present(self.get_root())
+            return
         cpus = round(self.cpus_row.get_value())
         memory_gib = round(self.memory_row.get_value())
-        settings.qemu_cpus = cpus
-        settings.qemu_memory_gib = memory_gib
-        Repository.Settings.save()
         runtime = QemuRunView(self.project_directory, self.build, memory_mib=memory_gib * 1024, cpus=cpus,
-                              start_immediately=True)
-        title = f"{self.build.stage_name} in QEMU"
+                              start_immediately=True, backend=backend)
+        title = f"{self.build.stage_name} — {'Apple Virtualization' if backend == 'apple' else 'QEMU'}"
         window_handle = getattr(self, "_window", None)
         if window_handle is not None:
             window_handle.close()
