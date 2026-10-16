@@ -51,7 +51,7 @@ type. Otherwise the app asks for it. A fixed architecture is available in expres
 ### Build identities
 
 `stage_id_suffix = "{{ init }}"` at the top level gives each stage a separate saved identity for each init system
-(requires Catalyst Lab 2.0.1). For example, logical stage `stage3` is saved as `stage3:openrc` or `stage3:systemd`
+(requires Catalyst Lab 2.0.0). For example, logical stage `stage3` is saved as `stage3:openrc` or `stage3:systemd`
 in `project-template.json`. Parents, software groups, stage names and directories still use the original layout.
 Repeated updates with the same suffix preserve stage UUIDs; changing the suffix creates new UUIDs, so old build
 artifacts cannot be reused as seeds for the new variant. Templates without this setting keep their existing IDs.

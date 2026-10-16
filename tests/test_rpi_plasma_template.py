@@ -20,7 +20,7 @@ from catalystlab.project_template import ProjectTemplate, _copy_template_files
 
 class RaspberryPiPlasmaTests(unittest.TestCase):
     def setUp(self):
-        version = patch.object(app_info, 'APP_VERSION', '2.0.1')
+        version = patch.object(app_info, 'APP_VERSION', '2.0.0')
         version.start()
         self.addCleanup(version.stop)
         self.template = ProjectTemplate.load(str(ROOT / 'data/project_templates/raspberry-pi-5'))

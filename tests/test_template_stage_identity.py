@@ -20,7 +20,7 @@ from catalystlab.project_template import ProjectTemplate, TemplateError, apply_p
 
 class StageIdentityTests(unittest.TestCase):
     def setUp(self):
-        self.version = patch.object(app_info, 'APP_VERSION', '2.0.1')
+        self.version = patch.object(app_info, 'APP_VERSION', '2.0.0')
         self.version.start()
         self.addCleanup(self.version.stop)
         self.directory = tempfile.TemporaryDirectory()
