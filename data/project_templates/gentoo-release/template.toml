@@ -1,5 +1,7 @@
 format = 1
-min_app_version = "2.0.0"
+min_app_version = "2.0.1"
+# Build identities change with init system; stage layout and group references stay the same.
+stage_id_suffix = "{{ init }}"
 name = "Gentoo release"
 description = "Stages built like official Gentoo releases, with optional stage4 systems, minimal installation ISO, and amd64 LiveGUI ISO."
 
@@ -179,37 +181,9 @@ when = "'stage4' in extra_stages"
 stage4_packages = "{{ stage4_packages }}"
 stage4_rcadd = "{{ stage4_services }}"
 
-# Fixed OpenRC seed identities prevent reuse of systemd artifacts after switching init systems.
-[[stages]]
-id = "iso-seed-stage1-openrc"
-name = "iso-seed-stage1-openrc"
-target = "stage1"
-releng_template = "{{ spec_directory }}stage1-{{ spec_prefix }}{{ 'openrc-power9le' if power9 else 'openrc' }}-23.spec"
-when = "iso or livegui"
-[stages.arguments]
-common_flags = "{{ subarch_flags + (' ' + cpu_target_flags if cpu_target_flags else '') + avx512_compat_flags + (' -flto -Werror=odr -Werror=lto-type-mismatch -Werror=strict-aliasing' if lto else '') if lto or cpu_target_flags or strip_avx512_for_emulation else None }}"
-catalyst_use = "{{ ['lto'] if lto else [] }}"
-rel_type = "{{ rel_type }}"
-
-[[stages]]
-id = "iso-seed-stage3-openrc"
-parent = "iso-seed-stage1-openrc"
-name = "iso-seed-stage3-openrc"
-target = "stage3"
-releng_template = "{{ spec_directory }}stage3-{{ spec_prefix }}{{ 'openrc-power9le' if power9 else 'openrc' }}-23.spec"
-when = "iso"
-
-[[stages]]
-id = "iso-seed-stage3-desktop-openrc"
-parent = "iso-seed-stage1-openrc"
-name = "iso-seed-stage3-desktop-openrc"
-target = "stage3"
-releng_template = "stage3d-openrc-23.spec"
-when = "livegui"
-
 [[stages]]
 id = "livecd-stage1"
-parent = "iso-seed-stage3-openrc"
+parent = "stage3"
 name = "livecd-stage1"
 target = "livecd_stage1"
 releng_template = "{{ spec_directory }}installcd-stage1{{ iso_suffix }}.spec"
@@ -224,8 +198,16 @@ releng_template = "{{ spec_directory }}installcd-stage2-minimal{{ iso_suffix }}.
 when = "iso"
 
 [[stages]]
+id = "stage3-desktop"
+parent = "stage1"
+name = "stage3-desktop-openrc"
+target = "stage3"
+releng_template = "stage3d-openrc-23.spec"
+when = "livegui"
+
+[[stages]]
 id = "livegui-stage1"
-parent = "iso-seed-stage3-desktop-openrc"
+parent = "stage3-desktop"
 name = "livegui-stage1-openrc"
 target = "livecd_stage1"
 releng_template = "livegui/livegui-stage1.spec"
@@ -297,8 +279,3 @@ stage4_packages = ["sys-process/htop", "app-misc/tmux", "sys-process/lsof", "sys
 [[files]]
 source = "files/project.gitignore"
 destination = ".gitignore"
-
-[[files]]
-source = "files/emulation/portage_confdir"
-destination = "stages/iso-seed-stage1-openrc/portage"
-when = "strip_avx512_for_emulation and (iso or livegui)"

@@ -1,5 +1,7 @@
 format = 1
-min_app_version = "2.0.0"
+min_app_version = "2.0.1"
+# Build identities change with init system; stage layout and group references stay the same.
+stage_id_suffix = "{{ init }}"
 name = "Raspberry Pi 5"
 description = "Gentoo for Raspberry Pi 5: CPU target selection, boot configuration, zram swap and optional GNOME and KDE Plasma desktops."
 groups_title = "Software"
@@ -167,7 +169,7 @@ parent = "stage1"
 name = "{{ desktop_stage3_name }}"
 target = "stage3"
 releng_template = "stage3d-{{ init }}-23.spec"
-when = "with_desktop"
+when = "with_desktop or 'iso_gui' in extra_stages"
 
 [[stages]]
 id = "stage4-gnome"
@@ -220,41 +222,12 @@ stage4_rm = ["/root/.bash_history"]
 sources = "{{ 'sys-kernel/raspberrypi-sources' if compiled_kernel else '' }}"
 config = "{{ '@STAGE_DIR@/kernel.config' if compiled_kernel else '' }}"
 
-# ISO seeds have their own stage identities and fixed OpenRC specs. The ordinary stage1/stage3
-# identities can already have systemd artifacts when a project switches init systems.
-[[stages]]
-id = "iso-seed-stage1-openrc"
-name = "iso-seed-stage1-openrc"
-target = "stage1"
-releng_template = "stage1-openrc-23.spec"
-when = "'iso' in extra_stages or 'iso_gui' in extra_stages"
-[stages.arguments]
-common_flags = "{{ common_flags }}"
-catalyst_use = "{{ ['lto'] if lto else [] }}"
-rel_type = "{{ rel_type }}"
-
-[[stages]]
-id = "iso-seed-stage3-openrc"
-parent = "iso-seed-stage1-openrc"
-name = "iso-seed-stage3-openrc"
-target = "stage3"
-releng_template = "stage3-openrc-23.spec"
-when = "'iso' in extra_stages"
-
-[[stages]]
-id = "iso-seed-stage3-desktop-openrc"
-parent = "iso-seed-stage1-openrc"
-name = "iso-seed-stage3-desktop-openrc"
-target = "stage3"
-releng_template = "stage3d-openrc-23.spec"
-when = "'iso_gui' in extra_stages"
-
 # Installation ISO (experimental): releng minimal installation CD (installcd specs) with Raspberry Pi kernel compiled
 # by catalyst (kernel rpi, genkernel, bcm2712_defconfig) and additional tools. Raspberry Pi firmware boots kernel from
 # FAT partition, not from ISO images.
 [[stages]]
 id = "livecd-stage1"
-parent = "iso-seed-stage3-openrc"
+parent = "stage3"
 name = "{{ iso_stage1_name }}"
 target = "livecd_stage1"
 releng_template = "installcd-stage1.spec"
@@ -279,10 +252,10 @@ sources = "sys-kernel/raspberrypi-sources"
 config = "@STAGE_DIR@/kernel.config"
 
 # Live ISO with desktop (experimental): KDE Plasma live system like Gentoo LiveGUI (releng livegui specs), from
-# a dedicated OpenRC desktop stage3, with the same kernel as installation ISO.
+# desktop stage3, with the same kernel as installation ISO.
 [[stages]]
 id = "livegui-stage1"
-parent = "iso-seed-stage3-desktop-openrc"
+parent = "stage3-desktop"
 name = "{{ livegui_stage1_name }}"
 target = "livecd_stage1"
 when = "'iso_gui' in extra_stages"
@@ -318,11 +291,6 @@ config = "@STAGE_DIR@/kernel.config"
 [[files]]
 source = "files/stage1"
 destination = "stages/{{ stage1_name }}"
-
-[[files]]
-source = "files/stage1"
-destination = "stages/iso-seed-stage1-openrc"
-when = "'iso' in extra_stages or 'iso_gui' in extra_stages"
 
 # Compiled kernel: configuration, script installing it for firmware (run by catalyst in every stage4) and sources
 # allowed from testing branch (~arm64); script building kernel again installed in system.

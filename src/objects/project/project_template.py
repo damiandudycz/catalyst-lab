@@ -280,6 +280,7 @@ class GeneratedStage:
     releng_template: str | None
     arguments: dict[str, Any]
     groups: list[str] = field(default_factory=list) # Titles of groups applied to stage.
+    persistent_id: str | None = None # Build identity saved in template state; logical ids still connect stages/groups.
 
 @dataclass
 class GeneratedProject:
@@ -343,6 +344,7 @@ class ProjectTemplate:
     min_app_version: str | None = None # Oldest version of Catalyst Lab that supports template.
     # False when only the template definition is available for an options preview; file paths are checked when applied.
     files_available: bool = True
+    stage_id_suffix: str | None = None # Optional expression distinguishing incompatible build variants.
 
     @classmethod
     def load(cls, path: str, repository_url: str | None = None, repository_path: str = "",
@@ -513,7 +515,8 @@ class ProjectTemplate:
                    architecture=Architecture[architecture_name] if architecture_name else None, repository_url=repository_url,
                    repository_path=repository_path, source_kind=source_kind, source_tree=source_tree,
                    min_app_version=min_app_version,
-                   files_available=files_available)
+                   files_available=files_available,
+                   stage_id_suffix=_text(data, "stage_id_suffix", "Template", required=False))
 
     @property
     def architecture_variable(self) -> TemplateVariable | None:
@@ -622,6 +625,9 @@ class ProjectTemplate:
 
     def generate(self, names: dict[str, Any]) -> GeneratedProject:
         """Stages and files of project for values resolved with resolve()."""
+        suffix = render_value(self.stage_id_suffix, names) if self.stage_id_suffix is not None else None
+        if self.stage_id_suffix is not None and (not isinstance(suffix, str) or not suffix.strip()):
+            raise TemplateError("Template: stage_id_suffix must render to non-empty text")
         stages: list[GeneratedStage] = []
         generated_ids = set()
         stage_names = set()
@@ -670,7 +676,8 @@ class ProjectTemplate:
                     else:
                         arguments[key] = value
             stages.append(GeneratedStage(template_id=stage.id, name=name, target=target, parent=stage.parent,
-                                         releng_template=releng_template, arguments=arguments, groups=applied_groups))
+                                         releng_template=releng_template, arguments=arguments, groups=applied_groups,
+                                         persistent_id=f"{stage.id}:{suffix}" if suffix is not None else stage.id))
             generated_ids.add(stage.id)
         files = []
         for entry in self.files:
@@ -1220,8 +1227,8 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
     os.makedirs(os.path.join(path, "stages"), exist_ok=True)
     releng_directory = project_directory.get_releng_directory()
     architecture = project_directory.get_architecture()
-    # Ids of stages by their ids in template. Given ids are used again (template applied again when it's updated), so
-    # versions of project can be compared.
+    # Reuse UUIDs by persistent identity, which may include the selected build variant.
+    # Keep logical ids separately while resolving parent links during generation.
     known_stage_ids = dict(stage_ids or {})
     stage_ids: dict[str, uuid.UUID] = {}
     for generated_stage in generated.stages:
@@ -1230,7 +1237,7 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
                 os.path.join(project_directory.stage_directory_path(generated_stage.name), "stage.json")):
             raise TemplateError(f"Stage {generated_stage.name} already exists")
         stage = ProjectStage(
-            id=known_stage_ids.get(generated_stage.template_id),
+            id=known_stage_ids.get(generated_stage.persistent_id or generated_stage.template_id),
             parent_id=stage_ids[generated_stage.parent] if generated_stage.parent else None,
             name=generated_stage.name, target_name=generated_stage.target,
             releng_template_name=generated_stage.releng_template
@@ -1270,4 +1277,4 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
         project_directory.stages.append(stage)
         stage_ids[generated_stage.template_id] = stage.id
         log(f"Created stage {stage.name} ({stage.target})")
-    return stage_ids
+    return {stage.persistent_id or stage.template_id: stage_ids[stage.template_id] for stage in generated.stages}

@@ -3,10 +3,9 @@
 Gentoo for PlayStation 3, based on the configuration from the first version of Catalyst Lab.
 
 ```
-stage1 ─┬─ stage3 ── stage4                       (optional console system)
+stage1 ─┬─ stage3 ─┬─ stage4                       (optional console system)
+        │          └─ livecd-stage1 ── livecd-stage2 (optional installation ISO, OpenRC)
         └─ stage3-desktop ── stage4-desktop-xfce    (optional, OpenRC)
-
-iso-seed-stage1-openrc ── iso-seed-stage3-openrc ── livecd-stage1 ── livecd-stage2
 ```
 
 - Stages are built for Cell CPU (`cell` subarch, AltiVec), optionally with LTO.
@@ -21,5 +20,5 @@ iso-seed-stage1-openrc ── iso-seed-stage3-openrc ── livecd-stage1 ──
 
 Requires Catalyst Lab 2.0.0 or newer.
 
-ISO builds use a dedicated OpenRC stage1 and stage3 seed chain, so switching the project's init system cannot
-reuse systemd builds as ISO seeds. After updating an existing project, the new seed stages must be built once.
+Stage build identities include the selected init system. Switching between OpenRC and systemd keeps the same
+stage layout and creates new stage IDs, preventing reuse of builds from the previous init system.

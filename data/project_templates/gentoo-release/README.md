@@ -15,5 +15,5 @@ LiveGUI ISO under Extra stages; all are optional and off by default.
 - LiveGUI ISO: amd64/OpenRC only, based on the Releng desktop stage3 and LiveGUI specs, including its Releng kernel settings.
 - Software of stage4: kernel and firmware, GRUB, sudo, vim, administration tools. Stage4 is optional.
 
-ISO builds use a dedicated OpenRC stage1 and stage3 seed chain, so switching the project's init system cannot
-reuse systemd builds as ISO seeds. After updating an existing project, the new seed stages must be built once.
+Stage build identities include the selected init system. Switching between OpenRC and systemd keeps the same
+stage layout and creates new stage IDs, preventing reuse of builds from the previous init system.
