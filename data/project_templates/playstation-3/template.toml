@@ -127,9 +127,31 @@ stage4_rm = ["/root/.bash_history"]
 
 # Installation ISO: live system with PS3 kernel, built by catalyst (boot/kernel). Kernel and initramfs are /boot/ps3 and
 # /boot/ps3.igz, loaded by petitboot with yaboot.conf on ISO (livecd/overlay). Volume label Gentoo-ps3 is used by it.
+# Fixed OpenRC seed identities prevent reuse of systemd artifacts after switching init systems.
+[[stages]]
+id = "iso-seed-stage1-openrc"
+name = "iso-seed-stage1-openrc"
+target = "stage1"
+releng_template = "stage1-openrc-23.spec"
+when = "iso"
+[stages.arguments]
+subarch = "cell"
+common_flags = "{{ common_flags }}"
+catalyst_use = "{{ ['lto'] if lto else [] }}"
+rel_type = "{{ '23.0-ps3-lto' if lto else '23.0-ps3' }}"
+repos = [{ type = "Overlay", value = "ps3" }]
+
+[[stages]]
+id = "iso-seed-stage3-openrc"
+parent = "iso-seed-stage1-openrc"
+name = "iso-seed-stage3-openrc"
+target = "stage3"
+releng_template = "stage3-openrc-23.spec"
+when = "iso"
+
 [[stages]]
 id = "livecd-stage1"
-parent = "stage3"
+parent = "iso-seed-stage3-openrc"
 name = "{{ iso_stage1_name }}"
 target = "livecd_stage1"
 when = "iso"
@@ -221,3 +243,8 @@ when = "iso and zram != 'off'"
 [[files]]
 source = "files/project.gitignore"
 destination = ".gitignore"
+
+[[files]]
+source = "files/stage1"
+destination = "stages/iso-seed-stage1-openrc"
+when = "iso"

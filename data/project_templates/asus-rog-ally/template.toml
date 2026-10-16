@@ -53,8 +53,8 @@ options = [
     { value = "gnome", title = "GNOME stage4" },
     { value = "gnome_customized", title = "Customized GNOME stage4", when = "'gnome' in extra_stages" },
     { value = "plasma", title = "KDE Plasma stage4" },
-    { value = "iso", title = "Installation ISO" },
-    { value = "iso_gui", title = "Live ISO with KDE Plasma" },
+    { value = "iso", title = "Installation ISO", when = "init == 'openrc'" },
+    { value = "iso_gui", title = "Live ISO with KDE Plasma", when = "init == 'openrc'" },
 ]
 
 [[variables]]
@@ -134,7 +134,7 @@ parent = "stage1"
 name = "{{ desktop_stage3_name }}"
 target = "stage3"
 releng_template = "stage3d-{{ init }}-23.spec"
-when = "with_desktop or 'iso_gui' in extra_stages"
+when = "with_desktop"
 
 [[stages]]
 id = "stage4-gnome"
@@ -178,9 +178,37 @@ stage4_empty = ["/var/cache/distfiles"]
 stage4_rm = ["/root/.bash_history"]
 
 # Minimal installer ISO, following the Gentoo amd64 releng installcd specifications.
+# Fixed OpenRC seed identities prevent reuse of systemd artifacts after switching init systems.
+[[stages]]
+id = "iso-seed-stage1-openrc"
+name = "iso-seed-stage1-openrc"
+target = "stage1"
+releng_template = "stage1-openrc-23.spec"
+when = "'iso' in extra_stages or 'iso_gui' in extra_stages"
+[stages.arguments]
+common_flags = "{{ common_flags }}"
+catalyst_use = "{{ ['lto'] if lto else [] }}"
+rel_type = "{{ rel_type }}"
+
+[[stages]]
+id = "iso-seed-stage3-openrc"
+parent = "iso-seed-stage1-openrc"
+name = "iso-seed-stage3-openrc"
+target = "stage3"
+releng_template = "stage3-openrc-23.spec"
+when = "'iso' in extra_stages"
+
+[[stages]]
+id = "iso-seed-stage3-desktop-openrc"
+parent = "iso-seed-stage1-openrc"
+name = "iso-seed-stage3-desktop-openrc"
+target = "stage3"
+releng_template = "stage3d-openrc-23.spec"
+when = "'iso_gui' in extra_stages"
+
 [[stages]]
 id = "livecd-stage1"
-parent = "stage3"
+parent = "iso-seed-stage3-openrc"
 name = "{{ iso_stage1_name }}"
 target = "livecd_stage1"
 releng_template = "installcd-stage1.spec"
@@ -200,10 +228,10 @@ livecd_volid = "Gentoo-ROG-Ally"
 livecd_iso = "install-rog-ally-@TIMESTAMP@.iso"
 livecd_rcadd = "{{ ['@releng'] + (['zram-init|boot'] if openrc and zram != 'off' else []) }}"
 
-# Desktop live ISO, based on the machine's desktop stage3 like the Raspberry Pi template.
+# Desktop live ISO from a dedicated OpenRC desktop seed.
 [[stages]]
 id = "livegui-stage1"
-parent = "stage3-desktop"
+parent = "iso-seed-stage3-desktop-openrc"
 name = "{{ livegui_stage1_name }}"
 target = "livecd_stage1"
 when = "'iso_gui' in extra_stages"
@@ -377,3 +405,8 @@ stage4_rcadd = "{{ ['docker|default'] if openrc else [] }}"
 [[files]]
 source = "files/project.gitignore"
 destination = ".gitignore"
+
+[[files]]
+source = "files/emulation/portage_confdir"
+destination = "stages/iso-seed-stage1-openrc/portage"
+when = "strip_avx512_for_emulation and ('iso' in extra_stages or 'iso_gui' in extra_stages)"

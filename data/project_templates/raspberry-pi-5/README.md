@@ -9,7 +9,14 @@ Select **From template** when creating a project in Catalyst Lab.
 stage1 ─┬─ stage3 ── stage4                          (optional console system)
         └─ stage3-desktop ─┬─ stage4-gnome           (if GNOME is selected)
                            └─ stage4-plasma          (if KDE Plasma is selected)
+
+iso-seed-stage1-openrc ─┬─ iso-seed-stage3-openrc ── livecd-stage1 ── livecd-stage2
+                       └─ iso-seed-stage3-desktop-openrc ── livegui-stage1 ── livegui-stage2
 ```
+
+ISO stages use a separate OpenRC seed chain. Existing systemd stage3 builds cannot be reused as ISO seeds
+when switching the project's init system to OpenRC. Updating an existing project adds these seed stages;
+they must be built once before the ISO can be built.
 
 The console stage4 is optional and off by default. It includes the Raspberry Pi kernel and firmware
 (`sys-kernel/raspberrypi-image`), NetworkManager, SSH, NTP, cpupower and sudo, with boot configuration in `/boot`.
@@ -22,8 +29,8 @@ The console stage4 is optional and off by default. It includes the Raspberry Pi 
 | CPU target | ARM Cortex-A76 (cortex-a76), Generic baseline |
 | Link-time optimization (LTO) | Off by default. Includes workarounds for packages that fail with LTO |
 | Kernel | Compiled by Catalyst (default) as kernel `rpi` of every stage4 (genkernel, `raspberrypi-sources` with `bcm2712_defconfig`), installed like the prebuilt one (`kernel_2712.img`, device trees, overlays), or prebuilt (`raspberrypi-image`). Sources stay in the system, `build-raspberrypi-kernel` builds them again |
-| Installation ISO (experimental) | OpenRC only. Live ISO (`livecd-stage1`, `livecd-stage2` from console stage3) with installation tools and kernel `rpi` compiled by Catalyst from `raspberrypi-sources` (`bcm2712_defconfig`). Raspberry Pi firmware boots from FAT partitions, not ISO images, so it's for testing |
-| Live ISO with desktop (experimental) | OpenRC only. KDE Plasma live system like Gentoo LiveGUI (`livegui-stage1`, `livegui-stage2` from desktop stage3): SDDM logs user `gentoo` in to Plasma, basic applications (Konsole, Dolphin, Kate, Firefox, GParted) and installation tools, kernel `rpi` like the installation ISO. For testing, like the installation ISO |
+| Installation ISO (experimental) | OpenRC only. Live ISO (`livecd-stage1`, `livecd-stage2` from a dedicated OpenRC console stage3) with installation tools and kernel `rpi` compiled by Catalyst from `raspberrypi-sources` (`bcm2712_defconfig`). Raspberry Pi firmware boots from FAT partitions, not ISO images, so it's for testing |
+| Live ISO with desktop (experimental) | OpenRC only. KDE Plasma live system like Gentoo LiveGUI (`livegui-stage1`, `livegui-stage2` from a dedicated OpenRC desktop stage3): SDDM logs user `gentoo` in to Plasma, basic applications (Konsole, Dolphin, Kate, Firefox, GParted) and installation tools, kernel `rpi` like the installation ISO. For testing, like the installation ISO |
 | Desktops | GNOME, KDE Plasma (any of them, each gets its own stage4) |
 | CPU frequency | 2.4 GHz (stock), 2.6 GHz, 2.8 GHz (needs good cooling) |
 | Serial console | UART enabled in `config.txt` |
