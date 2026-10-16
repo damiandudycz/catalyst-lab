@@ -170,6 +170,13 @@ class MultiStageProcess(ABC):
             except Exception as e:
                 print(e)
             finally:
+                if self in MultiStageProcess.started_processes:
+                    MultiStageProcess.started_processes.remove(self)
+                    MultiStageProcess.event_bus.emit(
+                        MultiStageProcessEvent.STARTED_PROCESSES_CHANGED,
+                        self.__class__,
+                        MultiStageProcess.get_started_processes_by_class(self.__class__)
+                    )
                 self.complete_process(success=False)
         elif next_stage:
             next_step_thread = threading.Thread(target=next_stage.start)
