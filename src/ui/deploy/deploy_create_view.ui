@@ -267,6 +267,12 @@
                       </object>
                     </child>
                     <child>
+                      <object class="AdwExpanderRow" id="ssh_keys_group">
+                        <property name="title">Upload SSH keys</property>
+                        <property name="subtitle">Selected keys are authorized for root and added users, even if SSH is not installed.</property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwSwitchRow" id="reboot_row">
                         <property name="title">Reboot when finished</property>
                       </object>
@@ -395,7 +401,7 @@
                 <child>
                   <object class="AdwPreferencesGroup">
                     <property name="title">Root</property>
-                    <property name="description">Root password is required, root account of stage is locked.</property>
+                    <property name="description">Optional. Leave empty to keep the stage’s existing root password or locked account.</property>
                     <child>
                       <object class="AdwPasswordEntryRow" id="root_password_row">
                         <property name="title">Root password</property>
@@ -446,12 +452,6 @@
                     <style>
                       <class name="error"/>
                     </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="AdwPreferencesGroup" id="ssh_keys_group">
-                    <property name="title">SSH keys</property>
-                    <property name="description">Selected keys of this computer are authorized for root and added users.</property>
                   </object>
                 </child>
               </object>

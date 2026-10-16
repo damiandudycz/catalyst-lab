@@ -158,6 +158,13 @@ class StageContents:
     firmware: bool = False # linux-firmware is installed.
     wpa_supplicant: bool = False # Wi-Fi of network services other than NetworkManager.
     firmware_conflict: str | None = None # Installed package that can't be installed together with linux-firmware.
+    ssh_installed: bool = False
+    _ssh_enabled_in: set[str] = field(default_factory=set, repr=False)
+
+    @property
+    def ssh_enabled(self) -> bool:
+        return self.ssh_installed and self.init in self._ssh_enabled_in
+
     account_groups: set[str] = field(default_factory=set) # Groups created by acct-group packages.
 
     @property
@@ -196,6 +203,12 @@ class StageContents:
     def _add_path(self, path: str, link_target: str | None = None):
         """Records what path of archive shows (bootloader, services, kernel, init system...)."""
         contents = self
+        if path in ("usr/sbin/sshd", "sbin/sshd", "usr/bin/sshd"):
+            self.ssh_installed = True
+        if re.fullmatch(r"etc/runlevels/[^/]+/sshd", path) and link_target != "/dev/null":
+            self._ssh_enabled_in.add("openrc")
+        if re.fullmatch(r"etc/systemd/system/[^/]+\.(?:wants|requires)/ssh(?:d)?\.(?:service|socket)", path) and link_target != "/dev/null":
+            self._ssh_enabled_in.add("systemd")
         if path in ("sbin/init", "bin/init", "usr/sbin/init", "usr/bin/init") and link_target:
             target = link_target.rsplit("/", 1)[-1]
             if target in ("systemd", "openrc-init", "sysvinit", "busybox"):

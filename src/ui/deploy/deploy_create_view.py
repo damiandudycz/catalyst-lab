@@ -6,7 +6,7 @@ import re
 from .deploy_installation import DeployInstallation, DeploySystemSettings, DeployUser, DEFAULT_USER_GROUPS, USER_GROUPS, local_mount_point, DeployRepository
 from .deploy_boot import Bootloader, Kernel, FIRMWARE_PACKAGE, StageContents, default_bootloader, bootloader_warnings
 from .deploy_system import (
-    NetworkService, NetworkSettings, LocalizationSettings, WifiSettings, default_network_service, local_localization, local_public_keys
+    NetworkService, NetworkSettings, LocalizationSettings, WifiSettings, default_network_service, local_localization, local_public_keys, local_wifi_ssid, local_user_identity
 )
 from .deploy_target import (
     TargetMachine, TargetFilesystem, PartitionPlan, PartitionSpec, PartitionType, GIB, MIB, format_size,
@@ -171,10 +171,11 @@ class DeployCreateView(Gtk.Box):
             row = Adw.ActionRow(title=GLib.markup_escape_text(key.title), subtitle=GLib.markup_escape_text(key.subtitle))
             row.add_prefix(check)
             row.set_activatable_widget(check)
-            self.ssh_keys_group.add(row)
+            self.ssh_keys_group.add_row(row)
             self.key_checks.append((check, key.key))
         if not self.key_checks:
-            self.ssh_keys_group.add(Adw.ActionRow(title="No SSH keys found in ~/.ssh"))
+            self.ssh_keys_group.add_row(Adw.ActionRow(title="No SSH keys found in ~/.ssh"))
+        self._update_ssh_options()
         self._update_network_options()
         if self.build and installation_in_progress is None:
             threading.Thread(target=self._scan_stage, daemon=True).start()
@@ -642,12 +643,26 @@ class DeployCreateView(Gtk.Box):
 
     # Wi-Fi
 
+    def _on_wifi_name_edited(self, *_):
+        self._wifi_name_edited = True
+
+    def _suggest_wifi_name(self):
+        ssid = local_wifi_ssid()
+        def apply():
+            if ssid and not self._wifi_name_edited and not self.wifi_ssid_row.get_text():
+                self.wifi_ssid_row.set_text(ssid)
+            return False
+        GLib.idle_add(apply)
+
     def _setup_wifi_rows(self):
         """Wi-Fi network connected by selected network service (NetworkManager connection, or wpa_supplicant)."""
         self.wifi_row = Adw.ExpanderRow(title="Wi-Fi", subtitle="Network connected automatically", show_enable_switch=True,
                                         enable_expansion=False)
         self.wifi_row.connect("notify::enable-expansion", self.on_system_changed)
         self.wifi_ssid_row = Adw.EntryRow(title="Network name")
+        self.wifi_ssid_row.connect("changed", self._on_wifi_name_edited)
+        self._wifi_name_edited = False
+        threading.Thread(target=self._suggest_wifi_name, daemon=True).start()
         self.wifi_password_row = Adw.PasswordEntryRow(title="Password, empty for open network")
         self.wifi_hidden_row = Adw.SwitchRow(title="Hidden network", subtitle="Network doesn't broadcast its name")
         self.wifi_country_row = Adw.EntryRow(title="Country code, eg. PL (channels allowed in country)")
@@ -680,6 +695,11 @@ class DeployCreateView(Gtk.Box):
                       available_groups=self.contents.groups if self.contents else None)
         self.users_group.add(row)
         self.user_rows.append(row)
+        if not getattr(self, "_host_user_suggested", False):
+            self._host_user_suggested = True
+            username, full_name = local_user_identity()
+            row.name_row.set_text(username)
+            row.full_name_row.set_text(full_name)
         row.set_expanded(True)
         self.on_users_changed()
 
@@ -692,8 +712,6 @@ class DeployCreateView(Gtk.Box):
         return self._root_password_error() or self._user_accounts_error()
 
     def _root_password_error(self) -> str | None:
-        if not self.root_password_row.get_text():
-            return "Set root password"
         if self.root_password_row.get_text() != self.root_password_confirm_row.get_text():
             return "Root passwords don't match"
         return None
@@ -720,10 +738,24 @@ class DeployCreateView(Gtk.Box):
             self.contents, self.contents_error = contents, error
             for row in self.user_rows:
                 row.set_available_groups(contents.groups if contents else None)
+            self._update_ssh_options()
             self._update_network_options()
             self._update_boot_options()
             self.wizard_view._refresh_buttons_state()
         GLib.idle_add(done)
+
+    def _update_ssh_options(self):
+        contents = self.contents
+        enabled = contents.ssh_enabled if contents else False
+        installed = contents.ssh_installed if contents else False
+        self.ssh_row.set_active(enabled)
+        self.ssh_row.set_sensitive(installed and not enabled)
+        self.ssh_row.set_subtitle(
+            "Already enabled in the stage" if enabled else
+            "Start SSH server on boot" if installed else
+            "SSH server is not installed in the stage" if contents else
+            "Could not check SSH server availability" if self.contents_error else
+            "Checking SSH server in the stage…")
 
     def _update_boot_options(self):
         self.stage_contents_spinner.set_visible(self.contents is None and self.contents_error is None)
@@ -1025,8 +1057,6 @@ class UserRow(Adw.ExpanderRow):
             return "Username must start with a lowercase letter and contain only lowercase letters, digits, - and _"
         if user.name == "root":
             return "Root account already exists"
-        if not user.password:
-            return f"Set password of {user.name}"
         if user.password != self.password_confirm_row.get_text():
             return f"Passwords of {user.name} don't match"
         if any(not re.match(r"^[a-z_][a-z0-9_-]*$", group) for group in user.groups):

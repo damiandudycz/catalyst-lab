@@ -1,5 +1,5 @@
 from __future__ import annotations
-import glob, ipaddress, os, re, subprocess
+import glob, ipaddress, os, re, subprocess, sys
 from dataclasses import dataclass, field
 from enum import Enum
 from .ssh_connection import quote
@@ -432,3 +432,53 @@ def wifi_script(settings: WifiSettings, service: NetworkService = NetworkService
         script += [f'mkdir -p "$ROOT/etc/modprobe.d" && echo "options cfg80211 ieee80211_regdom={country}" > "$ROOT/etc/modprobe.d/catalystlab-wifi.conf"',
                    f'echo "Wi-Fi country: {country}"']
     return "\n".join(script)
+
+
+def local_wifi_ssid() -> str | None:
+    """Best-effort connected network name from this host; never reads passwords."""
+    def output(command):
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=3,
+                                    env={**os.environ, "LC_ALL": "C"})
+            return result.stdout.rstrip("\r\n") if result.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    if sys.platform == "darwin":
+        # Available when PyObjC CoreWLAN is installed; macOS may restrict SSID access.
+        try:
+            import CoreWLAN
+            interface = CoreWLAN.CWWiFiClient.sharedWiFiClient().interface()
+            if interface and (ssid := interface.ssid()):
+                return str(ssid)
+        except Exception:
+            pass
+        ports = output(["/usr/sbin/networksetup", "-listallhardwareports"])
+        for device in re.findall(r"Hardware Port: (?:Wi-Fi|AirPort)\nDevice: (\S+)", ports):
+            value = output(["/usr/sbin/networksetup", "-getairportnetwork", device])
+            prefix = "Current Wi-Fi Network: "
+            if value.startswith(prefix):
+                return value[len(prefix):] or None
+    elif sys.platform.startswith("linux"):
+        if ssid := output(["iwgetid", "--raw"]):
+            return ssid
+        rows = output(["nmcli", "--terse", "--escape", "yes", "--fields", "IN-USE,SSID", "device", "wifi", "list", "--rescan", "no"])
+        for line in rows.splitlines():
+            if line.startswith("*:"):
+                return re.sub(r"\\(.)", r"\1", line[2:]) or None
+    return None
+
+
+def local_user_identity() -> tuple[str, str]:
+    """Current host account's login and full name, when usable for a deployed user."""
+    try:
+        import pwd
+        account = pwd.getpwuid(os.getuid())
+    except (ImportError, KeyError, OSError):
+        return "", ""
+    username = account.pw_name
+    if username == "root" or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username):
+        username = ""
+    # GECOS fields after the first comma are office/contact details, not the name.
+    full_name = account.pw_gecos.split(",", 1)[0]
+    return username, full_name

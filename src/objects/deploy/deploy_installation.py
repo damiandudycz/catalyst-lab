@@ -169,7 +169,7 @@ def system_configuration_script(settings: DeploySystemSettings) -> list[str]:
         script += [
             f'GROUPS_LIST=""; for group in {groups}; do if grep -q "^$group:" "$ROOT/etc/group"; then GROUPS_LIST="$GROUPS_LIST${{GROUPS_LIST:+,}}$group"; else echo "Group $group doesn\'t exist, skipped"; fi; done',
             f'chroot "$ROOT" useradd -m -s /bin/bash -c {quote(user.gecos)} ${{GROUPS_LIST:+-G "$GROUPS_LIST"}} {quote(user.name)}',
-            f"echo {quote(user.name + ':' + user.password)} | chroot \"$ROOT\" chpasswd",
+            *([f"echo {quote(user.name + ':' + user.password)} | chroot \"$ROOT\" chpasswd"] if user.password else []),
             f'echo "User {user.name} created${{GROUPS_LIST:+, groups $GROUPS_LIST}}"',
         ]
     if any("wheel" in user.groups for user in settings.users):
