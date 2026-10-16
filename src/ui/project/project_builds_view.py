@@ -51,11 +51,12 @@ class ProjectBuildsView(Gtk.Box):
         self.build_row.connect("activated", self._on_build_activated)
         actions_group.add(self.build_row)
         self.content.append(actions_group)
-        self.status_filter = CLToggleGroup(halign=Gtk.Align.CENTER)
+        self.status_filter = CLToggleGroup(valign=Gtk.Align.CENTER)
+        self.status_filter.add_css_class("round")
+        self.status_filter.add_css_class("caption")
         for label in ("All", "Completed", "Failed / Canceled"):
             self.status_filter.add(CLToggle(label=label))
         self.status_filter.set_active(0)
-        self.content.append(self.status_filter)
         self.status_filter.connect("notify::active", lambda *_: self.load_builds())
         self.groups: list[Adw.PreferencesGroup] = []
         self._observed_build = None
@@ -67,6 +68,9 @@ class ProjectBuildsView(Gtk.Box):
         from .qemu_run import QemuRun, QemuRunEvent
         QemuRun.running_runs_event_bus.subscribe(QemuRunEvent.RUNNING_RUNS_CHANGED,
                                                  self._on_started_processes_changed, self)
+
+    def header_bar_end_widgets(self) -> list[Gtk.Widget]:
+        return [self.status_filter]
 
     # Loading builds
     # --------------------------------------------------------------------------

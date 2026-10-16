@@ -1,5 +1,5 @@
 from __future__ import annotations
-import gzip, json, os, re, shutil, socket, subprocess, sys, tempfile, threading, uuid
+import gzip, hashlib, json, os, re, shutil, socket, subprocess, sys, tempfile, threading, uuid
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from .event_bus import EventBus
@@ -16,6 +16,20 @@ _QEMU_SEARCH_PATHS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
 _FIRMWARE_DIRECTORIES = ("/opt/homebrew/share/qemu", "/usr/local/share/qemu", "/usr/share/qemu", "/usr/share/edk2",
                          "/usr/share/edk2-ovmf", "/usr/share/AAVMF", "/usr/share/qemu-efi-aarch64",
                          "/usr/share/AAVMF")
+
+def _new_run_directory(backend_name: str) -> str:
+    """Create VM state in Library/Temporary for Apple VMs; keep QEMU sockets in short /tmp paths."""
+    root = "/tmp"
+    if backend_name == "Apple Virtualization":
+        try:
+            from .repository import Repository
+            temporary = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
+            root = os.path.join(temporary, "VMs")
+            os.makedirs(root, exist_ok=True)
+        except AttributeError:
+            # Tests and early setup may construct a run before Library settings are registered.
+            root = tempfile.gettempdir()
+    return tempfile.mkdtemp(prefix="cl-qemu-", dir=root)
 
 @dataclass
 class QemuMachine:
@@ -242,17 +256,72 @@ def accelerated(machine: QemuMachine) -> str | None:
     return None
 
 # ------------------------------------------------------------------------------
-# Disk image of stage (made once, next to build).
+# Disk image of stage (cached independently of build files).
 
 def stage_image_directory(build, backend: str = "qemu") -> str:
-    return os.path.join(build.path, backend)
+    """Reusable test VM disk and boot files, shared by backends and cached by build artifact."""
+    from .repository import Repository
+    artifact = os.path.realpath(build.artifact_path or build.path)
+    try:
+        stat = os.stat(artifact)
+        signature = f"{artifact}:{stat.st_size}:{stat.st_mtime_ns}"
+    except OSError:
+        signature = artifact
+    key = hashlib.sha256(signature.encode()).hexdigest()[:24]
+    return os.path.join(Repository.Settings.value.cache_location, "TestVM", key)
 
 def stage_image_ready(build, support: QemuSupport) -> bool:
     directory = stage_image_directory(build, support.backend)
-    return all(os.path.isfile(os.path.join(directory, name)) for name in
-               ["root.img", support.kernel] + ([support.initramfs] if support.initramfs else []))
+    files = ["root.img", support.kernel] + ([support.initramfs] if support.initramfs else [])
+    if not all(os.path.isfile(os.path.join(directory, name)) for name in files):
+        # Move already prepared files from older releases out of the build folder once.
+        legacy = os.path.join(build.path, support.backend)
+        if all(os.path.isfile(os.path.join(legacy, name)) for name in files):
+            os.makedirs(directory, exist_ok=True)
+            for name in files:
+                old, new = os.path.join(legacy, name), os.path.join(directory, name)
+                if not os.path.exists(new):
+                    shutil.move(old, new)
+    return all(os.path.isfile(os.path.join(directory, name)) for name in files)
 
-def stage_image_script(archive: str, directory: str, size: int, kernel: str, initramfs: str | None, console: str) -> str:
+def stage_extract_script(archive: str) -> str:
+    """Stream the compressed archive to tar and report bytes consumed, then wait for tar."""
+    import shlex
+    from .ssh_connection import quote
+    from .deploy_installation import tar_extract_command
+    command = shlex.split(tar_extract_command(archive, "@ROOT@"))
+    program = f'''
+import os, subprocess, sys
+archive, root = sys.argv[1:]
+command = {command!r}
+command = [root if value == "@ROOT@" else value for value in command]
+size = os.path.getsize(archive) or 1
+process = subprocess.Popen(command, stdin=subprocess.PIPE)
+read = 0
+reported = -1
+try:
+    with open(archive, "rb") as source:
+        while chunk := source.read(1024 * 1024):
+            process.stdin.write(chunk)
+            read += len(chunk)
+            percent = min(99, read * 100 // size)
+            if percent != reported:
+                print("@@extract-progress " + str(percent), flush=True)
+                reported = percent
+    process.stdin.close()
+except BaseException:
+    process.stdin.close()
+    process.wait()
+    raise
+status = process.wait()
+if status:
+    sys.exit(status)
+print("@@extract-progress 100", flush=True)
+'''
+    return f"python3 -c {quote(program)} {quote(archive)} \"$MNT\""
+
+
+def stage_image_script(archive: str, directory: str, size: int, kernel: str, initramfs: str | None) -> str:
     """Creates ext4 disk image with stage (as root): root password removed (login without password, machine is for
     testing), serial console enabled, root filesystem in fstab. Kernel and initramfs are copied next to it."""
     from .ssh_connection import quote
@@ -269,12 +338,19 @@ truncate -s {size} {image}
 mkfs.ext4 -q -F -L root {image}
 mount -o loop {image} "$MNT"
 echo "Extracting stage"
-{tar_extract_command(archive, "@ROOT@").replace("@ROOT@", '"$MNT"').replace(' -f -', ' -f ' + quote(archive))}
+{stage_extract_script(archive)}
+echo "Configuring test system"
 # Machine for testing: root logs in without password, on screen and serial console.
 sed -i 's/^root:[^:]*:/root::/' "$MNT/etc/shadow"
 echo "/dev/vda / ext4 noatime 0 1" > "$MNT/etc/fstab"
-if [ -f "$MNT/etc/inittab" ] && ! grep -q "^s0:" "$MNT/etc/inittab"; then
-    echo "s0:12345:respawn:/sbin/agetty -L 115200 {console} vt100" >> "$MNT/etc/inittab"
+if [ -f "$MNT/etc/inittab" ]; then
+    for entry in \
+        "s0:12345:respawn:/sbin/agetty -L 115200 ttyS0 vt100" \
+        "t0:12345:respawn:/sbin/agetty -L 115200 ttyAMA0 vt100" \
+        "h0:12345:respawn:/sbin/agetty -L 115200 hvc0 vt100"; do
+        id=${{entry%%:*}}
+        grep -q "^$id:" "$MNT/etc/inittab" || echo "$entry" >> "$MNT/etc/inittab"
+    done
 fi
 for file in {boot_files}; do cp "$MNT/boot/$file" "$D/$file"; done
 chmod a+r "$D"/*
@@ -307,7 +383,7 @@ class QemuRun:
         self.event_bus = EventBus[QemuRunEvent]()
         self.process: subprocess.Popen | None = None
         # Socket paths are short (limit of 104 characters on macOS).
-        self.directory = tempfile.mkdtemp(prefix="cl-qemu-", dir="/tmp")
+        self.directory = _new_run_directory(self.backend_name)
         self.vnc_socket = os.path.join(self.directory, "vnc")
         self.serial_socket = os.path.join(self.directory, "serial")
         self.qmp_socket = os.path.join(self.directory, "qmp")
@@ -537,9 +613,16 @@ def stop_all_runs():
             print(f"Failed to stop QEMU: {e}")
 
 def stop_orphaned_runs():
-    """Stops machines left running by app that was killed or crashed (their folders in /tmp have QEMU pid)."""
+    """Stops VMs left by a killed app and removes their temporary run directories."""
     import glob, signal
-    for directory in glob.glob("/tmp/cl-qemu-*"):
+    directories = set(glob.glob("/tmp/cl-qemu-*"))
+    try:
+        from .repository import Repository
+        temporary = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
+        directories.update(glob.glob(os.path.join(temporary, "VMs", "cl-qemu-*")))
+    except AttributeError:
+        pass
+    for directory in directories:
         try:
             with open(os.path.join(directory, "pid")) as file:
                 pid = int(file.read().strip())

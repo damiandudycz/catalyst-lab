@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import Mock, patch
@@ -64,11 +65,11 @@ class BackendTests(unittest.TestCase):
         self.addCleanup(lambda: qemu.QemuRun.running_runs.remove(run) if run in qemu.QemuRun.running_runs else None)
         bridge = Mock()
         bridge.api.cl_vm_create.return_value = 123
-        with patch.object(apple, 'apple_support', return_value=availability), patch.object(apple, '_load_bridge', return_value=bridge):
+        with patch.object(apple, 'apple_support', return_value=availability), patch.object(apple, '_load_bridge', return_value=bridge), patch.object(apple, 'stage_image_directory', return_value='/cache/TestVM/hash'):
             run.start()
             config = json.loads(bridge.api.cl_vm_create.call_args.args[0])
-            self.assertEqual(config['disk'], '/build/apple/root.img')
-            self.assertEqual(config['kernel'], '/build/apple/Image')
+            self.assertEqual(config['disk'], '/cache/TestVM/hash/root.img')
+            self.assertEqual(config['kernel'], '/cache/TestVM/hash/Image')
             self.assertEqual(config['memory'], 4 << 30)
             self.assertIn(run, qemu.QemuRun.running_runs)
             self.assertTrue(run.is_running)
@@ -83,6 +84,18 @@ class BackendTests(unittest.TestCase):
             run._handle_event('STATE:stopped')
             self.assertFalse(run.is_running)
             bridge.api.cl_vm_release.assert_called_once_with(123)
+
+    def test_apple_run_directory_uses_library_temporary(self):
+        from catalystlab import repository
+        availability = apple.AppleSupport(self.support, '/bridge', LIMITS)
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = types.SimpleNamespace(value=types.SimpleNamespace(temporary_location=temporary))
+            with patch.object(repository.Repository, 'Settings', settings, create=True):
+                run = apple.AppleVirtualizationRun(self.project, self.build, availability)
+            try:
+                self.assertTrue(Path(run.directory).resolve().is_relative_to((Path(temporary) / 'VMs').resolve()))
+            finally:
+                __import__('shutil').rmtree(run.directory, ignore_errors=True)
 
     def test_native_launch_rechecks_availability(self):
         availability = apple.AppleSupport(self.support, '/helper', LIMITS)
@@ -120,6 +133,17 @@ class BackendTests(unittest.TestCase):
         self.assertNotIn(run, qemu.QemuRun.running_runs)
         self.assertFalse(Path(run.directory).exists())
         run._bridge.api.cl_vm_release.assert_called_once_with(123)
+
+    def test_silent_apple_guest_reports_missing_serial_output(self):
+        availability = apple.AppleSupport(self.support, '/bridge', LIMITS)
+        run = apple.AppleVirtualizationRun(self.project, self.build, availability)
+        run._active = True
+        with patch.object(apple.GLib, 'timeout_add_seconds', return_value=42) as schedule:
+            run._handle_event('STATE:running')
+        schedule.assert_called_once_with(30, run._report_missing_serial_output)
+        self.assertTrue(run.ready)
+        run._report_missing_serial_output()
+        self.assertIn('No guest serial output after 30 seconds', run.output[-1])
 
     def test_stale_events_after_stop_do_not_reactivate_run(self):
         run = apple.AppleVirtualizationRun(self.project, self.build, apple.AppleSupport(self.support))

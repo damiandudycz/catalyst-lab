@@ -1,5 +1,5 @@
 from __future__ import annotations
-import base64, os, shlex, sys
+import base64, os, shlex, sys, uuid
 from datetime import datetime
 from .ssh_connection import quote
 from .deploy_system import init_system_script
@@ -11,7 +11,7 @@ from .deploy_system import init_system_script
 # to fill the disk when it starts first time (catalystlab-grow-root). Image is compressed with xz, Raspberry Pi Imager
 # and other tools write .img.xz directly.
 # On Linux image is created through root helper (like disks of this computer). On macOS in virtual machine, where
-# Catalyst Lab folder is shared at the same path, so image is created next to build.
+# Catalyst Lab folder is shared at the same path, so image is created in the library Temporary folder.
 
 # Free space left in root filesystem of image, for first start (logs, generated files) before it grows.
 IMAGE_FREE_SPACE_RATIO = 0.2
@@ -50,9 +50,11 @@ def initial_image_size(archive_size: int) -> int:
     return max(8 * gib, (archive_size * 8 + 8 * gib) // gib * gib)
 
 def image_path(build) -> str:
-    """New image file next to build archive."""
+    """Unique working image in the library Temporary folder."""
+    from .repository import Repository
+    temporary = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
     name = (build.stage_name or "image").replace("/", "_")
-    return os.path.join(build.path, f"{name}-{datetime.now().strftime('%Y%m%dT%H%M%S')}.img")
+    return os.path.join(temporary, f"deploy-{uuid.uuid4().hex}", f"{name}-{datetime.now().strftime('%Y%m%dT%H%M%S')}.img")
 
 class MachineRootConnection:
     """Runs scripts as root in virtual machine. Machine is used (kept running) while connection is open."""
@@ -142,6 +144,7 @@ def create_image_script(path: str, size: int) -> str:
     """Creates sparse image file and attaches it as loop device with partitions, prints device as LOOP=..."""
     image = quote(path)
     return f"""set -e
+mkdir -p {quote(os.path.dirname(path))}
 rm -f {image}
 truncate -s {size} {image}
 LOOP=$(losetup -f --show -P {image})

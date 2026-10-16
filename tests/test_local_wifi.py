@@ -29,3 +29,15 @@ class LocalWifiTests(unittest.TestCase):
     def test_missing_tools_returns_no_suggestion(self):
         with patch.object(system.sys, 'platform', 'linux'), patch.object(system.subprocess, 'run', side_effect=FileNotFoundError()):
             self.assertIsNone(system.local_wifi_ssid())
+
+class NativeWifiTests(unittest.TestCase):
+    def test_native_permission_path_is_used_when_requested(self):
+        with patch.object(system.sys, 'platform', 'darwin'), patch.object(system, '_mac_wifi_ssid', return_value='Home Wi-Fi') as native, patch.object(system.subprocess, 'run') as run:
+            self.assertEqual(system.local_wifi_ssid(request_permission=True), 'Home Wi-Fi')
+            native.assert_called_once_with()
+            run.assert_not_called()
+
+    def test_permission_is_not_requested_for_passive_lookup(self):
+        with patch.object(system.sys, 'platform', 'darwin'), patch.object(system, '_mac_wifi_ssid') as native, patch.dict(sys.modules, {'CoreWLAN': None}), patch.object(system.subprocess, 'run', side_effect=FileNotFoundError()):
+            self.assertIsNone(system.local_wifi_ssid())
+            native.assert_not_called()

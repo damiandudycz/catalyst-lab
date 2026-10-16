@@ -11,9 +11,14 @@ from .app_events import AppEvents, app_event_bus
 
 # ------------------------------------------------------------------------------
 # Build running in QEMU: screen of machine (VNC), its serial console and QEMU log, with power controls. Stage gets
-# disk image made first (once, kept in build folder).
+# disk image made first (once, kept in the library cache).
 
 _ANSI = re.compile(r"\x1b\[[0-9;?=<>:]*[A-Za-z]|\x1b[()][A-Za-z0-9]|\x1b[=>78]|\r")
+
+
+def _visible_serial_text(text: str) -> str:
+    text = _ANSI.sub("", text)
+    return "".join(char for char in text if char in "\n\t" or char.isprintable())
 
 def _gib(size: int) -> str:
     return f"{size / 1024 ** 3:.1f} GiB"
@@ -81,7 +86,7 @@ class _StepImage(MultiStageProcessStage):
             # Size: stage unpacked (about 4 times its archive) and free space, sparse file takes only used space.
             size = max(8 << 30, (os.path.getsize(build.artifact_path) * 5 // (1 << 30) + 4) << 30)
             script = stage_image_script(build.artifact_path, directory, size, process.support.kernel,
-                                        process.support.initramfs, process.support.machine.console)
+                                        process.support.initramfs)
             if not connection.run(script, self.log):
                 raise RuntimeError("Failed to create disk image")
             self.complete(MultiStageProcessStageState.COMPLETED)
@@ -114,6 +119,7 @@ class QemuRunView(Gtk.Box):
         self._serial_pending = ""
         self._auto_console_detection = False
         self._native_input_active = False
+        self._native_display_suspended = False
         self._native_pressed_keys = {}
         self._native_input_root = None
         self._native_event_controller = None
@@ -189,7 +195,10 @@ class QemuRunView(Gtk.Box):
         screen.set_visible_child_name("status")
         self._screen_widget = screen
         self._screen_css = Gtk.CssProvider()
-        self._screen_css.load_from_data(b".qemu-screen { background-color: #000; }")
+        self._screen_css.load_from_data(
+            b".qemu-screen { background-color: #000; } "
+            b".console-clear, .console-clear text { background-color: transparent; }"
+        )
         Gtk.StyleContext.add_provider_for_display(self.get_display(), self._screen_css,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.stack.add_titled_with_icon(screen, "screen", "Screen", "video-display-symbolic")
@@ -200,10 +209,22 @@ class QemuRunView(Gtk.Box):
             "No serial output received yet. The guest may not have started a serial console."
         )
         self.console_placeholder = Gtk.Label(label=console_placeholder_text,
-                                             wrap=True, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+                                             wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=60,
+                                             halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
+                                             margin_start=24, margin_end=24, margin_top=24, margin_bottom=24)
         self.console_placeholder.add_css_class("dimmed")
         self.console_placeholder.set_can_target(False)
         console_page = Gtk.Overlay(child=console)
+        console_page.add_css_class("console-clear")
+        self.console_view.add_css_class("console-clear")
+        self.console_scroller = console
+        self.console_page = console_page
+        console.connect("map", lambda _: self._schedule_console_layout_refresh())
+        console_page.set_hexpand(True)
+        console_page.set_vexpand(True)
+        # An empty serial console has nothing to scroll. Enable vertical scrolling
+        # only after the guest starts sending output.
+        console.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
         console_page.add_overlay(self.console_placeholder)
         self.stack.add_titled_with_icon(console_page, "console", "Console", "utilities-terminal-symbolic")
         self.log_view, log = self._text_view(editable_input=False)
@@ -276,18 +297,48 @@ class QemuRunView(Gtk.Box):
             self._detach_native_display()
         if name in names and self.view_toggle.get_active() != names.index(name):
             self.view_toggle.set_active(names.index(name))
+        if name == "console" and hasattr(self, "console_page"):
+            # ViewStack can initially allocate a newly shown page before the
+            # window settles. Repeat the resize after it has been on screen.
+            self._schedule_console_layout_refresh()
+
+    def _schedule_console_layout_refresh(self):
+        GLib.timeout_add(100, self._refresh_console_layout)
+        GLib.timeout_add(350, self._refresh_console_layout)
+        return False
+
+    def _refresh_console_layout(self):
+        if self.stack.get_visible_child_name() != "console" or not self.console_scroller.get_mapped():
+            return GLib.SOURCE_REMOVE
+        vertical = self.console_scroller.get_vadjustment()
+        follow_output = vertical.get_upper() - vertical.get_value() <= vertical.get_page_size() + 2
+        for widget in (self.console_page, self.console_scroller, self.console_view):
+            widget.queue_resize()
+        # A delayed allocation can leave GTK's adjustments at the old page size.
+        # Keep the console at the left edge and preserve live-output tail-following.
+        self.console_scroller.get_hadjustment().set_value(
+            self.console_scroller.get_hadjustment().get_lower())
+        if follow_output:
+            vertical.set_value(max(vertical.get_lower(), vertical.get_upper() - vertical.get_page_size()))
+        return GLib.SOURCE_REMOVE
 
     def _text_view(self, editable_input: bool):
-        view = Gtk.TextView(monospace=True, editable=False, cursor_visible=editable_input, wrap_mode=Gtk.WrapMode.CHAR,
+        view = Gtk.TextView(monospace=True, editable=False, cursor_visible=editable_input,
+                            wrap_mode=Gtk.WrapMode.CHAR, hexpand=True, vexpand=True,
                             top_margin=8, bottom_margin=8, left_margin=8, right_margin=8)
         if editable_input:
             # Typed keys go to serial console of machine.
             keys = Gtk.EventControllerKey()
             keys.connect("key-pressed", self._on_console_key)
             view.add_controller(keys)
-        return view, Gtk.ScrolledWindow(child=view, vexpand=True)
+        scrolled = Gtk.ScrolledWindow(child=view, hexpand=True, vexpand=True,
+                                      hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                      vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
+        return view, scrolled
 
     def _append(self, view: Gtk.TextView, text: str):
+        if view is self.console_view and not text.strip():
+            return
         buffer = view.get_buffer()
         buffer.insert(buffer.get_end_iter(), text)
         if buffer.get_line_count() > 5000:
@@ -296,7 +347,8 @@ class QemuRunView(Gtk.Box):
         if view is self.log_view:
             self._update_log_page()
         elif view is self.console_view:
-            self.console_placeholder.set_visible(buffer.get_char_count() == 0)
+            self.console_placeholder.set_visible(not buffer.get_text(
+                buffer.get_start_iter(), buffer.get_end_iter(), True).strip())
 
     def _on_console_key(self, controller, keyval, keycode, state) -> bool:
         if self.run is None:
@@ -321,6 +373,7 @@ class QemuRunView(Gtk.Box):
         self.status_label.set_label(text)
 
     def _show_progress(self, text: str):
+        self._screen_widget.remove_css_class("qemu-screen")
         preparing = text.startswith("Preparing disk image")
         self.status_heading.set_label("Preparing disk image" if preparing else "Starting virtual machine")
         detail = text.split(" · ", 1)[-1] if " · " in text else text
@@ -345,6 +398,7 @@ class QemuRunView(Gtk.Box):
         self.status_spinner.stop()
         self.status_spinner.set_visible(False)
         self.progress_bar.set_visible(False)
+        self.progress_bar.set_show_text(False)
         if self._progress_timer is not None:
             GLib.source_remove(self._progress_timer)
             self._progress_timer = None
@@ -353,6 +407,7 @@ class QemuRunView(Gtk.Box):
         self.screen_status.set_label(text)
         self.screen_status.set_visible(bool(text))
         if text:
+            self._screen_widget.remove_css_class("qemu-screen")
             self.status_heading.set_label("Virtual machine")
             self._screen_widget.set_visible_child_name("status")
         else:
@@ -387,9 +442,15 @@ class QemuRunView(Gtk.Box):
         if run.output:
             self.log_view.get_buffer().set_text("\n".join(run.output) + "\n")
         if run.serial_output:
-            text = _ANSI.sub("", run.serial_output)
-            self.console_view.get_buffer().set_text(text)
-            self.console_placeholder.set_visible(not text)
+            text = _visible_serial_text(run.serial_output)
+            if text.strip():
+                self.console_view.get_buffer().set_text(text)
+                self.console_placeholder.set_visible(False)
+                self.console_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            else:
+                self.console_view.get_buffer().set_text("")
+                self.console_placeholder.set_visible(True)
+                self.console_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
         self._set_running(run.is_running)
         self.usage_group.set_visible(run.is_running)
         if run.is_running:
@@ -404,6 +465,24 @@ class QemuRunView(Gtk.Box):
         self._capture_native_input(False)
         if isinstance(self.run, AppleVirtualizationRun):
             self.run.detach_display()
+
+    def suspend_native_display(self) -> bool:
+        """Detach the AVF NSView while a GTK modal is shown above this window."""
+        if self.backend != "apple":
+            return False
+        self._native_display_suspended = True
+        self._detach_native_display()
+        return True
+
+    def resume_native_display(self):
+        if self.backend == "apple":
+            self._native_display_suspended = False
+            GLib.idle_add(self._resume_native_display)
+
+    def _resume_native_display(self):
+        if hasattr(self, "native_display"):
+            self._sync_native_display(self.native_display)
+        return GLib.SOURCE_REMOVE
 
     def _capture_native_input(self, active):
         active = active and isinstance(self.run, AppleVirtualizationRun) and self.run.ready
@@ -456,6 +535,9 @@ class QemuRunView(Gtk.Box):
 
     def _sync_native_display(self, widget, frame_clock=None):
         if not isinstance(self.run, AppleVirtualizationRun) or not self.run.ready:
+            return True
+        if self._native_display_suspended:
+            self.run.detach_display()
             return True
         native = widget.get_native()
         if (not widget.get_mapped() or native is None or self.stack.get_visible_child_name() != "screen"
@@ -527,6 +609,7 @@ class QemuRunView(Gtk.Box):
         self._update_log_page()
         self.console_view.get_buffer().set_text("")
         self.console_placeholder.set_visible(True)
+        self.console_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
         try:
             run.start()
         except Exception as e:
@@ -556,9 +639,26 @@ class QemuRunView(Gtk.Box):
         self.preparation.start()
 
     def _on_preparation_output(self, line: str):
-        self._append(self.log_view, line + "\n")
-        if line.strip():
-            self._show_progress(f"Preparing disk image · {line.strip()[:100]}")
+        # GLib callbacks can arrive after extraction and VM startup have already finished.
+        # Don't let queued progress overwrite the stopped or running VM state.
+        if self.preparation is None or self.preparation.status != MultiStageProcessState.IN_PROGRESS:
+            return
+        if self.run is not None and self.run.is_running:
+            return
+        if line.startswith("@@extract-progress "):
+            try:
+                percent = max(0, min(100, int(line.split()[-1])))
+            except ValueError:
+                return
+            self._show_progress(f"Preparing disk image · Extracting stage · {percent}% of archive read")
+            if self._progress_timer is not None:
+                GLib.source_remove(self._progress_timer)
+                self._progress_timer = None
+            self.progress_bar.set_fraction(percent / 100)
+            self.progress_bar.set_show_text(False)
+            return
+        # Image preparation output is repetitive shell chatter, not VM output. Keep it out
+        # of the VM log tab; extraction progress is shown in the status view above.
 
     def _on_preparation_state(self, state):
         def update():
@@ -591,6 +691,7 @@ class QemuRunView(Gtk.Box):
                 self.vnc_view.clear()
                 self.console_view.get_buffer().set_text("")
                 self.console_placeholder.set_visible(True)
+                self.console_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
             self.log_view.get_buffer().set_text("\n".join(run.output) + "\n" if run.output else "")
             self._update_log_page()
             self.usage_group.set_visible(running)
@@ -600,6 +701,25 @@ class QemuRunView(Gtk.Box):
         GLib.idle_add(update)
 
     def _on_output_line(self, line: str):
+        if line.startswith("DISK_PROGRESS:"):
+            try:
+                percent = max(0, min(100, int(line.partition(":")[2])))
+            except ValueError:
+                return
+            self._show_progress(f"Preparing disk image · Creating temporary VM disk from cached image · {percent}%")
+            if self._progress_timer is not None:
+                GLib.source_remove(self._progress_timer)
+                self._progress_timer = None
+            self.progress_bar.set_fraction(percent / 100)
+            self.progress_bar.set_show_text(False)
+            # Keep the selected Log tab useful during preparation without adding a
+            # new line for every progress update.
+            self.log_view.get_buffer().set_text(f"Preparing temporary disk image… {percent}%\n")
+            self._update_log_page()
+            return
+        if line.startswith("No guest serial output after "):
+            self._set_status("Apple Virtualization is running · No guest serial output")
+            self.console_placeholder.set_label(line)
         self._append(self.log_view, line + "\n")
 
     def _update_log_page(self):
@@ -677,12 +797,18 @@ class QemuRunView(Gtk.Box):
 
     def _on_serial(self, text: str):
         def append():
+            if (text and self.run is not None
+                    and self.status_label.get_label().startswith("Apple Virtualization is running · No guest serial output")):
+                self._set_status(self._running_status(self.run))
             # Control sequences can be split between reads, incomplete one waits for its rest.
             pending = self._serial_pending + text
             incomplete = re.search(r"\x1b[^A-Za-z]*$", pending)
             self._serial_pending = pending[incomplete.start():] if incomplete else ""
             complete = pending[:incomplete.start()] if incomplete else pending
-            self._append(self.console_view, _ANSI.sub("", complete))
+            visible_text = _visible_serial_text(complete)
+            if visible_text.strip():
+                self.console_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+                self._append(self.console_view, visible_text)
             serial_output = self.run.serial_output.casefold() if self.run is not None else ""
             if self._auto_console_detection and any(message in serial_output for message in (
                     "display output is not active", "can't be loaded on", "could not load image")):

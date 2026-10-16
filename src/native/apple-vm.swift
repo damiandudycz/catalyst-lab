@@ -1,6 +1,85 @@
 import AppKit
 import Virtualization
 import Security
+import Darwin
+
+private func copyDiskImage(_ source: URL, to destination: URL, report: @escaping (String) -> Void) throws {
+    // APFS clones are copy-on-write, so the VM gets an independent writable disk
+    // without eagerly copying all of the base image's virtual size.
+    if clonefile(source.path, destination.path, 0) == 0 {
+        report("DISK_PROGRESS:100")
+        return
+    }
+
+    let sourceFD = open(source.path, O_RDONLY)
+    guard sourceFD >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+    defer { close(sourceFD) }
+    let destinationFD = open(destination.path, O_WRONLY | O_CREAT | O_EXCL, mode_t(0o600))
+    guard destinationFD >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+    defer { close(destinationFD) }
+
+    var fileInfo = stat()
+    guard fstat(sourceFD, &fileInfo) == 0, ftruncate(destinationFD, fileInfo.st_size) == 0 else {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
+    let size = fileInfo.st_size
+    guard size > 0 else { report("DISK_PROGRESS:100"); return }
+
+    var lastPercent = -1
+    func progress(_ offset: off_t) {
+        let percent = min(100, Int(offset * 100 / size))
+        if percent != lastPercent {
+            lastPercent = percent
+            report("DISK_PROGRESS:\(percent)")
+        }
+    }
+    func copyRange(_ start: off_t, _ end: off_t) throws {
+        let bufferSize = 8 * 1024 * 1024
+        let buffer = UnsafeMutableRawPointer.allocate(byteCount: bufferSize, alignment: 4096)
+        defer { buffer.deallocate() }
+        var offset = start
+        while offset < end {
+            let count = Int(min(off_t(bufferSize), end - offset))
+            let bytesRead = pread(sourceFD, buffer, count, offset)
+            guard bytesRead > 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+            var written = 0
+            while written < bytesRead {
+                let bytesWritten = pwrite(destinationFD, buffer.advanced(by: written), bytesRead - written, offset + off_t(written))
+                guard bytesWritten > 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+                written += bytesWritten
+            }
+            offset += off_t(bytesRead)
+            progress(offset)
+        }
+    }
+
+    var position: off_t = 0
+    while position < size {
+        let dataStart = lseek(sourceFD, position, SEEK_DATA)
+        if dataStart == -1 {
+            if errno == ENXIO { break } // Remaining bytes are a sparse hole.
+            if errno == EINVAL || errno == ENOTSUP {
+                // Some filesystems do not support sparse extent queries.
+                try copyRange(position, size)
+                position = size
+                break
+            }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        if dataStart > position { progress(dataStart) }
+        let dataEnd = lseek(sourceFD, dataStart, SEEK_HOLE)
+        if dataEnd == -1 && (errno == EINVAL || errno == ENOTSUP) {
+            try copyRange(position, size)
+            position = size
+            break
+        }
+        guard dataEnd >= dataStart else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        try copyRange(dataStart, min(dataEnd, size))
+        position = dataEnd
+        progress(position)
+    }
+    progress(size)
+}
 
 struct Configuration: Decodable {
     let name: String
@@ -62,8 +141,10 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
                 do {
                     if let source = options.disk {
                         self.report("Preparing temporary disk image…")
-                        try FileManager.default.copyItem(at: URL(fileURLWithPath: source), to:
-                            URL(fileURLWithPath: options.directory).appendingPathComponent("root.img"))
+                        try copyDiskImage(URL(fileURLWithPath: source), to:
+                            URL(fileURLWithPath: options.directory).appendingPathComponent("root.img")) { message in
+                                self.report(message)
+                            }
                     }
                     DispatchQueue.main.async {
                         if self.canceled { self.finish(); return }
@@ -270,4 +351,52 @@ public func key(_ pointer: UnsafeMutableRawPointer, _ code: UInt16, _ pressed: B
     if #available(macOS 13.0, *) {
         Unmanaged<Runner>.fromOpaque(pointer).takeUnretainedValue().key(code, pressed, flags, String(cString: text))
     }
+}
+
+// CoreWLAN hides SSIDs until the host app has Location authorization.
+import CoreLocation
+import CoreWLAN
+
+private final class WiFiAccess: NSObject, CLLocationManagerDelegate {
+    static let shared = WiFiAccess()
+    private let manager = CLLocationManager()
+    private var requested = false
+
+    override init() {
+        super.init()
+        manager.delegate = self
+    }
+
+    func result(_ request: Bool) -> String {
+        let status = manager.authorizationStatus
+        var state = "unavailable"
+        var ssid: String? = nil
+        if status == .authorizedAlways {
+            state = "authorized"
+            ssid = CWWiFiClient.shared().interface()?.ssid()
+        } else if status == .notDetermined && CLLocationManager.locationServicesEnabled() {
+            state = "pending"
+            if request && !requested {
+                requested = true
+                manager.requestWhenInUseAuthorization()
+            }
+        } else {
+            state = "denied"
+        }
+        let data = try! JSONSerialization.data(withJSONObject: ["status": state, "ssid": ssid ?? ""])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {}
+}
+
+@_cdecl("cl_wifi_status")
+public func wifiStatus(_ request: Bool) -> UnsafeMutablePointer<CChar>? {
+    var result = "{}"
+    if Thread.isMainThread {
+        result = WiFiAccess.shared.result(request)
+    } else {
+        DispatchQueue.main.sync { result = WiFiAccess.shared.result(request) }
+    }
+    return strdup(result)
 }

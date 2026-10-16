@@ -10,7 +10,7 @@ from .deploy_image import (
 
 class DeployStepCreateImage(DeployStep):
     def __init__(self, multistage_process):
-        super().__init__(name="Create image", description="Checks tools and creates image file attached as loop device",
+        super().__init__(name="Create image", description="Connects to the image builder, checks tools and creates a temporary image",
                          multistage_process=multistage_process)
     def run(self):
         import os
@@ -18,7 +18,10 @@ class DeployStepCreateImage(DeployStep):
         process = self.multistage_process
         plan = process.plan
         if not process.connection.is_alive():
-            raise RuntimeError(f"Connection to {process.connection.host} ended, start again")
+            self.log(f"Connecting to {process.connection.host}")
+            error = process.connection.connect()
+            if error:
+                raise RuntimeError(error)
         if not os.path.isfile(process.build.artifact_path or ""):
             raise RuntimeError("Build archive doesn't exist anymore")
         tools = " ".join(quote(tool) for tool in plan.required_tools())

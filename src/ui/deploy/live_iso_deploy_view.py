@@ -137,10 +137,12 @@ class LiveIsoDeployView(Gtk.Box):
         system.add(self.ssh_row)
         wifi = group("Wi-Fi", "Network connected automatically when live system starts (NetworkManager). Password is "
                      "stored in ISO, readable by anyone who has the ISO file or drive.")
+        self.wifi_enabled_row = Adw.SwitchRow(title="Configure Wi-Fi", active=False)
+        wifi.add(self.wifi_enabled_row)
+        self.wifi_enabled_row.connect("notify::active", self._on_wifi_enabled)
         self.wifi_ssid_row = entry(wifi, "Network name")
         self.wifi_ssid_row.connect("changed", self._on_wifi_name_edited)
         self._wifi_name_edited = False
-        threading.Thread(target=self._suggest_wifi_name, daemon=True).start()
         self.wifi_password_row = entry(wifi, "Password, empty for open network", password=True)
         self.wifi_hidden_row = Adw.SwitchRow(title="Hidden network", subtitle="Network doesn't broadcast its name")
         self.wifi_hidden_row.connect("notify::active", self._on_system_changed)
@@ -186,6 +188,8 @@ class LiveIsoDeployView(Gtk.Box):
                                     keymap=self.keymap_row.get_text().strip())
 
     def _wifi(self) -> WifiSettings | None:
+        if not self.wifi_enabled_row.get_active():
+            return None
         ssid = self.wifi_ssid_row.get_text()
         if not ssid.strip():
             return None
@@ -421,12 +425,22 @@ class LiveIsoDeployView(Gtk.Box):
         installation.start()
         self.wizard_view.set_installation(installation)
 
+    def _on_wifi_enabled(self, *_):
+        if self.wifi_enabled_row.get_active() and not getattr(self, "_wifi_detection_started", False):
+            self._wifi_detection_started = True
+            if not self.wifi_ssid_row.get_text():
+                threading.Thread(target=self._suggest_wifi_name, daemon=True).start()
+        self._on_system_changed()
+
     def _on_wifi_name_edited(self, *_):
         self._wifi_name_edited = True
 
     def _suggest_wifi_name(self):
-        ssid = local_wifi_ssid()
+        ssid = local_wifi_ssid(request_permission=True)
         def apply():
+            if not ssid and sys.platform == "darwin":
+                self.wifi_ssid_row.set_tooltip_text(
+                    "If connected to Wi-Fi, allow Location access for Catalyst Lab in System Settings > Privacy & Security > Location Services, then reopen deploy. You can also enter the network name manually.")
             if ssid and not self._wifi_name_edited and not self.wifi_ssid_row.get_text():
                 self.wifi_ssid_row.set_text(ssid)
             return False

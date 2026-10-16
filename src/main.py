@@ -1,3 +1,4 @@
+import os
 import sys
 import gi
 
@@ -19,7 +20,8 @@ class CatalystlabApplication(Adw.Application):
     """The main application singleton class."""
 
     def __init__(self):
-        super().__init__(application_id='com.damiandudycz.CatalystLab',
+        application_id = os.environ.get('CATALYSTLAB_APPLICATION_ID', 'com.damiandudycz.CatalystLab')
+        super().__init__(application_id=application_id,
                          flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.restart_requested = False
         self.create_action('quit', self.on_quit_action, ['<primary>q'])
@@ -47,6 +49,9 @@ class CatalystlabApplication(Adw.Application):
         startup_cleanup_needed = not self._library_initialized
         # Before any operation starts, they keep their data there.
         if startup_cleanup_needed:
+            # Stop QEMU processes before clearing their Library/Temporary run folders.
+            from .qemu_run import stop_orphaned_runs
+            stop_orphaned_runs()
             from .rootless import clear_temporary_directory
             clear_temporary_directory()
             # A killed app can leave the large sparse workspace image behind. It is safe to
@@ -61,10 +66,6 @@ class CatalystlabApplication(Adw.Application):
         RelengManager.shared().refresh()
         OverlayManager.shared().refresh()
         ProjectManager.shared().refresh()
-        # Virtual machines (QEMU) left running by killed app.
-        if startup_cleanup_needed:
-            from .qemu_run import stop_orphaned_runs
-            stop_orphaned_runs()
         # Unused snapshots are removed when enabled in Snapshots section.
         if startup_cleanup_needed:
             SnapshotManager.shared().start_auto_clean()

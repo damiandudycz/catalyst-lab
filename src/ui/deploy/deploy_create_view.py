@@ -28,7 +28,7 @@ class DeployMethod(Enum):
     @property
     def title(self) -> str:
         return {DeployMethod.SSH: "Machine through SSH", DeployMethod.LOCAL_DISK: "Disk of this computer",
-                DeployMethod.IMAGE_FILE: "Disk image file"}[self]
+                DeployMethod.IMAGE_FILE: "Create disk image"}[self]
 
     @property
     def icon_name(self) -> str:
@@ -56,7 +56,7 @@ class DeployMethod(Enum):
         description = {
             DeployMethod.SSH: "Other machine booted from Gentoo LiveCD, installed through SSH connection",
             DeployMethod.LOCAL_DISK: "SD card or external disk connected to this computer, booted later on other machine",
-            DeployMethod.IMAGE_FILE: "Image (.img.xz) saved where you choose, written later to SD card or disk with Raspberry Pi Imager or dd. "
+            DeployMethod.IMAGE_FILE: "Create an .img or compressed .img.xz file to write to an SD card or disk later with Raspberry Pi Imager or dd. "
                                      "It's sized to the system and grows to fill the disk at first start",
         }[self]
         return self.unavailable_reason or description
@@ -167,7 +167,7 @@ class DeployCreateView(Gtk.Box):
         self.keymap_row.set_text(localization.keymap)
         self.key_checks: list[tuple[Gtk.CheckButton, str]] = []
         for key in local_public_keys():
-            check = Gtk.CheckButton(active=True, valign=Gtk.Align.CENTER)
+            check = Gtk.CheckButton(active=False, valign=Gtk.Align.CENTER)
             row = Adw.ActionRow(title=GLib.markup_escape_text(key.title), subtitle=GLib.markup_escape_text(key.subtitle))
             row.add_prefix(check)
             row.set_activatable_widget(check)
@@ -247,6 +247,11 @@ class DeployCreateView(Gtk.Box):
         self._shown_method = method
         local = self._local()
         self.local_group.set_visible(local)
+        self.local_group.set_title("Create disk image" if self._image() else "Disk of this computer")
+        self.local_group.set_description(
+            "Select the firmware of the machine that will boot this image. Installation creates the image in Temporary, then saves it to your chosen location."
+            if self._image() else
+            "Connect an SD card or external disk. Select the firmware of the machine that will boot from it. Root access is needed to write to the disk.")
         self.compress_row.set_visible(self._image())
         self.ssh_group.set_visible(not local)
         self.reboot_row.set_visible(not local)
@@ -263,6 +268,8 @@ class DeployCreateView(Gtk.Box):
             if self.connection:
                 threading.Thread(target=self.connection.close, daemon=True).start()
                 self.connection = None
+        if self._image():
+            self._prepare_image()
         self._update_connect_button()
 
     @Gtk.Template.Callback()
@@ -284,9 +291,8 @@ class DeployCreateView(Gtk.Box):
         return self.firmware_options[index] if 0 <= index < len(self.firmware_options) else TargetFirmware.OTHER
 
     def _update_connect_button(self):
+        self.connect_button.set_visible(not self._image())
         if self._image():
-            self.connect_button.set_sensitive(not self.connecting and self.local_architecture is not None and self.build is not None)
-            self.connect_button.set_label("Preparing..." if self.connecting else "Prepare image" if self.machine is None else "Prepare again")
             return
         if self._local():
             self.connect_button.set_sensitive(not self.connecting and self.local_architecture is not None)
@@ -299,9 +305,6 @@ class DeployCreateView(Gtk.Box):
     @Gtk.Template.Callback()
     def on_connect_clicked(self, sender):
         if self.connecting or not self.connect_button.get_sensitive():
-            return
-        if self._image():
-            self._prepare_image()
             return
         if self._local():
             self._find_local_disks()
@@ -381,36 +384,15 @@ class DeployCreateView(Gtk.Box):
         threading.Thread(target=work, daemon=True).start()
 
     def _prepare_image(self):
-        """Root access (Linux) or virtual machine where image is created."""
-        architecture, firmware = self.local_architecture, self._firmware()
-        method = self.method_selection_view.selected_item
-        self.connecting = True
-        self._set_status(None)
-        self._update_connect_button()
-        previous = self.connection
-        project_directory, build = self.project_directory, self.build
-        def work():
-            if previous:
-                previous.close()
-            connection = image_connection(project_directory)
-            error = connection.connect()
-            machine = None
-            if error is None:
-                archive_size = os.path.getsize(build.artifact_path) if os.path.isfile(build.artifact_path or "") else 0
-                machine = TargetMachine.for_image(connection, architecture, firmware, image_path(build), initial_image_size(archive_size))
-            def done():
-                self.connecting = False
-                if self.method_selection_view.selected_item != method:
-                    if machine:
-                        threading.Thread(target=connection.close, daemon=True).start()
-                    self._update_connect_button()
-                    return
-                self.connection = connection if machine else None
-                self._set_machine(machine)
-                self._set_status(error)
-                self._update_connect_button()
-            GLib.idle_add(done)
-        threading.Thread(target=work, daemon=True).start()
+        """Plan an image without starting a VM or requesting root access."""
+        if self.local_architecture is None or self.build is None:
+            self._set_machine(None)
+            return
+        self.connection = image_connection(self.project_directory)
+        archive_size = os.path.getsize(self.build.artifact_path) if os.path.isfile(self.build.artifact_path or "") else 0
+        self._set_machine(TargetMachine.for_image(
+            self.connection, self.local_architecture, self._firmware(),
+            image_path(self.build), initial_image_size(archive_size)))
 
     def _set_status(self, error: str | None):
         self.connection_status_label.set_visible(error is not None)
@@ -420,11 +402,11 @@ class DeployCreateView(Gtk.Box):
 
     def _set_machine(self, machine: TargetMachine | None):
         self.machine = machine
-        self.machine_group.set_visible(machine is not None)
+        self.machine_group.set_visible(machine is not None and not machine.image)
         if machine and machine.image:
             self.machine_row.set_title(GLib.markup_escape_text(f"Image {os.path.basename(machine.disks[0].path)}"))
             creator = f" by {self.connection.host}" if self.connection.host.startswith("virtual machine") else ""
-            self.machine_row.set_subtitle(GLib.markup_escape_text(f"{machine.description}\nPrepared in build folder{creator}, saved where you choose when deploying"))
+            self.machine_row.set_subtitle(GLib.markup_escape_text(f"{machine.description}\nCreated during installation in Temporary{creator}, saved where you choose when deploying"))
             if not self.hostname_row.get_text():
                 self.hostname_row.set_text("gentoo")
             self._update_boot_options()
@@ -643,12 +625,22 @@ class DeployCreateView(Gtk.Box):
 
     # Wi-Fi
 
+    def _on_wifi_enabled(self, *_):
+        if self.wifi_row.get_enable_expansion() and not getattr(self, "_wifi_detection_started", False):
+            self._wifi_detection_started = True
+            if not self.wifi_ssid_row.get_text():
+                threading.Thread(target=self._suggest_wifi_name, daemon=True).start()
+        self.on_system_changed(self.wifi_row)
+
     def _on_wifi_name_edited(self, *_):
         self._wifi_name_edited = True
 
     def _suggest_wifi_name(self):
-        ssid = local_wifi_ssid()
+        ssid = local_wifi_ssid(request_permission=True)
         def apply():
+            if not ssid and sys.platform == "darwin":
+                self.wifi_ssid_row.set_tooltip_text(
+                    "If connected to Wi-Fi, allow Location access for Catalyst Lab in System Settings > Privacy & Security > Location Services, then reopen deploy. You can also enter the network name manually.")
             if ssid and not self._wifi_name_edited and not self.wifi_ssid_row.get_text():
                 self.wifi_ssid_row.set_text(ssid)
             return False
@@ -658,11 +650,10 @@ class DeployCreateView(Gtk.Box):
         """Wi-Fi network connected by selected network service (NetworkManager connection, or wpa_supplicant)."""
         self.wifi_row = Adw.ExpanderRow(title="Wi-Fi", subtitle="Network connected automatically", show_enable_switch=True,
                                         enable_expansion=False)
-        self.wifi_row.connect("notify::enable-expansion", self.on_system_changed)
+        self.wifi_row.connect("notify::enable-expansion", self._on_wifi_enabled)
         self.wifi_ssid_row = Adw.EntryRow(title="Network name")
         self.wifi_ssid_row.connect("changed", self._on_wifi_name_edited)
         self._wifi_name_edited = False
-        threading.Thread(target=self._suggest_wifi_name, daemon=True).start()
         self.wifi_password_row = Adw.PasswordEntryRow(title="Password, empty for open network")
         self.wifi_hidden_row = Adw.SwitchRow(title="Hidden network", subtitle="Network doesn't broadcast its name")
         self.wifi_country_row = Adw.EntryRow(title="Country code, eg. PL (channels allowed in country)")
@@ -933,7 +924,7 @@ class DeployCreateView(Gtk.Box):
             return
         owner = "this computer" if self.machine.local else self.connection.host
         if plan.image:
-            # Location of image (save dialog asks before replacing existing file). Image is created next to build,
+            # Location of image (save dialog asks before replacing existing file). Working image is created in Temporary,
             # where virtual machine can write, and moved there.
             name = os.path.basename(plan.image_path) + (".xz" if plan.compress_image else "")
             downloads = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) or os.path.expanduser("~")

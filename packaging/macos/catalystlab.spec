@@ -69,6 +69,8 @@ app = BUNDLE(
         "CFBundleVersion": VERSION,
         "LSMinimumSystemVersion": "13.0", # Virtualization.framework features used by Lima.
         "NSHighResolutionCapable": True,
+        "NSLocationWhenInUseUsageDescription": "Catalyst Lab uses Location access to suggest the name of your connected Wi-Fi network when deploying a system.",
+        "NSLocationUsageDescription": "Catalyst Lab uses Location access to suggest the name of your connected Wi-Fi network when deploying a system.",
         "LSApplicationCategoryType": "public.app-category.developer-tools",
     },
 )

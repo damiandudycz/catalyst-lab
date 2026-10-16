@@ -207,7 +207,7 @@ class DeployInstallation(MultiStageProcess):
         self.settings = settings
         self.contents = contents
         self.root = plan.root
-        self.output_path: str | None = None # Image saved where user selected (image is created next to build).
+        self.output_path: str | None = None # Image saved where user selected (working image is created in Temporary).
         self.mounted = False
         self._log_file = None
         self.log_path = self._new_log_path()

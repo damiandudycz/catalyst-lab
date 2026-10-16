@@ -275,6 +275,7 @@
                     <child>
                       <object class="AdwSwitchRow" id="reboot_row">
                         <property name="title">Reboot when finished</property>
+                        <property name="active">True</property>
                       </object>
                     </child>
                   </object>

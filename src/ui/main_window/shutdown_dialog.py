@@ -25,6 +25,12 @@ def request_shutdown(window) -> bool:
     active = [process for process in MultiStageProcess.started_processes
               if process.status == MultiStageProcessState.IN_PROGRESS]
     qemu_runs = [run for run in QemuRun.running_runs if run.is_running]
+    suspended_views = []
+    for run in qemu_runs:
+        view = getattr(run, "view", None)
+        suspend = getattr(view, "suspend_native_display", None)
+        if suspend is not None and suspend():
+            suspended_views.append(view)
     queue = BuildQueue.shared()
     queued_count = len(queue.entries)
     if not active and not qemu_runs:
@@ -46,9 +52,21 @@ def request_shutdown(window) -> bool:
     def on_response(_dialog, response):
         app._shutdown_confirmation = None
         if response == "close":
-            # The modal dialog prevents new work from being started before this snapshot.
-            app._shutdown_dialog = ShutdownDialog(window, active, qemu_runs, queue)
-            app._shutdown_dialog.present(window)
+            # Wait for the confirmation surface to close before presenting another
+            # modal surface over the same window.
+            def show_shutdown_dialog():
+                # The modal confirmation prevented new work before this snapshot.
+                shutdown_dialog = ShutdownDialog(window, active, qemu_runs, queue)
+                app._shutdown_dialog = shutdown_dialog
+                shutdown_dialog.present(window)
+                shutdown_dialog.start()
+                return GLib.SOURCE_REMOVE
+
+            GLib.idle_add(show_shutdown_dialog)
+        else:
+            # The user kept the app open; restore the embedded AVF display after
+            # the confirmation surface has closed.
+            GLib.idle_add(lambda: _resume_native_displays(suspended_views))
 
     dialog.connect("response", on_response)
     app._shutdown_confirmation = dialog
@@ -56,11 +74,18 @@ def request_shutdown(window) -> bool:
     return True
 
 
+def _resume_native_displays(views):
+    for view in views:
+        view.resume_native_display()
+    return GLib.SOURCE_REMOVE
+
+
 class ShutdownDialog(Adw.Dialog):
     """Visible, sequential cleanup of running operations before app exit."""
 
     def __init__(self, window, processes, qemu_runs, build_queue):
-        super().__init__(title="Closing Catalyst Lab", can_close=False, content_width=520)
+        super().__init__(title="Closing Catalyst Lab", can_close=False, content_width=520, content_height=500,
+                         presentation_mode=Adw.DialogPresentationMode.FLOATING)
         self.window = window
         self.app = window.get_application()
         self._steps = []
@@ -95,20 +120,27 @@ class ShutdownDialog(Adw.Dialog):
         box.append(heading)
         box.append(self.progress_bar)
 
-        self.rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.rows_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.rows_box.add_css_class("boxed-list")
         for label, _action in self._steps:
             row = Adw.ActionRow(title=label, subtitle="Waiting")
             icon = Gtk.Image.new_from_icon_name("content-loading-symbolic")
             icon.set_visible(False)
-            spinner = Adw.Spinner()
+            spinner = Gtk.Spinner()
             spinner.set_visible(False)
             row.add_prefix(icon)
             row.add_suffix(spinner)
             self.rows_box.append(row)
             self._rows.append((row, icon, spinner))
         if self._steps:
-            box.append(self.rows_box)
+            self.rows_scroller = Gtk.ScrolledWindow(
+                hscrollbar_policy=Gtk.PolicyType.NEVER,
+                vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                propagate_natural_height=False,
+            )
+            self.rows_scroller.set_max_content_height(260)
+            self.rows_scroller.set_child(self.rows_box)
+            box.append(self.rows_scroller)
 
         self.status_label = Gtk.Label(label="The app will close after cleanup finishes.", xalign=0, wrap=True)
         self.status_label.add_css_class("dimmed")
@@ -119,7 +151,12 @@ class ShutdownDialog(Adw.Dialog):
         box.append(self.close_button)
         self.set_child(box)
 
-        threading.Thread(target=self._run_steps, daemon=True, name="app-shutdown").start()
+        self._worker = None
+
+    def start(self):
+        if self._worker is None:
+            self._worker = threading.Thread(target=self._run_steps, daemon=True, name="app-shutdown")
+            self._worker.start()
 
     @staticmethod
     def _stop_qemu(run):

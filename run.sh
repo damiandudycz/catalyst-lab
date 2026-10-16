@@ -31,13 +31,28 @@ case "$(uname -s)" in
         # Virtualization.framework runs in the app process. Sign only a private copy
         # of Python, never Homebrew's executable or the venv's symlink to it.
         SOURCE_PYTHON=$("$PYTHON" -c 'import os, sys; p = os.path.join(sys.base_prefix, "Resources/Python.app/Contents/MacOS/Python"); print(p if os.path.isfile(p) else os.path.realpath(sys.executable))')
+        DEV_APP="$VENV/Catalyst Lab.app"
         VM_PYTHON="$VENV/bin/python3-vm"
+        APP_PYTHON="$DEV_APP/Contents/MacOS/python3-vm"
         ENTITLEMENTS="$ROOT/src/native/apple-vm.entitlements"
-        if [ ! -x "$VM_PYTHON" ] || [ "$SOURCE_PYTHON" -nt "$VM_PYTHON" ] || [ "$ENTITLEMENTS" -nt "$VM_PYTHON" ] || [ "$ROOT/run.sh" -nt "$VM_PYTHON" ] ||
-           ! codesign -d --entitlements - "$VM_PYTHON" 2>/dev/null | grep -q com.apple.security.virtualization; then
-            cp "$SOURCE_PYTHON" "$VM_PYTHON.tmp"
-            codesign --force --sign - --entitlements "$ENTITLEMENTS" "$VM_PYTHON.tmp"
-            mv -f "$VM_PYTHON.tmp" "$VM_PYTHON"
+        if [ ! -x "$APP_PYTHON" ] || [ "$SOURCE_PYTHON" -nt "$APP_PYTHON" ] || [ "$ENTITLEMENTS" -nt "$APP_PYTHON" ] || [ "$ROOT/run.sh" -nt "$APP_PYTHON" ]; then
+            mkdir -p "$DEV_APP/Contents/MacOS"
+            cp "$SOURCE_PYTHON" "$APP_PYTHON"
+            "$PYTHON" - "$DEV_APP/Contents/Info.plist" <<'PYPLIST'
+import plistlib, sys
+with open(sys.argv[1], 'wb') as stream:
+    plistlib.dump({
+        'CFBundleIdentifier': 'com.damiandudycz.CatalystLab.Development',
+        'CFBundleName': 'Catalyst Lab Development',
+        'CFBundleExecutable': 'python3-vm',
+        'CFBundlePackageType': 'APPL',
+        'NSLocationWhenInUseUsageDescription': 'Catalyst Lab uses Location access to suggest your connected Wi-Fi network when deploying a system.',
+        'NSLocationUsageDescription': 'Catalyst Lab uses Location access to suggest your connected Wi-Fi network when deploying a system.',
+    }, stream)
+PYPLIST
+            codesign --force --sign - --identifier com.damiandudycz.CatalystLab.Development --entitlements "$ENTITLEMENTS" "$DEV_APP"
+            rm -f "$VM_PYTHON"
+            ln -s "$APP_PYTHON" "$VM_PYTHON"
         fi
         PYTHON="$VM_PYTHON"
         export PATH="$VENV/bin:$PATH"
@@ -53,6 +68,9 @@ case "$(uname -s)" in
         exit 1
         ;;
 esac
+
+# Keep the development launcher isolated from an installed Catalyst Lab instance.
+export CATALYSTLAB_APPLICATION_ID="com.damiandudycz.CatalystLab.Development"
 
 BUILD="$WORK/build"
 PREFIX="$WORK/prefix"

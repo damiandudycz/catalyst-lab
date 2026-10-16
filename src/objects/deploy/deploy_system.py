@@ -434,7 +434,7 @@ def wifi_script(settings: WifiSettings, service: NetworkService = NetworkService
     return "\n".join(script)
 
 
-def local_wifi_ssid() -> str | None:
+def local_wifi_ssid(request_permission: bool = False) -> str | None:
     """Best-effort connected network name from this host; never reads passwords."""
     def output(command):
         try:
@@ -445,6 +445,9 @@ def local_wifi_ssid() -> str | None:
             return ""
 
     if sys.platform == "darwin":
+        if request_permission:
+            if ssid := _mac_wifi_ssid():
+                return ssid
         # Available when PyObjC CoreWLAN is installed; macOS may restrict SSID access.
         try:
             import CoreWLAN
@@ -482,3 +485,36 @@ def local_user_identity() -> tuple[str, str]:
     # GECOS fields after the first comma are office/contact details, not the name.
     full_name = account.pw_gecos.split(",", 1)[0]
     return username, full_name
+
+
+def _mac_wifi_ssid() -> str | None:
+    """Request Location permission through the native app bridge, away from the UI thread."""
+    import ctypes
+    import json
+    import time
+    try:
+        from .apple_virtualization import apple_vm_library
+        path = apple_vm_library()
+        if not path:
+            return None
+        library = ctypes.CDLL(path)
+        library.cl_wifi_status.argtypes = [ctypes.c_bool]
+        library.cl_wifi_status.restype = ctypes.c_void_p
+        library.cl_vm_free.argtypes = [ctypes.c_void_p]
+        library.cl_vm_free.restype = None
+        deadline = time.monotonic() + 60
+        while True:
+            pointer = library.cl_wifi_status(True)
+            if not pointer:
+                return None
+            try:
+                result = json.loads(ctypes.string_at(pointer).decode('utf-8'))
+            finally:
+                library.cl_vm_free(pointer)
+            if result.get('ssid'):
+                return result['ssid']
+            if result.get('status') != 'pending' or time.monotonic() >= deadline:
+                return None
+            time.sleep(0.5)
+    except (OSError, AttributeError, ValueError):
+        return None

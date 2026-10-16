@@ -137,6 +137,8 @@ class AppleVirtualizationRun(QemuRun):
         self._handle = None
         self._bridge = None
         self._callback = None
+        self._serial_received = False
+        self._boot_output_timer = None
 
     @property
     def is_running(self):
@@ -188,15 +190,30 @@ class AppleVirtualizationRun(QemuRun):
         if line.startswith('SERIAL:'):
             text = base64.b64decode(line[7:]).decode('utf-8', errors='replace')
             self.serial_output = (self.serial_output + text)[-1024 * 1024:]
+            if text:
+                self._serial_received = True
+                if self._boot_output_timer is not None:
+                    GLib.source_remove(self._boot_output_timer)
+                    self._boot_output_timer = None
             self.event_bus.emit(QemuRunEvent.SERIAL_OUTPUT, text)
         elif line == 'STATE:running':
             self.ready = True
             self.event_bus.emit(QemuRunEvent.STATE_CHANGED, self)
+            if self.support.kind == QemuBuildKind.STAGE and not self._serial_received:
+                self._boot_output_timer = GLib.timeout_add_seconds(30, self._report_missing_serial_output)
         elif line == 'INPUT:captured':
             self.input_captured = True
             self.event_bus.emit(QemuRunEvent.STATE_CHANGED, self)
         elif line == 'STATE:stopped':
             self._finish()
+        elif line.startswith('DISK_PROGRESS:'):
+            try:
+                percent = max(0, min(100, int(line.partition(':')[2])))
+            except ValueError:
+                return False
+            if self.output and self.output[-1].startswith('Preparing temporary disk image'):
+                self.output[-1] = f'Preparing temporary disk image… {percent}%'
+            self.event_bus.emit(QemuRunEvent.OUTPUT_LINE_ADDED, line)
         else:
             if line.startswith('ERROR:'):
                 self.error = line[6:]
@@ -204,7 +221,20 @@ class AppleVirtualizationRun(QemuRun):
             self.event_bus.emit(QemuRunEvent.OUTPUT_LINE_ADDED, line)
         return False
 
+    def _report_missing_serial_output(self):
+        self._boot_output_timer = None
+        if not self.is_running or not self.ready or self._serial_received:
+            return False
+        message = ("No guest serial output after 30 seconds. If the screen is blank, this image may require "
+                   "hardware or firmware that Apple Virtualization does not emulate.")
+        self.output.append(message)
+        self.event_bus.emit(QemuRunEvent.OUTPUT_LINE_ADDED, message)
+        return False
+
     def _finish(self):
+        if self._boot_output_timer is not None:
+            GLib.source_remove(self._boot_output_timer)
+            self._boot_output_timer = None
         self.detach_display()
         self._active = False
         self.ready = False
