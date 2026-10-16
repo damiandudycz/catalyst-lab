@@ -14,8 +14,8 @@ if [[ ${PV} == 9999 ]]; then
 	inherit git-r3
 	EGIT_REPO_URI="https://github.com/damiandudycz/catalyst-lab.git"
 else
-	SRC_URI="https://github.com/damiandudycz/catalyst-lab/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz"
-	S="${WORKDIR}/catalyst-lab-${PV}"
+	SRC_URI="https://github.com/damiandudycz/catalyst-lab/archive/refs/tags/catalyst-lab-v${PV}.tar.gz -> ${P}.tar.gz"
+	S="${WORKDIR}/catalyst-lab-catalyst-lab-v${PV}"
 	KEYWORDS="~amd64 ~arm64"
 fi
 
