@@ -127,8 +127,8 @@ class BuildQueue:
                       and build.status == MultiStageProcessState.FAILED), None)
         if build is not None and not getattr(build, "_queue_failure_handled", False):
             build._queue_failure_handled = True
-            # Stopped build continues queue (unless user cancelled queue too), failed one only when settings allow.
-            if not getattr(build, "cancelled", False) and Repository.Settings.value.pause_queue_on_failure and self.entries:
+            # Stopped build continues queue (unless user canceled queue too), failed one only when settings allow.
+            if not getattr(build, "canceled", False) and Repository.Settings.value.pause_queue_on_failure and self.entries:
                 self.pause(f"Build of {build.project_directory.name} failed")
         self._schedule_check()
 

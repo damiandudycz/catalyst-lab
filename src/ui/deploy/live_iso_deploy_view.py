@@ -48,7 +48,6 @@ class LiveIsoDeployView(Gtk.Box):
     boot_group = Gtk.Template.Child()
     raspberry_pi_group = Gtk.Template.Child()
     serial_console_row = Gtk.Template.Child()
-    scan_delay_row = Gtk.Template.Child()
     older_models_row = Gtk.Template.Child()
     kernel_arguments_row = Gtk.Template.Child()
     config_row = Gtk.Template.Child()
@@ -357,7 +356,6 @@ class LiveIsoDeployView(Gtk.Box):
         buffer = self.config_view.get_buffer()
         return RaspberryPiBootSettings(
             serial_console=self.serial_console_row.get_active(),
-            scan_delay=int(self.scan_delay_row.get_value()),
             extra_arguments=self.kernel_arguments_row.get_text().strip(),
             config_lines=buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False),
             older_models_firmware=self.older_models_row.get_active(),
@@ -394,7 +392,7 @@ class LiveIsoDeployView(Gtk.Box):
         try:
             file = file_dialog.save_finish(result)
         except GLib.Error:
-            return # Cancelled.
+            return # Canceled.
         path = file.get_path() if file else None
         if path:
             self._start(output_path=path if path.endswith(".iso") else path + ".iso")

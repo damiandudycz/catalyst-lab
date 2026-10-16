@@ -926,7 +926,7 @@ class DeployCreateView(Gtk.Box):
         try:
             file = file_dialog.save_finish(result)
         except GLib.Error:
-            return # Cancelled.
+            return # Canceled.
         if file and file.get_path():
             self._on_confirm_response(None, "deploy", plan, output_path=file.get_path())
 

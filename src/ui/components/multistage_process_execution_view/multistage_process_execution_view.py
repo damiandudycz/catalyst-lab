@@ -61,7 +61,7 @@ class MultistageProcessExecutionView(Gtk.Box):
         if not isinstance(self.multistage_process, ProjectBuild) or not queue.entries:
             self.multistage_process.cancel()
             return
-        # Builds are queued: next one starts when this one is cancelled, unless queue is cancelled too.
+        # Builds are queued: next one starts when this one is canceled, unless queue is canceled too.
         count = len(queue.entries)
         dialog = Adw.AlertDialog(heading="Cancel build?", body=(
             f"{count} queued build{'s' if count != 1 else ''} start{'s' if count == 1 else ''} after this one. "
@@ -375,7 +375,7 @@ class AnsiStyle:
     underline: bool = False
     inverse: bool = False
 
-# Colors readable on both light and dark background. Black and white are shown as grey, as one of them is
+# Colors readable on both light and dark background. Black and white are shown as gray, as one of them is
 # always invisible. Bright variants use the same colors.
 _ANSI_COLORS = ["#77767b", "#e01b24", "#26a269", "#c88800", "#3584e4", "#c061cb", "#2aa1b3", "#9a9996"]
 _ANSI_SEQUENCE = re.compile(r"\x1b(?:\[([0-9;:?]*)([@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][0-9A-Za-z]|[@-Z\\-_])")
@@ -438,8 +438,8 @@ def _extended_color(codes: list[int]) -> tuple[str | None, int]:
             number -= 16
             levels = [0, 95, 135, 175, 215, 255]
             return "#{:02x}{:02x}{:02x}".format(levels[number // 36], levels[number // 6 % 6], levels[number % 6]), 2
-        grey = 8 + (number - 232) * 10
-        return "#{0:02x}{0:02x}{0:02x}".format(grey), 2
+        gray = 8 + (number - 232) * 10
+        return "#{0:02x}{0:02x}{0:02x}".format(gray), 2
     if len(codes) >= 4 and codes[0] == 2:
         return "#{:02x}{:02x}{:02x}".format(*(min(max(value, 0), 255) for value in codes[1:4])), 4
     return None, len(codes)
@@ -473,7 +473,7 @@ def _tag_for_style(buffer: Gtk.TextBuffer, style: AnsiStyle) -> Gtk.TextTag | No
     if tag := tag_table.lookup(name):
         return tag
     foreground, background = style.foreground, style.background
-    if style.inverse: # Default colors are unknown here, inverse of them uses grey background.
+    if style.inverse: # Default colors are unknown here, inverse of them uses gray background.
         foreground, background = background or "#ffffff", foreground or _ANSI_COLORS[0]
     tag = Gtk.TextTag(name=name)
     if foreground:

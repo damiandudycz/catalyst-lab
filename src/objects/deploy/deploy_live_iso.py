@@ -129,7 +129,6 @@ def parse_grub_entry(grub_cfg: str) -> tuple[str, str, str | None]:
 class RaspberryPiBootSettings:
     """Boot configuration of ISO prepared for Raspberry Pi firmware."""
     serial_console: bool = True # Console on serial port (GPIO 14/15, debug connector of Pi 5) too.
-    scan_delay: int = 3 # Seconds initramfs waits for USB disks before searching for live system.
     extra_arguments: str = "" # Added to kernel arguments.
     # Added to config.txt. Graphics driver (KMS, firmware uses version for Pi 5 itself) is needed by desktops.
     config_lines: str = "dtparam=audio=on\ndtoverlay=vc4-kms-v3d\nmax_framebuffers=2\ndisable_overscan=1"
@@ -148,14 +147,13 @@ def raspberry_pi_config(kernel: str, initramfs: str | None, settings: RaspberryP
     return "\n".join(lines) + "\n"
 
 def raspberry_pi_cmdline(arguments: str, settings: RaspberryPiBootSettings) -> str:
-    """Arguments of kernel from GRUB, with console on screen (and serial port), delay letting USB disks appear before
-    initramfs searches for live system, and own arguments."""
+    """Kernel arguments from GRUB, with consoles, root-device waiting and own arguments."""
     words = arguments.split()
     extra = []
     if not any(word.startswith("console=") for word in words):
         extra += (["console=serial0,115200"] if settings.serial_console else []) + ["console=tty1"]
-    if settings.scan_delay > 0 and not any(word.startswith("scandelay") for word in words):
-        extra.append(f"scandelay={settings.scan_delay}")
+    if "rootwait" not in words + settings.extra_arguments.split():
+        extra.append("rootwait")
     return " ".join(extra + words + settings.extra_arguments.split()) + "\n"
 
 # ------------------------------------------------------------------------------
@@ -509,7 +507,7 @@ class _StepFirmware(_Step):
                 received, reported = 0, -1
                 while chunk := response.read(1024 * 1024):
                     if self._cancel_event.is_set():
-                        raise RuntimeError("Cancelled")
+                        raise RuntimeError("Canceled")
                     file.write(chunk)
                     digest.update(chunk)
                     received += len(chunk)
@@ -672,7 +670,7 @@ class _StepSaveIso(_Step):
             with open(source, "rb") as input_file, open(partial, "wb") as output_file:
                 while chunk := input_file.read(8 * 1024 * 1024):
                     if self._cancel_event.is_set():
-                        raise RuntimeError("Cancelled")
+                        raise RuntimeError("Canceled")
                     output_file.write(chunk)
                     copied += len(chunk)
                     self._update_progress(copied / size * 0.99)

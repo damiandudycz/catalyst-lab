@@ -56,7 +56,7 @@ class SettingsSection(Gtk.Box):
         try:
             folder = dialog.select_folder_finish(result)
         except GLib.Error:
-            return # Cancelled.
+            return # Canceled.
         if folder is None or folder.get_path() is None:
             return
         try:

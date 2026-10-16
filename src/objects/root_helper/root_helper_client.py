@@ -91,7 +91,7 @@ class RootHelperClient:
             # Waits until main_process finishes, to see if it was closed with error.
             def monitor_error_codes():
                 if self.main_process.wait() != 0 and self.is_server_process_running:
-                    print("[Server process]! Authorization failed or cancelled.")
+                    print("[Server process]! Authorization failed or canceled.")
                     self.is_server_process_running = False
             threading.Thread(target=monitor_error_codes, daemon=True).start()
 

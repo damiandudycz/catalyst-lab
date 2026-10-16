@@ -33,7 +33,7 @@ def save_build_record(process):
         else:
             data["output"] = step.output_lines[-_MAX_RECORDED_LINES:]
         steps.append(data)
-    stopped = getattr(process, "cancelled", False)
+    stopped = getattr(process, "canceled", False)
     from .multistage_process import MultiStageProcessState as State
     status = "stopped" if stopped else "interrupted" if process.status == State.IN_PROGRESS else process.status.name.lower()
     record = {
@@ -95,7 +95,7 @@ def load_build_record(project_directory, timestamp: str, builds: list) -> Record
                  else MultiStageProcessStageState.FAILED if started else MultiStageProcessStageState.SCHEDULED)
         output = _stage_log(project_directory, str(build.stage_id), timestamp) if started else []
         steps.append((f"Build {build.stage_name}", "Builds stage with catalyst", state, output, None))
-    stopped = any(build.status in (StageBuildStatus.STOPPED, StageBuildStatus.CANCELLED) for build in builds)
+    stopped = any(build.status in (StageBuildStatus.STOPPED, StageBuildStatus.CANCELED) for build in builds)
     failed = any(step[2] == MultiStageProcessStageState.FAILED for step in steps)
     status = "stopped" if stopped else "failed" if failed else "completed"
     return RecordedBuild(project_directory, f"Building {project_directory.name}", status, steps)
@@ -139,7 +139,7 @@ class RecordedBuild(MultiStageProcess):
         self.project_directory = project_directory
         self._steps = steps
         super().__init__(title=title)
-        self.cancelled = status == "stopped"
+        self.canceled = status == "stopped"
         self.status = MultiStageProcessState.COMPLETED if status == "completed" else MultiStageProcessState.FAILED
         self.progress = sum(step.progress or 0 for step in self.stages) / len(self.stages) if self.stages else 1.0
 

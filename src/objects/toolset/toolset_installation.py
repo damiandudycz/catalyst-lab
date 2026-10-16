@@ -85,7 +85,7 @@ class ToolsetInstallation(MultiStageProcess):
 class ToolsetInstallationStep(MultiStageProcessStage):
     def start(self):
         self.server_call = None
-        self.namespace_processes = [] # Rootless processes, terminated when cancelled.
+        self.namespace_processes = [] # Rootless processes, terminated when canceled.
         super().start()
     def cancel(self):
         super().cancel()

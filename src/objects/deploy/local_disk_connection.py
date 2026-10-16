@@ -117,7 +117,7 @@ class _RootCall:
 @root_function
 def deploy_run_script(script: str, input_path: str | None = None) -> int:
     """Runs deploy script with bash, returns its exit code. Input file is sent to stdin of script, with progress lines
-    in output. Script is stopped with all its processes when call is cancelled."""
+    in output. Script is stopped with all its processes when call is canceled."""
     import os, signal, subprocess, sys, time
     marker = "@@catalystlab-deploy-progress " # _PROGRESS_MARKER, root functions run without module globals.
     sys.stdout.flush()

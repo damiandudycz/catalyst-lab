@@ -37,7 +37,7 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
     var serialInput: FileHandle?
     var serialPipe: Pipe?
     var serialOutput: Pipe?
-    var cancelled = false
+    var canceled = false
     var finished = false
     let callback: EventCallback
     let context: UnsafeMutableRawPointer?
@@ -66,7 +66,7 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
                             URL(fileURLWithPath: options.directory).appendingPathComponent("root.img"))
                     }
                     DispatchQueue.main.async {
-                        if self.cancelled { self.finish(); return }
+                        if self.canceled { self.finish(); return }
                         self.configure(options)
                     }
                 } catch { DispatchQueue.main.async { self.fail(error) } }
@@ -130,7 +130,7 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
             vm!.start { result in
                 switch result {
                 case .success:
-                    if self.cancelled { self.stop() }
+                    if self.canceled { self.stop() }
                     else { self.report("STATE:running") }
                 case .failure(let error): self.fail(error)
                 }
@@ -189,7 +189,7 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
         } catch { report("Control failed: \(error.localizedDescription)") }
     }
     func stop() {
-        cancelled = true
+        canceled = true
         detach()
         guard let vm = vm else { return } // Copy/configuration completion will finish the run.
         if vm.canStop {

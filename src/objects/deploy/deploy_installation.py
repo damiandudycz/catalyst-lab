@@ -350,7 +350,7 @@ class DeployInstallation(MultiStageProcess):
             print(f"Failed to close connection: {e}")
 
 class DeployStep(MultiStageProcessStage):
-    """Step running scripts on machine, cancelled by stopping them."""
+    """Step running scripts on machine, canceled by stopping them."""
     def log(self, line: str):
         super().log(line)
         self.multistage_process.write_log(line)

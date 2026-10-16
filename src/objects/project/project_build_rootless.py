@@ -139,7 +139,7 @@ exit $status
 """
 
 def save_interrupted_caches(executor, output_handler, process_holder: list | None = None) -> bool:
-    """Saves changes of synced caches left by interrupted builds (eg. cancelled), which didn't copy them back, and
+    """Saves changes of synced caches left by interrupted builds (eg. canceled), which didn't copy them back, and
     removes their sessions. Packages and sources they downloaded or built are kept this way."""
     q = shlex.quote
     sessions = q(sessions_directory(executor))

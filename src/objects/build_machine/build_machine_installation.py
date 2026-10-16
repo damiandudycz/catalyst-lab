@@ -32,7 +32,7 @@ class BuildMachineInstallation(MultiStageProcess):
 
 class BuildMachineStep(MultiStageProcessStage):
     def start(self):
-        self.processes = [] # Lima processes, terminated when cancelled.
+        self.processes = [] # Lima processes, terminated when canceled.
         super().start()
     def cancel(self):
         super().cancel()

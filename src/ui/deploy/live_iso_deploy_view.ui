@@ -82,20 +82,6 @@
                       </object>
                     </child>
                     <child>
-                      <object class="AdwSpinRow" id="scan_delay_row">
-                        <property name="title">Wait for USB drives</property>
-                        <property name="subtitle">Seconds before live system is searched, USB drives need some time to appear</property>
-                        <property name="adjustment">
-                          <object class="GtkAdjustment">
-                            <property name="lower">0</property>
-                            <property name="upper">30</property>
-                            <property name="value">3</property>
-                            <property name="step-increment">1</property>
-                          </object>
-                        </property>
-                      </object>
-                    </child>
-                    <child>
                       <object class="AdwSwitchRow" id="older_models_row">
                         <property name="title">Firmware of older models</property>
                         <property name="subtitle">Needed by Raspberry Pi 4 and older, Raspberry Pi 5 has its firmware in EEPROM. Kernel of live CD has to support the model too</property>

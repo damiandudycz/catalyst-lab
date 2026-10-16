@@ -53,7 +53,7 @@ knowledge of Catalyst internals is needed.
 - Package and kernel **caches** are kept between builds, and packages are built in parallel.
 - When a stage fails, **diagnostics** are collected and the stages depending on it are skipped. Other branches of the
   tree are still built.
-- The **Builds** section lists every build run of every stage, including the ones that were skipped or cancelled.
+- The **Builds** section lists every build run of every stage, including the ones that were skipped or canceled.
 
 ### 🗂️ App data
 - Everything the app stores is in its **library** (`~/CatalystLab` by default): toolsets, snapshots, projects,

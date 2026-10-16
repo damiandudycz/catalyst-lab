@@ -522,9 +522,9 @@ def _build_step_status(step: ProjectBuildStepBuildStage) -> StageNodeStatus:
             return StageNodeStatus(title=f"Building {int(step.progress * 100)}%" if step.progress is not None else "Building", in_progress=True)
         case MultiStageProcessStageState.COMPLETED:
             return StageNodeStatus(title="Built", icon_name="check-square-svgrepo-com-symbolic", css_class="success")
-        case MultiStageProcessStageState.FAILED if getattr(step.multistage_process, "cancelled", False):
-            # Build was cancelled: stopped while building, or not started.
-            title = "Stopped" if step.build is not None else "Cancelled"
+        case MultiStageProcessStageState.FAILED if getattr(step.multistage_process, "canceled", False):
+            # Build was canceled: stopped while building, or not started.
+            title = "Stopped" if step.build is not None else "Canceled"
             return StageNodeStatus(title=title, icon_name="stop-square-symbolic", css_class="dimmed")
         case MultiStageProcessStageState.FAILED if step.build is None:
             # Failed without starting, because stage it depends on failed.

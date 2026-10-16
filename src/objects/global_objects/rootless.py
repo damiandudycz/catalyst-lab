@@ -83,7 +83,7 @@ class ExecutorProcess:
     def __init__(self, process: subprocess.Popen, on_terminate=None, on_exit=None):
         self.process = process
         self.stdout = process.stdout
-        self.cancelled = False
+        self.canceled = False
         self._on_terminate = on_terminate
         self._on_exit = on_exit # Called once when process exits.
     def _exited(self):
@@ -101,7 +101,7 @@ class ExecutorProcess:
         return code
     def terminate(self):
         """Stops script with all its processes (killing pid namespace init ends whole namespace)."""
-        self.cancelled = True
+        self.canceled = True
         if self._on_terminate:
             try:
                 self._on_terminate()
@@ -159,7 +159,7 @@ class Executor:
             process_holder.append(process)
         for line in process.stdout:
             output_handler(line.rstrip("\n"))
-        return process.wait() == 0 and not process.cancelled
+        return process.wait() == 0 and not process.canceled
 
     def run_in_namespace(self, script: str, output_handler, process_holder: list | None = None) -> bool:
         return self.run(script, output_handler, process_holder, namespace=True)
@@ -262,7 +262,7 @@ echo "Machine is ready: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname 
             command = f"bash -c {shlex.quote(_NAMESPACE_LAUNCHER)} launcher {encoded}"
         else:
             command = f"echo {encoded} | base64 -d > /tmp/catalystlab-{token}.sh && bash /tmp/catalystlab-{token}.sh; status=$?; rm -f /tmp/catalystlab-{token}.sh; exit $status"
-        # Own session in machine, so cancelling can stop its whole process group.
+        # Own session in machine, so canceling can stop its whole process group.
         bootstrap = f"echo $$ > {pid_file}; exec 2>&1 < /dev/null; {command}"
         process = subprocess.Popen(
             [limactl_path(), "shell", "--workdir", "/", self.machine.instance_name, "setsid", "-w", "bash", "-c", bootstrap],
@@ -342,7 +342,7 @@ def _subordinate_range(path: str) -> tuple[int, int] | None:
     return None
 
 def run_in_namespace(script: str, output_handler, process_holder: list | None = None, executor: Executor | None = None) -> bool:
-    """Runs script in namespace, process is appended to process_holder (to allow cancelling)."""
+    """Runs script in namespace, process is appended to process_holder (to allow canceling)."""
     return (executor or LOCAL_EXECUTOR).run_in_namespace(script, output_handler, process_holder)
 
 # ------------------------------------------------------------------------------

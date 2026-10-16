@@ -291,7 +291,7 @@ class ProjectBuild(MultiStageProcess):
             self.complete_process(success=success)
 
     # Records of stages in this run are saved when it starts, so stages that don't start (skipped after failure of
-    # stage they depend on, or cancelled) are listed in builds too.
+    # stage they depend on, or canceled) are listed in builds too.
 
     def start(self, authorization_keeper=None):
         for order, stage in enumerate(self.plan.build_order()):
@@ -303,7 +303,7 @@ class ProjectBuild(MultiStageProcess):
         super().start(authorization_keeper)
 
     def cancel(self):
-        self.cancelled = True
+        self.canceled = True
         super().cancel()
 
     def store_project_snapshot(self):
@@ -317,7 +317,7 @@ class ProjectBuild(MultiStageProcess):
         return False
 
     def complete_process(self, success: bool):
-        status = StageBuildStatus.CANCELLED if getattr(self, "cancelled", False) else StageBuildStatus.SKIPPED
+        status = StageBuildStatus.CANCELED if getattr(self, "canceled", False) else StageBuildStatus.SKIPPED
         for stage in self.plan.build_order():
             path = os.path.join(stage_builds_directory(self.project_directory, stage.id), self.timestamp)
             try:
@@ -366,7 +366,7 @@ def start_project_build(project_directory, plan: StageBuildPlan, snapshot=None, 
             authorization_keeper.retain()
             GLib.idle_add(start, authorization_keeper)
         elif done:
-            GLib.idle_add(lambda: (done(None), False)[1]) # Authorization cancelled.
+            GLib.idle_add(lambda: (done(None), False)[1]) # Authorization canceled.
     RootHelperClient.shared().authorize_and_run(name="Build stages", callback=authorized)
 
 def running_project_build(project_directory, timestamp: str | None = None) -> ProjectBuild | None:
@@ -385,7 +385,7 @@ def running_project_build(project_directory, timestamp: str | None = None) -> Pr
 class ProjectBuildStep(MultiStageProcessStage):
     def start(self):
         self.server_call = None
-        self.namespace_processes = [] # Rootless processes, terminated when cancelled.
+        self.namespace_processes = [] # Rootless processes, terminated when canceled.
         super().start()
     def cancel(self):
         super().cancel()
@@ -565,7 +565,7 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
         if self.spawned:
             toolset.unspawn(rebuild_squashfs_if_needed=False)
         if getattr(self, "workspace_acquired", False):
-            # Working space is deleted with caches changed by cancelled build, they are saved first.
+            # Working space is deleted with caches changed by canceled build, they are saved first.
             try:
                 save_interrupted_caches(self.multistage_process.executor, self.log)
             except Exception as e:
@@ -620,7 +620,7 @@ class ProjectBuildStepDownloadSeed(ProjectBuildStep):
                         with open(partial_path, "wb") as file:
                             for chunk in response.iter_content(chunk_size=1024 * 1024):
                                 if self._cancel_event.is_set():
-                                    raise RuntimeError("Cancelled")
+                                    raise RuntimeError("Canceled")
                                 file.write(chunk)
                                 downloaded += len(chunk)
                                 if total:
@@ -812,8 +812,8 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
             print(f"Error during '{self.name}': {e}")
-            # Cancelling build run terminates catalyst, which isn't failure of stage.
-            stopped = getattr(process, "cancelled", False)
+            # Canceling build run terminates catalyst, which isn't failure of stage.
+            stopped = getattr(process, "canceled", False)
             if self.build:
                 self.build.status = StageBuildStatus.STOPPED if stopped else StageBuildStatus.FAILED
                 self.build.finished = datetime.now()

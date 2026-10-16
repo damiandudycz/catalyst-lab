@@ -18,8 +18,8 @@ class StageBuildStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped" # Not built, because stage it depends on failed.
-    CANCELLED = "cancelled" # Not built, because build run was cancelled.
-    STOPPED = "stopped" # Building started, but build run was cancelled.
+    CANCELED = "canceled" # Not built, because build run was canceled.
+    STOPPED = "stopped" # Building started, but build run was canceled.
 
     @property
     def is_attempt(self) -> bool:
@@ -162,7 +162,7 @@ class BuildRunResult(Enum):
     """Result of build run (stages built together), for status of project."""
     COMPLETED = "completed"
     FAILED = "failed"   # Building of some stage failed.
-    STOPPED = "stopped" # Cancelled, or interrupted (app was closed).
+    STOPPED = "stopped" # Canceled, or interrupted (app was closed).
 
 def last_build_run_result(project_directory, running_timestamp: str | None = None) -> BuildRunResult | None:
     """Result of newest build run of project, None when project has no builds. Stages of run that is still running
@@ -182,7 +182,7 @@ def _build_run_result(builds: list, timestamp: str, running_timestamp: str | Non
     # Stages are skipped when stage or step they depend on failed (eg. seed download), run failed then too.
     if statuses & {StageBuildStatus.FAILED, StageBuildStatus.SKIPPED}:
         return BuildRunResult.FAILED
-    if timestamp != running_timestamp and statuses & {StageBuildStatus.STOPPED, StageBuildStatus.CANCELLED,
+    if timestamp != running_timestamp and statuses & {StageBuildStatus.STOPPED, StageBuildStatus.CANCELED,
                                                       StageBuildStatus.IN_PROGRESS, StageBuildStatus.SCHEDULED}:
         return BuildRunResult.STOPPED
     return BuildRunResult.COMPLETED

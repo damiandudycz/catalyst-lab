@@ -74,7 +74,7 @@
                 <property name="wrap">True</property>
                 <property name="justify">fill</property>
                 <attributes>
-                  <attribute name="foreground" value="grey"/>
+                  <attribute name="foreground" value="gray"/>
                 </attributes>
               </object>
             </child>

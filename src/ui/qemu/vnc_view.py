@@ -187,7 +187,7 @@ class VncView(Gtk.Widget):
                     raise ConnectionError(f"unsupported encoding {encoding}")
             self._schedule_redraw()
             self._request_update()
-        elif kind == 1: # Colour map entries (not used with true colour).
+        elif kind == 1: # Color map entries (not used with true color).
             _, count = struct.unpack(">xHH", self._receive(connection, 5))
             self._receive(connection, count * 6)
         elif kind == 2: # Bell.

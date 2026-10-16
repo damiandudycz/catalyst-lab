@@ -1432,7 +1432,7 @@ class StageCacheRow(Adw.ExpanderRow):
         try:
             folder = dialog.select_folder_finish(result)
         except GLib.Error:
-            folder = None # Cancelled.
+            folder = None # Canceled.
         if folder and folder.get_path():
             self._folder = folder.get_path()
             self._loading = True

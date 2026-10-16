@@ -148,7 +148,7 @@ class SSHConnection:
                         progress_handler(sent / size)
             process.stdin.close()
         except (BrokenPipeError, ValueError):
-            pass # Command ended (failed or cancelled), its exit code is reported.
+            pass # Command ended (failed or canceled), its exit code is reported.
         code = process.wait()
         reader.join(timeout=10)
         return code == 0

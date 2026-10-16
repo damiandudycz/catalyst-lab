@@ -260,7 +260,7 @@ class ProcessRow(Gtk.ListBoxRow):
     def update(self):
         failed = self.process.status == MultiStageProcessState.FAILED
         finished = self.process.status in (MultiStageProcessState.COMPLETED, MultiStageProcessState.FAILED)
-        stopped = failed and getattr(self.process, "cancelled", False)
+        stopped = failed and getattr(self.process, "canceled", False)
         progress = None
         if self.process.status == MultiStageProcessState.COMPLETED:
             icon_name, style, state = "check-square-svgrepo-com-symbolic", "success", "Completed"

@@ -329,7 +329,7 @@ def bootloader_script(bootloader: Bootloader, architecture: str, uefi: bool, dis
         return raspberry_pi_script(root_device, architecture)
     if uefi and not esp:
         return None
-    root = f'root=UUID=$(blkid -s UUID -o value {root_device}) rw'
+    root = f'root=UUID=$(blkid -s UUID -o value {root_device}) rw rootwait'
     kernel = r'''
 KERNEL=$(cd "$ROOT/boot" && ls -t vmlinuz* kernel* Image* vmlinux* 2>/dev/null | head -n 1)
 INITRD=$(cd "$ROOT/boot" && ls -t initramfs* initrd* 2>/dev/null | head -n 1)
@@ -347,6 +347,9 @@ echo "Kernel: $KERNEL${INITRD:+, initramfs: $INITRD}"
             return f"""set -e
 {CHROOT_SETUP}
 in_root {install}
+mkdir -p "$ROOT/etc/default"
+# Keep existing kernel arguments and apply rootwait to all generated entries.
+printf '\nGRUB_CMDLINE_LINUX="${{GRUB_CMDLINE_LINUX}} rootwait"\n' >> "$ROOT/etc/default/grub"
 in_root grub-mkconfig -o /boot/grub/grub.cfg
 """
         case Bootloader.SYSTEMD_BOOT:
@@ -405,11 +408,11 @@ def kboot_script(root_device: str, separate_boot: bool, ps3: bool | None = None,
     detect_ps3 = {True: "true", False: "false"}.get(ps3, 'grep -qi "PS3" /proc/device-tree/model 2>/dev/null')
     return f"""set -e
 CONFIG="{config}"
-OPTIONS=""
+OPTIONS=" rootwait"
 ROOT_DEVICE="{root}"
 [ "$ROOT_DEVICE" != "PARTUUID=" ] || {{ echo "Failed to read PARTUUID of {root_device}"; exit 1; }}
 # PS3 framebuffer mode used by PS3 Gentoo images.
-{detect_ps3} && OPTIONS=" video=ps3fb:mode:133"
+{detect_ps3} && OPTIONS="$OPTIONS video=ps3fb:mode:133"
 KERNELS=$(cd "$ROOT/boot" && ls -t vmlinux* vmlinuz* 2>/dev/null || true)
 [ -n "$KERNELS" ] || {{ echo "No kernel in /boot, kboot entries can't be created"; exit 1; }}
 : > "$CONFIG.new"

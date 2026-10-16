@@ -18,6 +18,7 @@ from .project_build_details import failure_details, format_duration
 from .deploy_installation import is_deployable
 from .deploy_live_iso import is_live_iso_build
 from .deploy_create_view import DeployCreateView
+from .cl_toggle_group import CLToggle, CLToggleGroup
 
 class BuildRowState(Enum):
     """State of stage in build run, as displayed."""
@@ -26,8 +27,8 @@ class BuildRowState(Enum):
     BUILDING = "Building"
     SCHEDULED = "Scheduled"
     SKIPPED = "Skipped" # Stage it depends on failed.
-    CANCELLED = "Cancelled" # Build was cancelled before stage started.
-    STOPPED = "Stopped" # Build was cancelled while stage was building.
+    CANCELED = "Canceled" # Build was canceled before stage started.
+    STOPPED = "Stopped" # Build was canceled while stage was building.
     INTERRUPTED = "Interrupted" # Not finished, but its build is not running anymore (eg. app was closed).
     NOT_STARTED = "Not started" # Scheduled, but its build is not running anymore (eg. app was closed).
 
@@ -50,6 +51,12 @@ class ProjectBuildsView(Gtk.Box):
         self.build_row.connect("activated", self._on_build_activated)
         actions_group.add(self.build_row)
         self.content.append(actions_group)
+        self.status_filter = CLToggleGroup(halign=Gtk.Align.CENTER)
+        for label in ("All", "Completed", "Failed / Canceled"):
+            self.status_filter.add(CLToggle(label=label))
+        self.status_filter.set_active(0)
+        self.content.append(self.status_filter)
+        self.status_filter.connect("notify::active", lambda *_: self.load_builds())
         self.groups: list[Adw.PreferencesGroup] = []
         self._observed_build = None
         self._reload_scheduled = False
@@ -100,6 +107,9 @@ class ProjectBuildsView(Gtk.Box):
                 # Stages in build order (older records without it by date).
                 ordered = sorted(run_builds, key=lambda build: (build.order is None, build.order or 0, build.date))
                 entries = [(build.stage_name, build, _record_state(build)) for build in ordered]
+            entries = [entry for entry in entries if _matches_filter(entry[2], self.status_filter.get_active())]
+            if not entries:
+                continue
             is_running = running_build is not None and timestamp == running_build.timestamp
             title = f"Started {_format_timestamp(timestamp, fallback=entries[0][1].date if entries and entries[0][1] else datetime.now())}"
             description = _run_summary([state for _, _, state in entries])
@@ -112,7 +122,7 @@ class ProjectBuildsView(Gtk.Box):
             if failed:
                 description += "\n" + ", ".join(failed) + " failed"
             group = Adw.PreferencesGroup(title=title, description=GLib.markup_escape_text(description))
-            if not is_running:
+            if not is_running and self.status_filter.get_active() == 0:
                 group.set_header_suffix(self._delete_button(
                     tooltip="Remove builds",
                     heading="Remove builds?",
@@ -129,6 +139,12 @@ class ProjectBuildsView(Gtk.Box):
                 # Rows open steps of their run, like build progress (also of runs finished before app was started).
                 group.add(self._build_row(stage_name, build, state, stage_removed, running_build if is_running else None,
                                           on_activated=lambda timestamp=timestamp, run_builds=run_builds: self._show_run_steps(timestamp, run_builds)))
+            self._add_group(group)
+
+        if not self.groups:
+            group = Adw.PreferencesGroup()
+            group.add(Adw.StatusPage(icon_name="box-minimalistic-svgrepo-com-symbolic",
+                                    title="No matching builds", description="Try another status filter."))
             self._add_group(group)
 
     def _running_build_entries(self, running_build, run_builds: list) -> list[tuple]:
@@ -399,7 +415,7 @@ def _record_state(build) -> BuildRowState:
         case StageBuildStatus.COMPLETED: return BuildRowState.COMPLETED
         case StageBuildStatus.FAILED: return BuildRowState.FAILED
         case StageBuildStatus.SKIPPED: return BuildRowState.SKIPPED
-        case StageBuildStatus.CANCELLED: return BuildRowState.CANCELLED
+        case StageBuildStatus.CANCELED: return BuildRowState.CANCELED
         case StageBuildStatus.STOPPED: return BuildRowState.STOPPED
         case StageBuildStatus.SCHEDULED: return BuildRowState.NOT_STARTED
     # Running builds are handled separately, so not finished build here is not running anymore.
@@ -425,7 +441,7 @@ def _state_icon(state: BuildRowState) -> str:
         case BuildRowState.COMPLETED: return "check-square-svgrepo-com-symbolic"
         case BuildRowState.FAILED | BuildRowState.INTERRUPTED: return "error-box-svgrepo-com-symbolic"
         case BuildRowState.BUILDING: return "menu-dots-square-svgrepo-com-symbolic"
-        case BuildRowState.CANCELLED | BuildRowState.STOPPED: return "stop-square-symbolic"
+        case BuildRowState.CANCELED | BuildRowState.STOPPED: return "stop-square-symbolic"
         case BuildRowState.SKIPPED: return "dialog-warning-symbolic"
         case BuildRowState.NOT_STARTED: return "square-svgrepo-com-symbolic"
         case _: return "clock-square-svgrepo-com-symbolic"
@@ -436,7 +452,7 @@ def _state_css_class(state: BuildRowState) -> str | None:
         case BuildRowState.FAILED | BuildRowState.INTERRUPTED: return "error"
         case BuildRowState.BUILDING: return "accent"
         case BuildRowState.SKIPPED: return "warning"
-        case BuildRowState.SCHEDULED | BuildRowState.CANCELLED | BuildRowState.STOPPED | BuildRowState.NOT_STARTED: return "dimmed"
+        case BuildRowState.SCHEDULED | BuildRowState.CANCELED | BuildRowState.STOPPED | BuildRowState.NOT_STARTED: return "dimmed"
     return None
 
 def _failure_summary(build) -> str | None:
@@ -450,3 +466,12 @@ def _failure_summary(build) -> str | None:
         except OSError:
             return None
     return build.failure_summary
+
+
+def _matches_filter(state: BuildRowState, selected: int) -> bool:
+    if selected == 1:
+        return state == BuildRowState.COMPLETED
+    if selected == 2:
+        return state in (BuildRowState.FAILED, BuildRowState.CANCELED, BuildRowState.STOPPED,
+                         BuildRowState.SKIPPED, BuildRowState.INTERRUPTED, BuildRowState.NOT_STARTED)
+    return True
