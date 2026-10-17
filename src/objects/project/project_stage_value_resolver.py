@@ -101,9 +101,10 @@ def _generate_source_subpath(project_directory, stage, visited: frozenset) -> st
 
 def _cache_generator(argument: StageArgumentDetails):
     def generate(project_directory, stage, visited: frozenset) -> str | None:
-        from .project_stage_cache import stage_cache_path, display_path
+        from .project_stage_cache import stage_cache_path
+        from catalystlab.repository import collapse_home
         path = stage_cache_path(project_directory, stage, argument)
-        return display_path(path) if path else None
+        return collapse_home(path) if path else None
     return generate
 
 # Generators of GENERATE_AUTOMATICALLY values that can be determined before building.

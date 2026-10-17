@@ -11,7 +11,7 @@ if 'catalystlab' not in sys.modules:
     package.__path__ = [str(ROOT/'src')] + [str(path) for path in (ROOT/'src').rglob('*') if path.is_dir()]
     sys.modules['catalystlab'] = package
 
-from catalystlab import project_stage_cache
+from catalystlab import project_stage_cache, repository
 from catalystlab.project_stage_arguments import StageArgumentDetails
 from catalystlab.project_stage_automatic_option import StageAutomaticOption
 
@@ -19,8 +19,8 @@ from catalystlab.project_stage_automatic_option import StageAutomaticOption
 class StageCachePathDisplayTests(unittest.TestCase):
     def test_home_paths_use_tilde_and_external_paths_stay_absolute(self):
         home = os.path.expanduser('~')
-        self.assertEqual(project_stage_cache.display_path(os.path.join(home, 'CatalystLab')), '~/CatalystLab')
-        self.assertEqual(project_stage_cache.display_path('/tmp/cache'), '/tmp/cache')
+        self.assertEqual(repository.collapse_home(os.path.join(home, 'CatalystLab')), '~/CatalystLab')
+        self.assertEqual(repository.collapse_home('/tmp/cache'), '/tmp/cache')
 
 
 class StageCachePathTests(unittest.TestCase):

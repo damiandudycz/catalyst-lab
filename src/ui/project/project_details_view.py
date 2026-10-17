@@ -416,22 +416,17 @@ class ProjectDetailsView(Gtk.Box):
 
     @Gtk.Template.Callback()
     def setup_items_monitoring(self, sender, items):
-        match sender:
-            case self.toolset_selection_view:
-                if hasattr(self, 'monitored_items_toolset'):
-                    for item in self.monitored_items_toolset:
-                        item.event_bus.unsubscribe(ToolsetEvents.IS_RESERVED_CHANGED, self)
-                self.monitored_items_toolset = items
-                for item in items:
-                    item.event_bus.subscribe(
-                        ToolsetEvents.IS_RESERVED_CHANGED,
-                        self.toolset_selection_view.refresh_items_state,
-                        self
-                    )
-            case self.releng_selection_view:
-                pass
-            case self.snapshot_selection_view:
-                pass
+        if sender is not self.toolset_selection_view:
+            return
+        for item in getattr(self, 'monitored_items_toolset', ()):
+            item.event_bus.unsubscribe(ToolsetEvents.IS_RESERVED_CHANGED, self)
+        self.monitored_items_toolset = items
+        for item in items:
+            item.event_bus.subscribe(
+                ToolsetEvents.IS_RESERVED_CHANGED,
+                self.toolset_selection_view.refresh_items_state,
+                self
+            )
 
     @Gtk.Template.Callback()
     def on_add_stage_activated(self, sender):

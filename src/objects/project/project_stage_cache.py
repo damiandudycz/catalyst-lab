@@ -1,6 +1,5 @@
 from __future__ import annotations
 import os
-from .repository import collapse_home as display_path
 from .project_stage_arguments import StageArgumentDetails
 from .project_stage_automatic_option import StageAutomaticOption
 

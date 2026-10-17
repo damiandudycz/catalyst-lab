@@ -25,7 +25,8 @@ from .project_stage_value_resolver import resolved_stage_argument_display, resol
 from .project_stage_portage_confdir import (
     StagePortageConfdirSource, stage_overlay_path, stage_root_overlay_path, root_overlay_values, FILE_OVERLAY_ARGUMENTS
 )
-from .project_stage_cache import CACHE_ARGUMENTS, stage_cache_path, display_path
+from .project_stage_cache import CACHE_ARGUMENTS, stage_cache_path
+from catalystlab.repository import collapse_home
 from .project_stage_kernels import (
     live_cd_kernel_warning, own_kernel_names,
     KERNEL_SETTINGS, KERNEL_SETTING_LEVELS, stage_kernel_names, kernel_setting, own_kernel_settings,
@@ -1379,12 +1380,12 @@ class StageCacheRow(Adw.ExpanderRow):
 
     def update_display(self):
         automatic_path = stage_cache_path(self.project_directory, _StageWithValue(self.stage, self.argument.attribute_name, StageAutomaticOption.GENERATE_AUTOMATICALLY), self.argument.details)
-        automatic_display = display_path(automatic_path) if automatic_path else "Folder in project builds, shared by stages with the same Rel type"
+        automatic_display = collapse_home(automatic_path) if automatic_path else "Folder in project builds, shared by stages with the same Rel type"
         self.automatic_row.set_subtitle(GLib.markup_escape_text(automatic_display))
-        self.folder_row.set_subtitle(GLib.markup_escape_text(display_path(self._folder) if self._folder else "No folder selected"))
+        self.folder_row.set_subtitle(GLib.markup_escape_text(collapse_home(self._folder) if self._folder else "No folder selected"))
         match self._source():
             case "automatic": subtitle = f"Automatic: {automatic_display}" if automatic_path else "Automatic"
-            case "folder": subtitle = display_path(self.value)
+            case "folder": subtitle = collapse_home(self.value)
             case _: subtitle = "None"
         self.set_subtitle(GLib.markup_escape_text(subtitle))
 
