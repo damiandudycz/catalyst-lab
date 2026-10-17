@@ -22,9 +22,8 @@ _LIMACTL_LOCATIONS = ["/opt/homebrew/bin/limactl", "/usr/local/bin/limactl"]
 # overlayfs, squashfs), and its packages provide bubblewrap and newuidmap.
 LIMA_TEMPLATE = "template:_images/alpine-3.23"
 
-# Data that needs Linux file ownership (extracted toolsets, sessions, caches in use) can't be in shared folders (they
-# can't store owners and are case insensitive on macOS). It's kept in a dedicated shared workspace folder as an ext4
-# image, mounted here while an operation needs it and deleted when no operation uses it.
+# Temporary data that needs Linux ownership lives in a dedicated ext4 workspace image. Persistent extracted toolsets
+# use ext4 images stored in Library/Cache; the shared folders themselves cannot preserve Linux owners or case.
 MACHINE_DATA_DIRECTORY = "/var/lib/catalystlab"
 
 # Machine disk contains only Alpine with tools, data of Catalyst Lab is in working space and shared folders.
@@ -36,13 +35,64 @@ _INSTANCE_NAME_EXAMPLE = "catalystlab-00000000"
 
 def machines_directory() -> str:
     """Machines of Catalyst Lab, one folder for each (disks, configuration, logs, working space). Next to toolsets."""
-    from .repository import Repository
-    toolsets_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.toolsets_location))
+    from .repository import Repository, resolve_path
+    toolsets_location = resolve_path(Repository.Settings.value.toolsets_location)
     return os.path.join(os.path.dirname(toolsets_location), "Machines")
 
+def build_machine_temporary_directory(instance_name: str) -> str:
+    """Temporary files for one build machine run, shared by its workspace and swap disk."""
+    from .repository import library_path, resolve_path
+    return resolve_path(library_path("Temporary", "BuildMachines", instance_name))
+
+def workspace_image_path(instance_name: str) -> str:
+    """Temporary ext4 image shared with a machine while an operation is running."""
+    return os.path.join(build_machine_temporary_directory(instance_name), "workspace.img")
+
+def temporary_swap_disk_path(disk_name: str) -> str:
+    """Lima swap disk data, beside its workspace in the per-machine Temporary folder."""
+    instance_name = disk_name.removesuffix("-swap")
+    return os.path.join(build_machine_temporary_directory(instance_name), "swap-disk")
+
+def remove_empty_build_machine_temporary_directory(instance_name: str) -> None:
+    """Remove a per-machine run folder after its workspace and swap disk are both gone."""
+    directory = build_machine_temporary_directory(instance_name)
+    for path in (directory, os.path.dirname(directory)):
+        try:
+            os.rmdir(path)
+        except OSError:
+            break
+
+def move_lima_disk_to_temporary(disk_name: str, lima_home: str) -> str:
+    """Move a newly created Lima disk into Temporary and leave its managed path as a symlink.
+
+    Lima currently derives disk file paths from LIMA_HOME/_disks and has no per-disk
+    location option. The symlink keeps Lima's disk management and attachment flow intact.
+    """
+    managed = os.path.join(lima_home, "_disks", disk_name)
+    temporary = temporary_swap_disk_path(disk_name)
+    if os.path.islink(managed) and os.path.realpath(managed) == temporary:
+        return managed
+    if not os.path.isdir(managed):
+        raise FileNotFoundError(f"Lima disk directory not found: {managed}")
+    os.makedirs(os.path.dirname(temporary), exist_ok=True)
+    if os.path.lexists(temporary):
+        shutil.rmtree(temporary) if os.path.isdir(temporary) and not os.path.islink(temporary) else os.unlink(temporary)
+    shutil.move(managed, temporary)
+    os.symlink(temporary, managed)
+    return managed
+
+def remove_temporary_lima_disk_data(disk_name: str, lima_home: str) -> None:
+    """Remove a redirected disk's Temporary data and any leftover Lima symlink."""
+    managed = os.path.join(lima_home, "_disks", disk_name)
+    temporary = temporary_swap_disk_path(disk_name)
+    if os.path.islink(managed) and os.path.realpath(managed) == os.path.realpath(temporary):
+        os.unlink(managed)
+    if os.path.lexists(temporary):
+        shutil.rmtree(temporary) if os.path.isdir(temporary) and not os.path.islink(temporary) else os.unlink(temporary)
+    remove_empty_build_machine_temporary_directory(disk_name.removesuffix("-swap"))
+
 def default_lima_home() -> str:
-    """~/.lima in real home of user (not $HOME, which can be changed). Used by machines created before machines
-    directory, and when its path is too long."""
+    """~/.lima in the real home of user (not $HOME, which can be changed), used when the machine path is too long."""
     import pwd
     return os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".lima")
 
@@ -229,12 +279,11 @@ def machine_configuration(cpus: int, memory_gib: int, shared_paths: list[str]) -
     """Lima configuration (YAML) of build machine."""
     mounts = "\n".join(f'- location: "{path}"\n  writable: true' for path in shared_paths)
     indented_setup = "\n".join("    " + line for line in machine_setup_script().splitlines())
-    rosetta = "rosetta:\n  enabled: true\n  binfmt: true\n" if _ROSETTA_FOR_AMD64 else ""
     return f"""minimumLimaVersion: 2.0.0
 base:
 - {LIMA_TEMPLATE}
 vmType: vz
-{rosetta}cpus: {cpus}
+cpus: {cpus}
 memory: {memory_gib}GiB
 disk: {SYSTEM_DISK_GIB}GiB
 containerd:
@@ -248,9 +297,8 @@ provision:
 {indented_setup}
 """
 
-# Version of machine setup, increased when setup script changes. Existing machines are updated when started.
-MACHINE_SETUP_VERSION = 8
-_MACHINE_SETUP_VERSION_FILE = "/etc/catalystlab-setup-version"
+# Provisioning marker: setup is run once when a machine is created.
+_MACHINE_SETUP_MARKER = "/etc/catalystlab-setup-complete"
 
 # QEMU user emulators, to build stages for other architectures (like on Linux hosts, binfmt_misc with F flag makes
 # them work in chroots and namespaces).
@@ -278,12 +326,11 @@ for entry in qemu-*; do
     magic=$(sed -n 's/^magic //p' "$entry")
     mask=$(sed -n 's/^mask //p' "$entry")
     interpreter=$(sed -n 's/^interpreter //p' "$entry")
-    registered_interpreter=$interpreter
     flags=$(sed -n 's/^flags: //p' "$entry")
     [ "$offset" = 0 ] && [ -n "$magic" ] && [ -n "$mask" ] || continue
     # Bytes 7 and 8 of ELF header are hex digits 15-18.
     fixed_mask="$(echo "$mask" | cut -c1-14)0000$(echo "$mask" | cut -c19-)"
-    [ "$fixed_mask" = "$mask" ] && [ "$interpreter" = "$registered_interpreter" ] && continue
+    [ "$fixed_mask" = "$mask" ] && continue
     echo -1 > "$entry"
     printf ':%s:M:0:%s:%s:%s:%s\n' "$entry" "$(echo "$magic" | sed 's/../\\x&/g')" \
         "$(echo "$fixed_mask" | sed 's/../\\x&/g')" "$interpreter" "$flags" > register
@@ -295,8 +342,8 @@ def machine_setup_script() -> str:
     mount point and emulators of other architectures."""
     return f"""#!/bin/sh
 set -eux
-# Lima runs provisioning on every boot, machine that is already set up starts without installing packages again.
-[ "$(cat {_MACHINE_SETUP_VERSION_FILE} 2>/dev/null || echo 0)" -ge {MACHINE_SETUP_VERSION} ] && exit 0
+# Provisioning runs on every boot; install the machine tools only once.
+test -f {_MACHINE_SETUP_MARKER} && exit 0
 # Mirror sometimes stops sending data in the middle of download (for a minute or more): downloads time out quickly
 # and are retried. Downloaded packages are kept in cache, so retries download only missing ones.
 mkdir -p /var/cache/catalystlab-apk
@@ -340,14 +387,7 @@ user=$(getent passwd | awk -F: '$3 >= 500 && $3 < 60000 {{ print $1; exit }}')
 grep -q "^$user:" /etc/subuid || echo "$user:100000:65536" >> /etc/subuid
 grep -q "^$user:" /etc/subgid || echo "$user:100000:65536" >> /etc/subgid
 mountpoint -q {MACHINE_DATA_DIRECTORY} || install -d -o "$user" {MACHINE_DATA_DIRECTORY}
-echo {MACHINE_SETUP_VERSION} > {_MACHINE_SETUP_VERSION_FILE}
-"""
-
-def machine_setup_update_script() -> str:
-    """Runs setup in existing machine when its version is older."""
-    return f"""[ "$(cat {_MACHINE_SETUP_VERSION_FILE} 2>/dev/null || echo 0)" -ge {MACHINE_SETUP_VERSION} ] && exit 0
-echo "Updating machine setup to version {MACHINE_SETUP_VERSION}"
-echo {_shell_base64(machine_setup_script())} | base64 -d | sudo sh
+touch {_MACHINE_SETUP_MARKER}
 """
 
 def _shell_base64(text: str) -> str:

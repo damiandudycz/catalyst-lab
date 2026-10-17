@@ -1,6 +1,8 @@
 import os
 from gi.repository import Gtk, Adw, GLib
 from .multistage_process_execution_view import AnsiStyle, append_ansi_line
+from catalystlab.formatters import format_size
+from .scrolled_window import scrolled_window
 
 # ------------------------------------------------------------------------------
 # Read-only browser of folder (eg. releng directory): folders and files of folder, opened folders and text files are
@@ -8,15 +10,6 @@ from .multistage_process_execution_view import AnsiStyle, append_ansi_line
 
 _HIDDEN_NAMES = {".git"} # Internal data of Git repository.
 _MAX_TEXT_SIZE = 1024 * 1024 # Larger files are shown truncated.
-
-def _scrolled(child: Gtk.Widget) -> Gtk.ScrolledWindow:
-    return Gtk.ScrolledWindow(child=child, hexpand=True, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
-
-def _format_size(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024 or unit == "GB":
-            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-        size /= 1024
 
 class FilesBrowserView(Gtk.Box):
     """Folders and files of folder inside root (folders first), read when view is loaded."""
@@ -44,7 +37,8 @@ class FilesBrowserView(Gtk.Box):
         self.group = Adw.PreferencesGroup(title=GLib.markup_escape_text(title))
         self.append(self.group)
         try:
-            entries = [entry for entry in os.scandir(self.path) if entry.name not in _HIDDEN_NAMES]
+            with os.scandir(self.path) as directory:
+                entries = [entry for entry in directory if entry.name not in _HIDDEN_NAMES]
         except OSError as e:
             self.group.add(Adw.StatusPage(icon_name="dialog-error-symbolic", title="Folder can't be read",
                                           description=GLib.markup_escape_text(str(e))))
@@ -68,7 +62,7 @@ class FilesBrowserView(Gtk.Box):
                 count = sum(1 for name in os.listdir(entry.path) if name not in _HIDDEN_NAMES)
                 row.set_subtitle(f"{count} item{'' if count == 1 else 's'}")
             elif entry.is_file():
-                row.set_subtitle(_format_size(entry.stat().st_size))
+                row.set_subtitle(format_size(entry.stat().st_size, max_unit="GB"))
             else:
                 row.set_subtitle("Broken link")
         except OSError:
@@ -90,7 +84,7 @@ class FilesBrowserView(Gtk.Box):
             view.set_margin_top(12)
             view.set_margin_bottom(24)
             view.load()
-            self.content_navigation_view.push_view(_scrolled(view), title=name)
+            self.content_navigation_view.push_view(scrolled_window(view), title=name)
         else:
             self.content_navigation_view.push_view(FileContentView(path), title=name)
 
@@ -110,11 +104,11 @@ class FileContentView(Gtk.Box):
             return
         if b"\0" in data[:8192]:
             self.append(Adw.StatusPage(icon_name="text-x-generic-symbolic", title="Binary file",
-                                       description=f"{_format_size(size)}, contents can't be displayed as text.",
+                                       description=f"{format_size(size, max_unit='GB')}, contents can't be displayed as text.",
                                        vexpand=True))
             return
-        info = Gtk.Label(xalign=0, label=_format_size(size) + (
-            f" · showing first {_format_size(_MAX_TEXT_SIZE)}" if size > _MAX_TEXT_SIZE else ""))
+        info = Gtk.Label(xalign=0, label=format_size(size, max_unit="GB") + (
+            f" · showing first {format_size(_MAX_TEXT_SIZE, max_unit='GB')}" if size > _MAX_TEXT_SIZE else ""))
         info.add_css_class("dimmed")
         info.add_css_class("caption")
         self.append(info)

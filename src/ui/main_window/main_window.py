@@ -1,7 +1,7 @@
 from gi.repository import Adw, Gtk
 from .app_section import AppSection
 from .app_events import AppEvents, app_event_bus
-from .navigation_view_extensions import *
+from . import navigation_view_extensions as _navigation_view_extensions
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/main_window/main_window.ui')
 class CatalystlabWindow(Adw.ApplicationWindow):

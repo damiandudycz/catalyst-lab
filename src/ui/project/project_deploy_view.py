@@ -1,5 +1,4 @@
 from __future__ import annotations
-import os
 from gi.repository import Gtk, Adw, GLib
 from .project_directory import ProjectDirectory
 from .project_build import load_project_builds

@@ -24,7 +24,8 @@ class BackendTests(unittest.TestCase):
         apple._load_bridge.cache_clear()
         self.project = types.SimpleNamespace(get_architecture=lambda: types.SimpleNamespace(value='arm64'))
         self.build = types.SimpleNamespace(stage_name='stage3', path='/build', artifact_path='/build/stage.tar.xz')
-        self.support = qemu.QemuSupport(qemu.QemuBuildKind.STAGE, qemu._MACHINES['arm64'], kernel='Image', initramfs='initramfs')
+        self.support = qemu.QemuSupport(qemu.QemuBuildKind.STAGE, qemu._MACHINES['arm64'], kernel='Image',
+                                        initramfs='initramfs', image_directory='/cache/TestVM/hash')
 
     def detection(self, **kwargs):
         return apple.apple_support(self.project, self.build)
@@ -65,7 +66,7 @@ class BackendTests(unittest.TestCase):
         self.addCleanup(lambda: qemu.QemuRun.running_runs.remove(run) if run in qemu.QemuRun.running_runs else None)
         bridge = Mock()
         bridge.api.cl_vm_create.return_value = 123
-        with patch.object(apple, 'apple_support', return_value=availability), patch.object(apple, '_load_bridge', return_value=bridge), patch.object(apple, 'stage_image_directory', return_value='/cache/TestVM/hash'):
+        with patch.object(apple, 'apple_support', return_value=availability), patch.object(apple, '_load_bridge', return_value=bridge):
             run.start()
             config = json.loads(bridge.api.cl_vm_create.call_args.args[0])
             self.assertEqual(config['disk'], '/cache/TestVM/hash/root.img')
@@ -119,6 +120,23 @@ class BackendTests(unittest.TestCase):
         with patch.dict(sys.modules, modules), patch.object(qemu.os.path, 'isfile', return_value=True), patch.object(qemu, '_stage_boot_files', return_value=(['Image'], ['initramfs'])), patch.object(qemu, 'qemu_binary', return_value=None):
             self.assertTrue(qemu.qemu_support(self.project, self.build, check_runtime=False).available)
             self.assertIn('not installed', qemu.qemu_support(self.project, self.build).reason)
+
+    def test_stage_without_kernel_remains_available_for_custom_kernel_launch(self):
+        modules = {
+            'catalystlab.project_build': types.SimpleNamespace(StageBuildStatus=types.SimpleNamespace(COMPLETED='done')),
+            'catalystlab.deploy_live_iso': types.SimpleNamespace(is_live_iso_build=lambda build: False),
+            'catalystlab.deploy_installation': types.SimpleNamespace(is_deployable=lambda project, build: True),
+        }
+        self.build.status = 'done'
+        self.build.artifact = 'stage.tar.xz'
+        with patch.dict(sys.modules, modules), patch.object(qemu.os.path, 'isfile', return_value=True), \
+             patch.object(qemu, '_stage_boot_files', return_value=([], [])), \
+             patch.object(qemu, 'qemu_binary', return_value='/emulator'):
+            support = qemu.qemu_support(self.project, self.build)
+        self.assertTrue(support.available)
+        self.assertEqual(support.kind, qemu.QemuBuildKind.STAGE)
+        self.assertIsNone(support.kernel)
+        self.assertIsNone(support.initramfs)
 
     def test_native_startup_error_is_retained_and_run_removed(self):
         availability = apple.AppleSupport(self.support, '/bridge', LIMITS)

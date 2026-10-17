@@ -20,11 +20,6 @@ _automatic_cache_folders = {
     StageArgumentDetails.kerncache_path: os.path.join("caches", "kerncache"),
 }
 
-def is_automatic_cache(value) -> bool:
-    # Stages created before caches had automatic option could inherit them from releng template. Template paths are
-    # inside toolset and would be lost after build, so any automatic option means automatic cache.
-    return isinstance(value, StageAutomaticOption)
-
 def stage_cache_path(project_directory, stage, argument: StageArgumentDetails) -> str | None:
     """Host folder used as cache of stage, or None if cache is disabled or can't be determined yet (rel_type not set)."""
     from .project_build import project_builds_directory
@@ -32,7 +27,7 @@ def stage_cache_path(project_directory, stage, argument: StageArgumentDetails) -
     value = getattr(stage, argument.name, None)
     if isinstance(value, str):
         return os.path.abspath(os.path.expanduser(value)) if value.strip() else None
-    if not is_automatic_cache(value):
+    if value != StageAutomaticOption.GENERATE_AUTOMATICALLY:
         return None
     rel_type = resolve_stage_argument(project_directory, stage, StageArgumentDetails.rel_type.value)
     if not isinstance(rel_type, str) or not rel_type.strip("/ "):
@@ -42,9 +37,9 @@ def stage_cache_path(project_directory, stage, argument: StageArgumentDetails) -
         root = packages_directory.directory_path()
     else:
         root = os.path.join(project_builds_directory(project_directory), _automatic_cache_folders[argument])
-    path = os.path.normpath(os.path.join(root, rel_type.strip("/")))
-    return path if path.startswith(root + os.sep) else None
-
-def display_path(path: str) -> str:
-    home = os.path.expanduser("~")
-    return "~" + path[len(home):] if path == home or path.startswith(home + os.sep) else path
+    root = os.path.abspath(root)
+    path = os.path.abspath(os.path.join(root, rel_type.strip("/ ")))
+    try:
+        return path if os.path.commonpath((root, path)) == root else None
+    except ValueError:  # Paths on different drives (possible on Windows).
+        return None

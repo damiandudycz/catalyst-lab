@@ -1,14 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
-from .repository import Serializable, Repository
+from .repository import Serializable, Repository, resolve_path
 from typing import Self
 import os, json
 import subprocess
 import re
-from collections import defaultdict
 from .architecture import Architecture
-from typing import NamedTuple
+from .ebuilds import group_ebuild_paths
 
 class LatestSnapshotOption:
     """Snapshot list entry generating new snapshot with selected toolset (when project is created or build starts)."""
@@ -17,6 +16,10 @@ class LatestSnapshotOption:
     icon_name = "folder-download-symbolic"
 
 LATEST_SNAPSHOT = LatestSnapshotOption()
+
+def sorted_snapshots(snapshots: list[Snapshot]) -> list[Snapshot]:
+    """Newest snapshots first, snapshots without date last."""
+    return sorted(snapshots, key=lambda snapshot: snapshot.date.timestamp() if snapshot.date else 0, reverse=True)
 
 # Repository from which Catalyst generates snapshots (catalyst -s stable), they are named gentoo-<commit>.sqfs.
 GENTOO_REPOSITORY_URL = "https://anongit.gentoo.org/git/repo/sync/gentoo.git"
@@ -30,7 +33,7 @@ def latest_gentoo_commit(timeout: float = 30) -> str | None:
     except Exception as e:
         print(f"Failed to check latest Gentoo repository commit: {e}")
         return None
-    commit = output.split()[0] if output.split() else ""
+    commit = output.split(maxsplit=1)[0] if output else ""
     return commit if re.fullmatch(r"[0-9a-f]{40}", commit) else None
 
 def existing_latest_snapshot(log=print) -> Snapshot | None:
@@ -53,7 +56,7 @@ def existing_latest_snapshot(log=print) -> Snapshot | None:
 class Snapshot(Serializable):
     @staticmethod
     def base_location() -> str:
-        return os.path.realpath(os.path.expanduser(Repository.Settings.value.snapshots_location))
+        return resolve_path(Repository.Settings.value.snapshots_location)
 
     @classmethod
     def load_all(cls):
@@ -73,7 +76,7 @@ class Snapshot(Serializable):
             except (OSError, ValueError, AttributeError) as error:
                 print(f"Failed to read snapshot marker {marker}: {error}")
             items.append(cls(entry.name, datetime.fromtimestamp(entry.stat().st_mtime), from_file))
-        return sorted(items, key=lambda item: item.date.timestamp() if item.date else 0, reverse=True)
+        return sorted_snapshots(items)
 
     @classmethod
     def save_all(cls, items):
@@ -127,34 +130,10 @@ class Snapshot(Serializable):
             print(f"Error reading {snapshot_file_path}: {e}")
             return {}
 
-        nested_dict = defaultdict(lambda: defaultdict(list))
-
-        for line in output.splitlines():
-            line = line.strip()
-            if not line.startswith('squashfs-root/'):
-                continue
-
-            path = line[len('squashfs-root/'):]
-            if not path.endswith('.ebuild'):
-                continue
-
-            parts = path.split('/')
-            if len(parts) < 3:
-                continue  # Skip malformed paths
-
-            category, package, filename = parts[:3]
-
-            # Match version from filename: package-version.ebuild
-            match = re.match(rf"^{re.escape(package)}-(.+)\.ebuild$", filename)
-            if match:
-                version = match.group(1)
-                nested_dict[category][package].append(version)
-
-        # Convert defaultdicts to normal dicts
-        return {
-            category: dict(sorted(packages.items()))
-            for category, packages in sorted(nested_dict.items())
-        }
+        prefix = "squashfs-root/"
+        paths = (line.strip().removeprefix(prefix) for line in output.splitlines()
+                 if line.strip().startswith(prefix) and line.strip().endswith(".ebuild"))
+        return group_ebuild_paths(paths)
 
     def load_profiles(self, arch: Architecture) -> list[PortageProfile]:
         # TODO: Needs additional mapping, doesnt work for example for ppc64le

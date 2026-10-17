@@ -28,7 +28,6 @@ class LibrarySelectionStep(Gtk.Box):
         self.append(description)
         self.target: LibraryTarget | None = None
         self.selection_error: str | None = None
-        self.on_confirmed = None
         self.location = library_directory()
         group = Adw.PreferencesGroup(title="Library location")
         self.location_row = Adw.ActionRow(title="Library location")
@@ -95,11 +94,10 @@ class LibrarySelectionStep(Gtk.Box):
         confirmation.set_response_appearance(response_id, Adw.ResponseAppearance.SUGGESTED)
         confirmation.set_default_response("cancel")
         confirmation.set_close_response("cancel")
-        self.on_confirmed = on_confirmed
-        confirmation.connect("response", self._on_location_confirmed, target)
+        confirmation.connect("response", self._on_location_confirmed, target, on_confirmed)
         confirmation.present(self)
 
-    def _on_location_confirmed(self, _dialog, response: str, target: LibraryTarget):
+    def _on_location_confirmed(self, _dialog, response: str, target: LibraryTarget, on_confirmed):
         if response not in ("use", "create"):
             return
         try:
@@ -110,8 +108,7 @@ class LibrarySelectionStep(Gtk.Box):
         except (OSError, ValueError) as error:
             self._show_message("Can't Set Up Library", str(error))
             return
-        if self.on_confirmed:
-            self.on_confirmed()
+        on_confirmed()
 
     def _show_message(self, heading: str, body: str):
         dialog = Adw.AlertDialog(heading=heading, body=body)

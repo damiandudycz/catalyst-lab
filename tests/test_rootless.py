@@ -1,9 +1,11 @@
 """Rootless executor contracts and safe local filesystem operations."""
 from pathlib import Path
+import os
 import sys
 import tempfile
 import types
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +14,7 @@ if 'catalystlab' not in sys.modules:
     package.__path__ = [str(ROOT/'src')] + [str(path) for path in (ROOT/'src').rglob('*') if path.is_dir()]
     sys.modules['catalystlab'] = package
 
-from catalystlab import rootless
+from catalystlab import rootless, project_build_rootless
 
 
 class FakeProcess:
@@ -89,6 +91,305 @@ class FilesystemOperationTests(unittest.TestCase):
 
 
 class ExecutorTests(unittest.TestCase):
+    def test_path_containment_normalizes_parent_components_and_safely_rejects_other_roots(self):
+        self.assertTrue(rootless.path_is_within('/library/Cache/Extracted', '/library/Cache'))
+        self.assertTrue(rootless.path_is_within('/library/Cache', '/library/Cache'))
+        self.assertFalse(rootless.path_is_within('/library/Cache/../outside', '/library/Cache'))
+        with patch('catalystlab.rootless.os.path.commonpath', side_effect=ValueError):
+            self.assertFalse(rootless.path_is_within('/other-drive/file', '/library/Cache'))
+
+    def test_path_containment_resolves_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary, 'library')
+            outside = Path(temporary, 'outside')
+            root.mkdir()
+            outside.mkdir()
+            (root / 'link').symlink_to(outside, target_is_directory=True)
+            self.assertFalse(rootless.path_is_within(root / 'link' / 'file', root))
+
+    def test_interrupted_build_cache_changes_are_saved_before_sessions_are_removed(self):
+        executor = FakeExecutor()
+        with patch.object(project_build_rootless, 'sessions_directory', return_value='/library/Temporary/Sessions'):
+            saved = project_build_rootless.save_interrupted_caches(executor, lambda _line: None)
+
+        script, namespace = executor.started[0]
+        self.assertTrue(saved)
+        self.assertTrue(namespace)
+        self.assertIn('/library/Temporary/Sessions/build-*/caches/*/saved', script)
+        self.assertIn('save_cache_changes "$directory/upper" "$saved"', script)
+        self.assertIn('rm -rf --one-file-system /library/Temporary/Sessions/build-*', script)
+
+    def test_catalyst_snapshot_uses_the_normal_command_without_key_refresh_overrides(self):
+        self.assertEqual(project_build_rootless.catalyst_snapshot_command(), 'catalyst -s stable')
+
+    def test_extracted_squashfs_stages_next_to_cache_for_same_filesystem_publish(self):
+        executor = FakeExecutor()
+        path = rootless.extracted_squashfs(
+            '/library/Toolsets/toolset.sqfs', 'toolsets', lambda _line: None,
+            check_path='usr', executor=executor)
+
+        self.assertEqual(path, '/library/Cache/Extracted/Toolsets/toolset.sqfs.d')
+        script, namespace = executor.started[0]
+        self.assertTrue(namespace)
+        self.assertIn('TEMP_PATH=/library/Cache/Extracted/Toolsets/.toolset.sqfs.', script)
+        self.assertIn('mv -T -- "$TEMP_PATH"', script)
+        self.assertIn('set -euo pipefail', script)
+        self.assertNotIn('/library/Temporary/Work/toolset.sqfs.', script)
+
+    def test_machine_extracted_squashfs_stays_on_case_sensitive_workspace_filesystem(self):
+        class MachineFakeExecutor(FakeExecutor):
+            is_machine = True
+
+        executor = MachineFakeExecutor()
+        path = rootless.extracted_squashfs(
+            '/library/Toolsets/toolset.sqfs', 'toolsets', lambda _line: None,
+            check_path='usr', executor=executor)
+
+        self.assertEqual(path, '/library/Temporary/Work/Extracted/Toolsets/toolset.sqfs.d')
+        script, _ = executor.started[0]
+        self.assertIn('TEMP_PATH=/library/Temporary/Work/Extracted/Toolsets/.toolset.sqfs.', script)
+        self.assertIn('mv -T -- "$TEMP_PATH" /library/Temporary/Work/Extracted/Toolsets/toolset.sqfs.d', script)
+
+    def test_machine_squashfs_is_mounted_read_only_without_extraction(self):
+        class MachineFakeExecutor(FakeExecutor):
+            is_machine = True
+
+            def filesystem(self, request):
+                self.filesystem_requests = getattr(self, 'filesystem_requests', []) + [request]
+                return {}
+
+        executor = MachineFakeExecutor()
+        path = rootless.mount_squashfs_read_only(
+            '/library/Toolsets/toolset.sqfs', lambda _line: None, executor=executor)
+
+        self.assertTrue(path.startswith('/library/Temporary/Work/toolsets/mount_'))
+        self.assertEqual(executor.filesystem_requests, [{'mkdir': [path]}])
+        script, namespace = executor.started[0]
+        self.assertFalse(namespace)
+        self.assertIn('sudo mount -t squashfs -o loop,ro /library/Toolsets/toolset.sqfs', script)
+        self.assertIn(f'mountpoint -q {path}', script)
+        self.assertNotIn('unsquashfs', script)
+
+    def test_build_machine_toolset_uses_mounted_lower_layer(self):
+        class MachineFakeExecutor(FakeExecutor):
+            is_machine = True
+
+        executor = MachineFakeExecutor()
+        with patch.object(rootless, 'mount_squashfs_read_only', return_value='/workspace/toolsets/mount_abc') as mount, \
+                patch.object(rootless, 'extracted_squashfs') as extract:
+            path, mounted = rootless.prepare_toolset_squashfs(
+                '/library/Toolsets/toolset.sqfs', lambda _line: None, executor=executor)
+
+        self.assertEqual(path, '/workspace/toolsets/mount_abc')
+        self.assertTrue(mounted)
+        mount.assert_called_once_with('/library/Toolsets/toolset.sqfs', unittest.mock.ANY, None,
+                                      executor, kind='toolsets')
+        extract.assert_not_called()
+
+    def test_local_build_toolset_keeps_extracted_fallback(self):
+        executor = FakeExecutor()
+        with patch.object(rootless, 'extracted_squashfs', return_value='/library/Cache/Extracted/Toolsets/toolset.sqfs.d') as extract, \
+                patch.object(rootless, 'mount_squashfs_read_only') as mount:
+            path, mounted = rootless.prepare_toolset_squashfs(
+                '/library/Toolsets/toolset.sqfs', lambda _line: None, executor=executor)
+
+        self.assertEqual(path, '/library/Cache/Extracted/Toolsets/toolset.sqfs.d')
+        self.assertFalse(mounted)
+        extract.assert_called_once_with('/library/Toolsets/toolset.sqfs', 'toolsets', unittest.mock.ANY, None,
+                                        check_path='bin/bash', executor=executor)
+        mount.assert_not_called()
+
+    def test_build_session_prepares_bind_targets_in_overlay_upper_before_mount(self):
+        executor = FakeExecutor()
+        with patch.object(project_build_rootless, 'sessions_directory', return_value='/workspace/Temporary/Sessions'):
+            script = project_build_rootless.stage_build_session_script(
+                executor, '/workspace/Toolsets/mount',
+                [('/library/Snapshots', '/var/tmp/catalyst/snapshots')], 'catalyst -s stable')
+
+        prepare = script.index('prepare_bind_target /var/tmp/catalyst/snapshots || exit 1')
+        overlay = script.index('mount -t overlay overlay -o lowerdir=/workspace/Toolsets/mount')
+        bind = script.index('bind /library/Snapshots /var/tmp/catalyst/snapshots')
+        self.assertLess(prepare, overlay)
+        self.assertLess(overlay, bind)
+        self.assertNotIn('PATCH_TOOLSET_FILE', script)
+        self.assertIn('mode=$(stat -c %a "$TOOLSET$current")', script)
+        self.assertIn('chmod "$mode" "$UPPER$current"', script)
+
+    def test_build_session_overrides_toolset_resolver_symlink_in_writable_overlay(self):
+        executor = FakeExecutor()
+        with patch.object(project_build_rootless, 'sessions_directory', return_value='/workspace/Temporary/Sessions'):
+            script = project_build_rootless.stage_build_session_script(
+                executor, '/workspace/Toolsets/mount', [], 'true')
+
+        resolver_overlay = script.index('cat /etc/resolv.conf > "$UPPER/etc/resolv.conf"')
+        overlay_mount = script.index('mount -t overlay overlay -o lowerdir=/workspace/Toolsets/mount')
+        chroot = script.index('chroot "$ROOT"')
+        self.assertLess(resolver_overlay, overlay_mount)
+        self.assertLess(overlay_mount, chroot)
+        self.assertNotIn('cp -L /etc/resolv.conf', script)
+
+    def test_build_session_patches_read_only_toolset_file_in_overlay_upper(self):
+        executor = FakeExecutor()
+        with patch.object(project_build_rootless, 'sessions_directory', return_value='/workspace/Temporary/Sessions'):
+            script = project_build_rootless.stage_build_session_script(
+                executor, '/workspace/Toolsets/mount', [], 'true',
+                patch_catalyst_stage1=True)
+
+        patch_file = script.index('PATCH_TOOLSET_FILE')
+        overlay_mount = script.index('mount -t overlay overlay -o lowerdir=/workspace/Toolsets/mount')
+        self.assertLess(patch_file, overlay_mount)
+        self.assertIn('os.path.join(upper, relative.lstrip("/"))', script)
+        self.assertIn('contents.replace(old, new)', script)
+
+    def test_machine_executor_passes_scripts_by_shared_temporary_file(self):
+        class Machine:
+            instance_name = 'catalystlab-test'
+            lima_home = '/library/Machines'
+
+            def __init__(self):
+                self.ended = 0
+
+            def begin_use(self):
+                pass
+
+            def ensure_running(self):
+                pass
+
+            def end_use(self):
+                self.ended += 1
+
+        class Process:
+            stdout = []
+
+        machine = Machine()
+        script = 'echo test\n' * 2000
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(rootless.Repository, 'Settings', SimpleNamespace(
+                    value=SimpleNamespace(temporary_location=temporary)), create=True), \
+                patch('catalystlab.lima.limactl_path', return_value='/usr/bin/limactl'), \
+                patch('catalystlab.lima.lima_environment', return_value={}), \
+                patch.object(rootless.subprocess, 'Popen', return_value=Process()) as popen:
+            process = rootless.MachineExecutor(machine).start(script, namespace=True)
+
+            command = popen.call_args.args[0]
+            script_path = next((Path(temporary) / 'MachineCommands').glob('*.sh'))
+            self.assertTrue(str(script_path).startswith(os.path.join(temporary, 'MachineCommands')))
+            self.assertEqual(script_path.read_text(), script)
+            self.assertIn('cat "$1" > "$INNER"', command[-1])
+            self.assertIn(str(script_path), command[-1])
+            self.assertNotIn('base64', ' '.join(command))
+
+            process._on_exit()
+            self.assertFalse(script_path.exists())
+            self.assertEqual(machine.ended, 1)
+
+    def test_build_machine_snapshot_uses_read_only_mount_instead_of_extraction(self):
+        class MachineFakeExecutor(FakeExecutor):
+            is_machine = True
+
+        executor = MachineFakeExecutor()
+        with patch.object(rootless, 'mount_squashfs_read_only', return_value='/workspace/snapshots/mount_abc') as mount, \
+                patch.object(rootless, 'extracted_squashfs') as extract:
+            path, mounted = rootless.prepare_snapshot_squashfs(
+                '/library/Snapshots/gentoo-test.sqfs', lambda _line: None, executor=executor)
+
+        self.assertEqual(path, '/workspace/snapshots/mount_abc')
+        self.assertTrue(mounted)
+        mount.assert_called_once_with('/library/Snapshots/gentoo-test.sqfs', unittest.mock.ANY, None,
+                                      executor, kind='snapshots')
+        extract.assert_not_called()
+
+    def test_local_snapshot_keeps_extracted_fallback(self):
+        executor = FakeExecutor()
+        with patch.object(rootless, 'extracted_squashfs', return_value='/library/Cache/Extracted/Snapshots/gentoo.sqfs.d') as extract, \
+                patch.object(rootless, 'mount_squashfs_read_only') as mount:
+            path, mounted = rootless.prepare_snapshot_squashfs(
+                '/library/Snapshots/gentoo.sqfs', lambda _line: None, executor=executor)
+
+        self.assertEqual(path, '/library/Cache/Extracted/Snapshots/gentoo.sqfs.d')
+        self.assertFalse(mounted)
+        extract.assert_called_once_with('/library/Snapshots/gentoo.sqfs', 'snapshots', unittest.mock.ANY, None,
+                                        check_path='profiles', executor=executor)
+        mount.assert_not_called()
+
+    def test_machine_squashfs_mount_failure_removes_mountpoint(self):
+        class MachineFakeExecutor(FakeExecutor):
+            is_machine = True
+
+            def filesystem(self, request):
+                self.filesystem_requests = getattr(self, 'filesystem_requests', []) + [request]
+                return {}
+
+        executor = MachineFakeExecutor(FakeProcess(code=1))
+        with self.assertRaisesRegex(RuntimeError, 'Failed to mount toolset.sqfs read-only'):
+            rootless.mount_squashfs_read_only(
+                '/library/Toolsets/toolset.sqfs', lambda _line: None, executor=executor)
+
+        path = executor.filesystem_requests[0]['mkdir'][0]
+        cleanup_script, namespace = executor.started[-1]
+        self.assertFalse(namespace)
+        self.assertIn(f'rmdir -- {path}', cleanup_script)
+
+    def test_machine_squashfs_unmounts_and_removes_mountpoint(self):
+        class MachineFakeExecutor(FakeExecutor):
+            is_machine = True
+
+        executor = MachineFakeExecutor()
+        rootless.unmount_read_only_mount('/library/Temporary/Work/toolsets/mount_abc',
+                                         lambda _line: None, executor=executor)
+
+        script, namespace = executor.started[0]
+        self.assertFalse(namespace)
+        self.assertIn('sudo umount -- /library/Temporary/Work/toolsets/mount_abc', script)
+        self.assertIn('rmdir -- /library/Temporary/Work/toolsets/mount_abc', script)
+
+    def test_machine_toolset_extraction_is_cached_in_ext4_and_mounted_read_only(self):
+        class MachineFakeExecutor(FakeExecutor):
+            is_machine = True
+
+            def __init__(self, cache, temporary):
+                super().__init__()
+                self.cache = cache
+                self.temporary = temporary
+                self.machine = SimpleNamespace(instance_name='catalystlab-test')
+
+            def cache_directory(self):
+                return self.cache
+
+            def temporary_directory(self):
+                return self.temporary
+
+            def filesystem(self, request):
+                return rootless._filesystem_operations(request)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary, 'toolset.sqfs')
+            source.write_bytes(b'squashfs')
+            executor = MachineFakeExecutor(str(Path(temporary, 'Cache')), str(Path(temporary, 'Temporary')))
+
+            first_path = rootless.mount_cached_machine_toolset(str(source), lambda _line: None, executor=executor)
+            scripts = [script for script, _namespace in executor.started]
+
+            self.assertIn('/Cache/Extracted/Toolsets/catalystlab-test-', scripts[0])
+            self.assertIn('mkfs.ext4 -F -m 0', scripts[0])
+            self.assertIn('mount -o loop,rw', scripts[0])
+            self.assertIn('unsquashfs -n', scripts[1])
+            self.assertIn('mount -o remount,ro', scripts[2])
+            self.assertTrue(first_path.endswith('/toolset.sqfs.d'))
+
+            executor.started.clear()
+            second_path = rootless.mount_cached_machine_toolset(str(source), lambda _line: None, executor=executor)
+            scripts = [script for script, _namespace in executor.started]
+
+            self.assertEqual(second_path.rsplit('/', 1)[-1], first_path.rsplit('/', 1)[-1])
+            self.assertIn('Using cached extracted', scripts[1])
+            self.assertIn('cat ', scripts[1])
+            self.assertIn('mount -o remount,ro', scripts[2])
+
+            image = rootless.machine_toolset_cache_image(str(source), executor)
+            rootless.remove_extracted_squashfs(str(source), 'toolsets', executor)
+            self.assertFalse(os.path.exists(image))
+
     def test_owned_path_requires_directory_boundary(self):
         executor = FakeExecutor()
         self.assertTrue(executor.owns_path('/library/Cache'))

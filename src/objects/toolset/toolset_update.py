@@ -1,17 +1,16 @@
 from __future__ import annotations
-import os, threading, shutil, re, time
+import os, shutil, time
 from .multistage_process import (
     MultiStageProcess, MultiStageProcessStage,
     MultiStageProcessStageState
 )
 from .toolset import Toolset
-from .toolset_application import ToolsetApplication
+from .toolset_application import ToolsetApplication, order_selected_applications
 from .root_function import root_function, local_for_rootless_paths
-from .repository import Repository
-from .root_helper_server import ServerResponse, ServerResponseStatusCode
-from .helper_functions import  create_squashfs
 from gi.repository import Gio
-from .toolset_installation import portage_config_path, portage_patch_path, read_patch_content
+from .toolset_installation import (
+    _emerge_progress, _webrsync_progress, app_portage_files, portage_config_path, portage_patch_path,
+)
 
 # ------------------------------------------------------------------------------
 # Toolset update.
@@ -43,13 +42,10 @@ class ToolsetUpdate(MultiStageProcess):
         if self.apps_selection:
             for app_selection in self.apps_selection:
                 self.stages.append(ToolsetUpdateStepInstallApp(toolset=self.toolset, app_selection=app_selection, multistage_process=self))
-                pass # Create task for modifying / adding entry
         if self.update_packages:
             self.stages.append(ToolsetUpdateStepUpdatePackages(toolset=self.toolset, multistage_process=self))
         self.stages.append(ToolsetUpdateStepVerify(toolset=self.toolset, multistage_process=self))
         self.stages.append(ToolsetUpdateStepStepCompress(toolset=self.toolset, multistage_process=self))
-        super().setup_stages()
-
     def complete_process(self, success: bool):
         if success:
             # Update version_id of selected apps
@@ -60,33 +56,16 @@ class ToolsetUpdate(MultiStageProcess):
         self.toolset.release()
 
     def _process_selected_apps(self):
-        """Manage auto_select dependencies."""
+        """Order changed apps by dependencies and determine what to install or remove."""
         if self.apps_selection is None:
             self.apps_to_remove = None
             return
-        app_selections_by_app = { app_selection.app: app_selection for app_selection in self.apps_selection }
-        # Mark all dependencies as selected
-        for app_selection in self.apps_selection:
-            if app_selection.selected:
-                for dep in getattr(app_selection.app, "dependencies", []):
-                    if dep in app_selections_by_app:
-                        app_selections_by_app[dep] = app_selections_by_app[dep]._replace(selected=True)
-        # Remove not selected entries
-        self.apps_selection = [sel for sel in self.apps_selection if sel.selected]
-        # Sort by dependencies
-        sorted_entries: list[ToolsetApplicationSelection] = []
-        def process_app_selection(app_selection: ToolsetApplicationSelection):
-            for dep in getattr(app_selection.app, "dependencies", []):
-                process_app_selection(app_selection=app_selections_by_app[dep])
-            if not app_selection in sorted_entries:
-                sorted_entries.append(app_selection)
-        for app_selection in self.apps_selection:
-            process_app_selection(app_selection=app_selection)
-        self.apps_selection = sorted_entries
+        self.apps_selection = order_selected_applications(self.apps_selection)
+        selections_by_app = {id(selection.app): selection for selection in self.apps_selection}
         apps_to_remove: list[ToolsetApplication] = []
         changed_apps: list[ToolsetApplicationSelection] = []
         for app in ToolsetApplication.ALL:
-            new_app_install = next((app_selection for app_selection in self.apps_selection if app_selection.app == app), None) # ToolsetApplicationSelection
+            new_app_install = selections_by_app.get(id(app))
             previous_app_install = self.toolset.get_app_install(app=app) # ToolsetApplicationInstall
             # If app was never installed before now, no need to track changes
             if not previous_app_install:
@@ -106,53 +85,9 @@ class ToolsetUpdate(MultiStageProcess):
         self.apps_selection = changed_apps
         self.apps_to_remove = apps_to_remove
 
-# ------------------------------------------------------------------------------
 # Update process steps.
-# ------------------------------------------------------------------------------
 
-class ToolsetUpdateStep(MultiStageProcessStage):
-    """Base step for toolset update steps. Contains additional code for calling toolset commands."""
-    """Stages that use run_command_in_toolset must have self.toolset available."""
-    def start(self):
-        self.server_call = None
-        super().start()
-    def cancel(self):
-        super().cancel()
-        if self.server_call:
-            self.server_call.cancel()
-            if self.server_call.thread:
-                self.server_call.thread.join()
-            self.server_call = None
-    def run_command_in_toolset(self, command: str, progress_handler: Callable[[str], float | None] | None = None) -> bool:
-        try:
-            return_value = False
-            done_event = threading.Event()
-            def completion_handler(response: ServerResponse):
-                nonlocal return_value
-                return_value = response.code == ServerResponseStatusCode.OK
-                done_event.set()
-            def output_handler(output_line: str):
-                print(output_line)
-                progress = progress_handler(output_line)
-                if progress is not None:
-                    self._update_progress(progress)
-            self.server_call = self.toolset.run_command(
-                command=command,
-                handler=output_handler if progress_handler is not None else None,
-                completion_handler=completion_handler
-            )
-            self.server_call.thread.join()
-            done_event.wait()
-            self.server_call = None
-            return return_value
-        except Exception as e:
-            print(f"Error running toolset command: {e}")
-            self.complete(MultiStageProcessStageState.FAILED)
-            return False
-
-# Steps implementations:
-
-class ToolsetUpdateStepPrepareToolset(ToolsetUpdateStep):
+class ToolsetUpdateStepPrepareToolset(MultiStageProcessStage):
     def __init__(self, toolset: Toolset, multistage_process: MultiStageProcess):
         super().__init__(name="Prepare toolset", description="Spawns toolset with write access", multistage_process=multistage_process)
         self.toolset = toolset
@@ -161,14 +96,7 @@ class ToolsetUpdateStepPrepareToolset(ToolsetUpdateStep):
         try:
             if self.toolset.in_use:
                 raise RuntimeError("Toolset is currently in use")
-            def toolset_has_required_binding() -> bool:
-                if not self.toolset.spawned:
-                    return False
-                if self.toolset.additional_bindings:
-                    # There should be no additional bindings set
-                    return False
-                return True
-            if self.toolset.spawned and (not toolset_has_required_binding() or not self.toolset.store_changes):
+            if self.toolset.spawned and (self.toolset.additional_bindings or not self.toolset.store_changes):
                 # Toolset needs to be respawned to get correct bindings and write access
                 self.toolset.unspawn()
             if not self.toolset.spawned:
@@ -183,7 +111,7 @@ class ToolsetUpdateStepPrepareToolset(ToolsetUpdateStep):
         self.toolset.unspawn(rebuild_squashfs_if_needed=False) # New squashFS is build as another step in update process.
         return True
 
-class ToolsetUpdateStepRefreshEnv(ToolsetUpdateStep):
+class ToolsetUpdateStepRefreshEnv(MultiStageProcessStage):
     def __init__(self, toolset: Toolset, multistage_process: MultiStageProcess):
         super().__init__(name="Refresh environment", description="Refreshes binpkg signing keys", multistage_process=multistage_process)
         self.toolset = toolset
@@ -207,32 +135,20 @@ class ToolsetUpdateStepRefreshEnv(ToolsetUpdateStep):
             print(f"Error during keys refresh: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 
-class ToolsetUpdateStepUpdatePortage(ToolsetUpdateStep):
+class ToolsetUpdateStepUpdatePortage(MultiStageProcessStage):
     def __init__(self, toolset: Toolset, multistage_process: MultiStageProcess):
         super().__init__(name="Synchronize portage", description="Synchronizes portage tree", multistage_process=multistage_process)
         self.toolset = toolset
     def start(self):
         super().start()
         try:
-            def progress_handler(output_line: str) -> float or None:
-                pattern = (
-                    r"\s*"                        # optional leading spaces
-                    r"\d+[KMGTP]?"                # downloaded size (e.g., 45500K, 4.47T)
-                    r"\s+(?:\.{1,10}\s*)+"        # progress dots (at least one group)
-                    r"(\d{1,3})%"                 # percentage (captured)
-                    r"\s+\d+(\.\d+)?[KMGTP]?"     # speed (like 4.47T, 14.5M)
-                    r"(?:[= ]\d+(\.\d+)?s?)?"     # optional time (e.g., =2.2s, 0s)"
-                )
-                match = re.match(pattern, output_line)
-                if match:
-                    return int(match.group(1)) / 100.0
-            result = self.run_command_in_toolset(command="emerge-webrsync", progress_handler=progress_handler)
+            result = self.run_command_in_toolset(command="emerge-webrsync", progress_handler=_webrsync_progress)
             self.complete(MultiStageProcessStageState.COMPLETED if result else MultiStageProcessStageState.FAILED)
         except Exception as e:
             print(f"Error synchronizing Portage: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 
-class ToolsetUpdateStepUninstallApp(ToolsetUpdateStep):
+class ToolsetUpdateStepUninstallApp(MultiStageProcessStage):
     def __init__(self, toolset: Toolset, app: ToolsetApplication, multistage_process: MultiStageProcess):
         super().__init__(name=f"Uninstall {app.name}", description=f"Removes {app.package} package", multistage_process=multistage_process)
         self.app = app
@@ -240,8 +156,6 @@ class ToolsetUpdateStepUninstallApp(ToolsetUpdateStep):
     def start(self):
         super().start()
         try:
-            def progress_handler(output_line: str) -> float or None:
-                print(output_line)
             # Remove portage configs
             app_install = self.toolset.get_app_install(app=self.app)
             if not app_install:
@@ -251,13 +165,13 @@ class ToolsetUpdateStepUninstallApp(ToolsetUpdateStep):
                 + [portage_patch_path(self.app.package, patch_file) for patch_file in app_install.patches]
             )
             flags = "-C"
-            result = self.run_command_in_toolset(command=f"emerge {flags} {self.app.package}", progress_handler=progress_handler)
+            result = self.run_command_in_toolset(command=f"emerge {flags} {self.app.package}", progress_handler=_emerge_progress)
             self.complete(MultiStageProcessStageState.COMPLETED if result else MultiStageProcessStageState.FAILED)
         except Exception as e:
             print(f"Error during app uninstallation: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 
-class ToolsetUpdateStepInstallApp(ToolsetUpdateStep):
+class ToolsetUpdateStepInstallApp(MultiStageProcessStage):
     def __init__(self, toolset: Toolset, app_selection: ToolsetApplicationSelection, multistage_process: MultiStageProcess):
         super().__init__(name=f"Install {app_selection.app.name}", description=f"Emerges {app_selection.app.package} package", multistage_process=multistage_process)
         self.toolset = toolset
@@ -273,51 +187,32 @@ class ToolsetUpdateStepInstallApp(ToolsetUpdateStep):
                     [portage_config_path(config.directory, self.app_selection.app.name) for config in (app_install.variant.config or [])]
                     + [portage_patch_path(self.app_selection.app.package, patch_file) for patch_file in removed_patches_filenames]
                 )
-            def progress_handler(output_line: str) -> float or None:
-                pattern = r"^>>> Completed \((\d+) of (\d+)\)"
-                match = re.match(pattern, output_line)
-                if match:
-                    n, m = map(int, match.groups())
-                    return n / m
-            files = {
-                portage_config_path(config.directory, self.app_selection.app.name): "".join(entry + "\n" for entry in config.entries)
-                for config in (self.app_selection.version.config or [])
-            }
-            files.update({
-                portage_patch_path(self.app_selection.app.package, patch_file.get_basename()): read_patch_content(patch_file)
-                for patch_file in self.app_selection.patches if isinstance(patch_file, Gio.File)
-            })
+            files = app_portage_files(self.app_selection)
             if files:
                 self.toolset.write_portage_files(files)
             flags = "--getbinpkg --deep --update --changed-use --newuse" if self.multistage_process.allow_binpkgs else "--deep --update --changed-use --newuse"
-            result = self.run_command_in_toolset(command=f"emerge {flags} {self.app_selection.app.package} --reinstall-atoms={self.app_selection.app.package}", progress_handler=progress_handler)
+            result = self.run_command_in_toolset(command=f"emerge {flags} {self.app_selection.app.package} --reinstall-atoms={self.app_selection.app.package}", progress_handler=_emerge_progress)
             self.complete(MultiStageProcessStageState.COMPLETED if result else MultiStageProcessStageState.FAILED)
         except Exception as e:
             print(f"Error during app installation: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 
-class ToolsetUpdateStepUpdatePackages(ToolsetUpdateStep):
+class ToolsetUpdateStepUpdatePackages(MultiStageProcessStage):
     def __init__(self, toolset: Toolset, multistage_process: MultiStageProcess):
         super().__init__(name="Update packages", description="Updates installed packages", multistage_process=multistage_process)
         self.toolset = toolset
     def start(self):
         super().start()
         try:
-            def progress_handler(output_line: str) -> float or None:
-                pattern = r"^>>> Completed \((\d+) of (\d+)\)"
-                match = re.match(pattern, output_line)
-                if match:
-                    n, m = map(int, match.groups())
-                    return n / m
             allow_binpkgs = self.toolset.metadata.get('allow_binpkgs', False)
             flags = "--getbinpkg --changed-use --update --deep --with-bdeps=y" if allow_binpkgs else "--changed-use --update --deep --with-bdeps=y"
-            result = self.run_command_in_toolset(command=f"emerge {flags} @system @world @live-rebuild", progress_handler=progress_handler)
+            result = self.run_command_in_toolset(command=f"emerge {flags} @system @world @live-rebuild", progress_handler=_emerge_progress)
             self.complete(MultiStageProcessStageState.COMPLETED if result else MultiStageProcessStageState.FAILED)
         except Exception as e:
             print(f"Error updating packages: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 
-class ToolsetUpdateStepVerify(ToolsetUpdateStep):
+class ToolsetUpdateStepVerify(MultiStageProcessStage):
     def __init__(self, toolset: Toolset, multistage_process: MultiStageProcess):
         super().__init__(name="Analyze toolset", description="Collects information about toolset", multistage_process=multistage_process)
         self.toolset = toolset
@@ -333,7 +228,7 @@ class ToolsetUpdateStepVerify(ToolsetUpdateStep):
             print(f"Error during toolset verification: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 
-class ToolsetUpdateStepStepCompress(ToolsetUpdateStep):
+class ToolsetUpdateStepStepCompress(MultiStageProcessStage):
     def __init__(self, toolset: Toolset, multistage_process: MultiStageProcess):
         super().__init__(name="Compress", description="Compresses toolset into .squashfs file", multistage_process=multistage_process)
         self.toolset = toolset
@@ -355,9 +250,6 @@ class ToolsetUpdateStepStepCompress(ToolsetUpdateStep):
         except Exception as e:
             print(f"Error during toolset compression: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
-    def cleanup(self) -> bool:
-        if not super().cleanup():
-            return False
     def cancel(self):
         super().cancel()
         proc = self.squashfs_process

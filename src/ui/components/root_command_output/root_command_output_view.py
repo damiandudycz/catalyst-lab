@@ -15,7 +15,7 @@ class RootCommandOutputView(Gtk.Box):
         self.text_buffer = self.text_view.get_buffer()
         self.text_buffer.set_text("\n".join(call.get_output()))
         end_iter = self.text_buffer.get_end_iter()
-        self.text_mark_end = self.text_buffer.create_mark("", end_iter, False)
+        self.text_mark_end = self.text_buffer.create_mark("", end_iter, True)
         call.event_bus.subscribe(
             ServerCallEvents.NEW_OUTPUT_LINE,
             self.append_line

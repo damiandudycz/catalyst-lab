@@ -55,6 +55,11 @@ class MultistageProcessExecutionView(Gtk.Box):
 
     @Gtk.Template.Callback()
     def on_cancel_pressed(self, _):
+        if hasattr(self.multistage_process, "cancel_async"):
+            self.cancel_button.set_sensitive(False)
+            self.cancel_button.set_label("Canceling…")
+            self.multistage_process.cancel_async()
+            return
         from .build_queue import BuildQueue
         from .project_build_process import ProjectBuild
         queue = BuildQueue.shared()
@@ -97,7 +102,6 @@ class MultistageProcessExecutionView(Gtk.Box):
             for row in self._installation_rows:
                 self.process_steps_list.remove(row)
         self._installation_rows = []
-        tools_check_buttons_group = []
         running_stage_row = None
         for step in steps:
             row = MultiStageProcessStageRow(step=step, owner=self)
@@ -109,24 +113,30 @@ class MultistageProcessExecutionView(Gtk.Box):
             GLib.idle_add(self._scroll_to_installation_step_row, running_stage_row)
 
     def _scroll_to_installation_step_row(self, row: MultiStageProcessStageRow):
-        def _scroll(widget):
-            scrolled_window = self.process_steps_list.get_ancestor(Gtk.ScrolledWindow)
-            vadjustment = scrolled_window.get_vadjustment()
-            _, y = row.translate_coordinates(self.process_steps_list, 0, 0)
-            row_height = row.get_allocated_height()
-            visible_height = vadjustment.get_page_size()
-            center_y = y + row_height / 2 - visible_height / 2
-            max_value = vadjustment.get_upper() - vadjustment.get_page_size()
-            scroll_to = max(0, min(center_y, max_value))
-            vadjustment.set_value(scroll_to)
-        GLib.idle_add(_scroll, row)
+        if row.get_parent() is not self.process_steps_list:
+            return GLib.SOURCE_REMOVE
+        scrolled_window = self.process_steps_list.get_ancestor(Gtk.ScrolledWindow)
+        if scrolled_window is None:
+            return GLib.SOURCE_REMOVE
+        coordinates = row.translate_coordinates(self.process_steps_list, 0, 0)
+        if coordinates is None:
+            return GLib.SOURCE_REMOVE
+        _, y = coordinates
+        vadjustment = scrolled_window.get_vadjustment()
+        center_y = y + row.get_allocated_height() / 2 - vadjustment.get_page_size() / 2
+        max_value = vadjustment.get_upper() - vadjustment.get_page_size()
+        vadjustment.set_value(max(0, min(center_y, max_value)))
+        return GLib.SOURCE_REMOVE
 
     def _scroll_to_installation_steps_bottom(self):
         def _scroll():
             scrolled_window = self.process_steps_list.get_ancestor(Gtk.ScrolledWindow)
+            if scrolled_window is None:
+                return GLib.SOURCE_REMOVE
             vadjustment = scrolled_window.get_vadjustment()
             bottom = vadjustment.get_upper() - vadjustment.get_page_size()
             vadjustment.set_value(bottom)
+            return GLib.SOURCE_REMOVE
         GLib.timeout_add(100, _scroll)
 
     def _mark_result_seen(self):
@@ -154,7 +164,9 @@ class MultistageProcessExecutionView(Gtk.Box):
             case MultiStageProcessState.COMPLETED:
                 display_status(text="Completed successfully.", style="success")
             case MultiStageProcessState.FAILED:
-                display_status(text="Failed. Open failed steps to see their output.", style="error")
+                display_status(text=("Canceled." if getattr(self.multistage_process, "canceled", False)
+                                     else "Failed. Open failed steps to see their output."),
+                               style="error")
 
 class MultiStageProcessStageRow(Adw.ActionRow):
     """Displays stage state. Can be activated to open output of commands executed by stage."""

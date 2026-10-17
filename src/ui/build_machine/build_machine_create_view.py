@@ -4,7 +4,6 @@ from gi.repository import Gtk, Adw
 from .build_machine_installation import BuildMachineInstallation
 from .build_machine import BuildMachine
 from .build_machine_manager import BuildMachineManager
-from .multistage_process import MultiStageProcessState
 from .wizard_view import WizardView
 from .name_suggestion import unique_name
 

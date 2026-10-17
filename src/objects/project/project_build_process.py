@@ -7,15 +7,20 @@ from .multistage_process import (
     MultiStageProcessEvent, MultiStageProcessStageEvent
 )
 from .root_function import root_function
-from .repository import Repository
+from .repository import Repository, resolve_path
 from .event_bus import SharedEvent
-from .root_helper_server import ServerResponse, ServerResponseStatusCode
+from .emerge_progress import EmergeProgress
 from .toolset import BindMount
-from .toolset_env_builder import ToolsetEnvBuilder
+from .toolset_env_builder import get_stage3_urls
 from .project_stage_arguments import StageArgumentDetails
 from .project_stage_cache import CACHE_ARGUMENTS, stage_cache_path
-from .rootless import extracted_squashfs, remove_stale_sessions, distfiles_directory
-from .project_build_rootless import stage_build_session_script, save_interrupted_caches, CATALYST_WRAPPER
+from .rootless import (
+    prepare_toolset_squashfs, prepare_snapshot_squashfs, unmount_read_only_mount,
+    remove_stale_sessions, distfiles_directory, path_is_within
+)
+from .project_build_rootless import (
+    stage_build_session_script, save_interrupted_caches, CATALYST_WRAPPER, catalyst_snapshot_command,
+)
 from .project_build import StageBuild, StageBuildStatus, StageBuildPlan, project_builds_directory, stage_builds_directory
 from .project_build_details import run_details, seed_details, failure_details, output_details, failure_logs_script
 from .project_build_spec import (
@@ -49,6 +54,7 @@ class ProjectBuild(MultiStageProcess):
                  update_project_snapshot: bool = False):
         self.project_directory = project_directory
         self.plan = plan
+        self._build_order = plan.build_order()
         self.snapshot = None if fetch_snapshot else (snapshot or project_directory.get_snapshot()) # Set when fetched.
         self.fetch_snapshot = fetch_snapshot
         self.update_project_snapshot = update_project_snapshot
@@ -58,7 +64,7 @@ class ProjectBuild(MultiStageProcess):
         self.catalyst_builds_directory = os.path.join(self.builds_directory, "Catalyst")
         self.stage_artifacts_directory = os.path.join(self.builds_directory, "stages")
         self.kernel_cache_directory = os.path.join(self.builds_directory, "caches", "kerncache")
-        self.work_root = os.path.join(Repository.Settings.value.temporary_location, "CatalystBuilds",
+        self.work_root = os.path.join(resolve_path(Repository.Settings.value.temporary_location), "CatalystBuilds",
                                       project_directory.id.hex, f"{self.timestamp}-{uuid.uuid4().hex}")
         self.seed_subpaths: dict = {} # Downloaded seeds of root stages, relative to builds directory.
         self.stage_builds: dict = {} # Builds made in this run, by stage id.
@@ -71,8 +77,10 @@ class ProjectBuild(MultiStageProcess):
         self._rosetta_amd64: bool | None = None
         self.rootless_unsupported_reason = self.executor.unsupported_reason() if self.executor and not self.machine else None
         self.rootless = self.machine is not None or self.rootless_unsupported_reason is None
-        self.rootless_toolset_path: str | None = None # Extracted toolset and snapshot, set when preparing toolset.
+        self.rootless_toolset_path: str | None = None # Read-only mounted or extracted toolset lower layer.
+        self.rootless_toolset_mounted = False # Mounted SquashFS lower layer, released before machine workspace.
         self.rootless_snapshot_path: str | None = None
+        self.rootless_snapshot_mounted = False
         super().__init__(title=f"Building {project_directory.name}")
         # Project rows show running builds in their status indicators, so project state changes with build state.
         self.event_bus.subscribe(MultiStageProcessEvent.STATE_CHANGED, self._on_state_changed)
@@ -110,22 +118,15 @@ class ProjectBuild(MultiStageProcess):
         self.stages.append(ProjectBuildStepPrepareToolset(multistage_process=self))
         if self.fetch_snapshot:
             self.stages.append(ProjectBuildStepFetchSnapshot(multistage_process=self))
-        for stage in self.plan.build_order():
+        for stage in self._build_order:
             if self.plan.parent(stage) is None:
                 self.stages.append(ProjectBuildStepDownloadSeed(stage=stage, multistage_process=self))
             self.stages.append(ProjectBuildStepBuildStage(stage=stage, multistage_process=self))
 
-    def _in_builds_directory(self, host_path: str) -> bool:
-        return host_path == self.builds_directory or host_path.startswith(self.builds_directory + os.sep)
-
-    @staticmethod
-    def _path_in(host_path: str, root: str) -> bool:
-        return host_path == root or host_path.startswith(root + os.sep)
-
     @property
     def seed_cache_directory(self) -> str:
         """Shared Library cache directory for downloaded source stage archives."""
-        return os.path.join(Repository.Settings.value.cache_location, "catalyst-seeds")
+        return os.path.join(resolve_path(Repository.Settings.value.cache_location), "catalyst-seeds")
 
     def stage_work_directory(self, stage) -> str:
         """Transient generated files used while building this stage."""
@@ -134,17 +135,14 @@ class ProjectBuild(MultiStageProcess):
     def container_path(self, host_path: str) -> str:
         """Path inside toolset of file in project builds directory, or in mirrored folder (mounted at the same location,
         or under CATALYST_MIRRORS_PATH when its path contains whitespace). Other paths are the same."""
-        if host_path == self.work_root or host_path.startswith(self.work_root + os.sep):
-            relative = os.path.relpath(host_path, self.work_root)
-            return CATALYST_WORK_PATH if relative == "." else os.path.join(CATALYST_WORK_PATH, relative)
-        if self._path_in(host_path, self.catalyst_builds_directory):
-            relative = os.path.relpath(host_path, self.catalyst_builds_directory)
-            return CATALYST_BUILDS_PATH if relative == "." else os.path.join(CATALYST_BUILDS_PATH, relative)
-        if self._path_in(host_path, self.kernel_cache_directory):
-            relative = os.path.relpath(host_path, self.kernel_cache_directory)
-            return CATALYST_KERNEL_CACHE_PATH if relative == "." else os.path.join(CATALYST_KERNEL_CACHE_PATH, relative)
+        for root, target in ((self.work_root, CATALYST_WORK_PATH),
+                             (self.catalyst_builds_directory, CATALYST_BUILDS_PATH),
+                             (self.kernel_cache_directory, CATALYST_KERNEL_CACHE_PATH)):
+            if path_is_within(host_path, root):
+                relative = os.path.relpath(host_path, root)
+                return target if relative == "." else os.path.join(target, relative)
         for root in sorted(self.mirrored_paths(), key=len, reverse=True):
-            if host_path == root or host_path.startswith(root + os.sep):
+            if path_is_within(host_path, root):
                 return self.mirror_path(root) + host_path[len(root):]
         return host_path
 
@@ -167,8 +165,8 @@ class ProjectBuild(MultiStageProcess):
         paths = [path for path in paths if os.path.isdir(path)]
         # Caches in folders selected by user (automatic ones are in builds directory).
         paths += sorted({
-            path for stage in self.plan.build_order() for path in self.stage_cache_paths(stage).values()
-            if not self._in_builds_directory(path)
+            path for stage in self._build_order for path in self.stage_cache_paths(stage).values()
+            if not path_is_within(path, self.builds_directory)
         })
         return paths
 
@@ -195,7 +193,7 @@ class ProjectBuild(MultiStageProcess):
     def _machine_cache_path(self, path: str) -> str | None:
         """Folder in machine used for automatic cache saved in path, None for caches selected by user."""
         for root, machine_root in self._saved_cache_roots():
-            if path.startswith(root + os.sep):
+            if path != root and path_is_within(path, root):
                 return os.path.join(self.executor.cache_directory(), machine_root, os.path.relpath(path, root))
         return None
 
@@ -210,13 +208,12 @@ class ProjectBuild(MultiStageProcess):
         if not self.machine:
             return []
         caches = [(distfiles_directory(), distfiles_directory(self.executor))]
-        used_paths = self.stage_cache_paths(stage)
         for argument in CACHE_ARGUMENTS:
             if argument == StageArgumentDetails.kerncache_path:
                 continue
             saved = stage_cache_path(self.project_directory, stage, argument)
-            if saved and self._machine_cache_path(saved) and argument in used_paths:
-                caches.append((saved, used_paths[argument]))
+            if saved and (machine_path := self._machine_cache_path(saved)):
+                caches.append((saved, machine_path))
         return caches
 
     def make_directories(self, paths: list[str]):
@@ -294,7 +291,7 @@ class ProjectBuild(MultiStageProcess):
     # stage they depend on, or canceled) are listed in builds too.
 
     def start(self, authorization_keeper=None):
-        for order, stage in enumerate(self.plan.build_order()):
+        for order, stage in enumerate(self._build_order):
             try:
                 StageBuild(stage_id=stage.id, stage_name=stage.name, timestamp=self.timestamp, order=order,
                            status=StageBuildStatus.SCHEDULED).save(self.project_directory)
@@ -318,7 +315,7 @@ class ProjectBuild(MultiStageProcess):
 
     def complete_process(self, success: bool):
         status = StageBuildStatus.CANCELED if getattr(self, "canceled", False) else StageBuildStatus.SKIPPED
-        for stage in self.plan.build_order():
+        for stage in self._build_order:
             path = os.path.join(stage_builds_directory(self.project_directory, stage.id), self.timestamp)
             try:
                 with open(os.path.join(path, StageBuild.METADATA_FILE), encoding="utf-8") as file:
@@ -384,30 +381,16 @@ def running_project_build(project_directory, timestamp: str | None = None) -> Pr
 
 class ProjectBuildStep(MultiStageProcessStage):
     def start(self):
-        self.server_call = None
         self.namespace_processes = [] # Rootless processes, terminated when canceled.
         super().start()
     def cancel(self):
         super().cancel()
         for process in getattr(self, "namespace_processes", []):
             process.terminate()
-        if self.server_call:
-            self.server_call.cancel()
-            if self.server_call.thread:
-                self.server_call.thread.join()
     def run_command_in_toolset(self, command: str) -> bool:
         """Runs command in toolset, its output is added to step output."""
-        result = False
-        done_event = threading.Event()
-        def completion_handler(response: ServerResponse):
-            nonlocal result
-            result = response.code == ServerResponseStatusCode.OK
-            done_event.set()
         self.log(f"$ {command}")
-        self.server_call = self.multistage_process.toolset.run_command(command=command, completion_handler=completion_handler)
-        self.server_call.thread.join()
-        done_event.wait()
-        return result
+        return super().run_command_in_toolset(command)
 
 class ProjectBuildStepFetchSnapshot(ProjectBuildStep):
     """Generates latest snapshot of Gentoo repository with catalyst -s (like Snapshots section does), in toolset
@@ -425,8 +408,9 @@ class ProjectBuildStepFetchSnapshot(ProjectBuildStep):
             process.snapshot = snapshot
             self.log(f"Using snapshot {snapshot.filename} ({snapshot.name})")
             if process.rootless:
-                process.rootless_snapshot_path = extracted_squashfs(
-                    snapshot.file_path(), "snapshots", self.log, self.namespace_processes, check_path="profiles", executor=process.executor)
+                (process.rootless_snapshot_path,
+                 process.rootless_snapshot_mounted) = prepare_snapshot_squashfs(
+                    snapshot.file_path(), self.log, self.namespace_processes, executor=process.executor)
             if process.update_project_snapshot:
                 GLib.idle_add(process.store_project_snapshot)
             self.complete(MultiStageProcessStageState.COMPLETED)
@@ -439,10 +423,10 @@ class ProjectBuildStepFetchSnapshot(ProjectBuildStep):
         from .snapshot_manager import SnapshotManager
         from .snapshot_installation import delete_file, unlock_file_access
         process = self.multistage_process
-        snapshots = os.path.realpath(os.path.expanduser(Repository.Settings.value.snapshots_location))
+        snapshots = resolve_path(Repository.Settings.value.snapshots_location)
         os.makedirs(snapshots, exist_ok=True)
         started = datetime.now().timestamp() - 1
-        command = "catalyst -s stable"
+        command = catalyst_snapshot_command()
         if process.rootless:
             # Same session as stage builds, catalyst writes snapshot to snapshots folder.
             self.log(f"$ {command}")
@@ -516,7 +500,7 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
             print(f"Error during '{self.name}': {e}")
             self.complete(MultiStageProcessStageState.FAILED)
     def _prepare_rootless(self):
-        """Extracts toolset and snapshot (once for every version of their files), used by stage builds."""
+        """Prepares toolset and snapshot lower layers used by stage builds."""
         process = self.multistage_process
         executor = process.executor
         if process.machine:
@@ -528,15 +512,16 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
         else:
             self.log("Building without root privileges, in user namespace")
         remove_stale_sessions(self.log, self.namespace_processes, executor=executor)
-        process.rootless_toolset_path = extracted_squashfs(
-            process.toolset.file_path(), "toolsets", self.log, self.namespace_processes, check_path="bin/bash", executor=executor)
+        process.rootless_toolset_path, process.rootless_toolset_mounted = prepare_toolset_squashfs(
+            process.toolset.file_path(), self.log, self.namespace_processes, executor=executor)
         # Latest snapshot is extracted after it's generated.
         if not process.fetch_snapshot:
             snapshot = process.snapshot
             if snapshot is None:
                 raise RuntimeError("Build has no snapshot")
-            process.rootless_snapshot_path = extracted_squashfs(
-                snapshot.file_path(), "snapshots", self.log, self.namespace_processes, check_path="profiles", executor=executor)
+            (process.rootless_snapshot_path,
+             process.rootless_snapshot_mounted) = prepare_snapshot_squashfs(
+                snapshot.file_path(), self.log, self.namespace_processes, executor=executor)
         process.make_directories([distfiles_directory(executor), process.seed_cache_directory, process.work_root] + process.mirrored_paths())
     def required_bindings(self) -> list[BindMount]:
         process = self.multistage_process
@@ -550,7 +535,8 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
             BindMount(mount_path=CATALYST_KERNEL_CACHE_PATH, host_path=process.kernel_cache_directory, store_changes=True, create_if_missing=True),
             # Generated specs and scripts for this build run only.
             BindMount(mount_path=CATALYST_WORK_PATH, host_path=process.work_root, store_changes=True, create_if_missing=True),
-            BindMount(mount_path=CATALYST_SNAPSHOTS_PATH, host_path=Repository.Settings.value.snapshots_location, store_changes=True),
+            BindMount(mount_path=CATALYST_SNAPSHOTS_PATH,
+                      host_path=resolve_path(Repository.Settings.value.snapshots_location), store_changes=True),
         ]
         # Directories referenced by spec values with host paths (@REPO_DIR@, root_overlay, repos, cache folders) are
         # available at the same paths.
@@ -561,17 +547,31 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
     def cleanup(self) -> bool:
         if not super().cleanup():
             return False
-        toolset = self.multistage_process.toolset
+        process = self.multistage_process
+        toolset = process.toolset
         if self.spawned:
             toolset.unspawn(rebuild_squashfs_if_needed=False)
         if getattr(self, "workspace_acquired", False):
             # Working space is deleted with caches changed by canceled build, they are saved first.
             try:
-                save_interrupted_caches(self.multistage_process.executor, self.log)
+                save_interrupted_caches(process.executor, self.log)
             except Exception as e:
                 self.log(f"Failed to save caches: {e}")
-            self.multistage_process.machine.release_workspace(self.log, user=self.workspace_user)
-        shutil.rmtree(self.multistage_process.work_root, ignore_errors=True)
+            for path_attribute, mounted_attribute, description in (
+                ("rootless_toolset_path", "rootless_toolset_mounted", "toolset image"),
+                ("rootless_snapshot_path", "rootless_snapshot_mounted", "Gentoo snapshot"),
+            ):
+                if not getattr(process, mounted_attribute):
+                    continue
+                try:
+                    unmount_read_only_mount(getattr(process, path_attribute), self.log, executor=process.executor)
+                    setattr(process, mounted_attribute, False)
+                    setattr(process, path_attribute, None)
+                except Exception as e:
+                    # Releasing the workspace recursively unmounts any remaining mount as a fallback.
+                    self.log(f"Failed to unmount {description}: {e}")
+            process.machine.release_workspace(self.log, user=self.workspace_user)
+        shutil.rmtree(process.work_root, ignore_errors=True)
         if self.reserved:
             toolset.release()
         return True
@@ -588,12 +588,8 @@ class ProjectBuildStepDownloadSeed(ProjectBuildStep):
             architecture = process.project_directory.get_architecture()
             prefix = seed_name_prefix(process.project_directory, self.stage)
             self.log(f"Looking for latest {prefix}")
-            result = None
-            def completion_handler(value):
-                nonlocal result
-                result = value
-            ToolsetEnvBuilder.get_stage3_urls(completion_handler=completion_handler, architecture=architecture)
-            if isinstance(result, Exception) or result is None:
+            result = get_stage3_urls(architecture)
+            if isinstance(result, Exception):
                 raise RuntimeError(f"Failed to read list of stage3 files: {result}")
             url = select_seed_url(result, prefix)
             if url is None:
@@ -637,40 +633,13 @@ class ProjectBuildStepDownloadSeed(ProjectBuildStep):
             print(f"Error during '{self.name}': {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 
-class EmergeProgress:
-    """Progress of packages built by catalyst, read from its output: emerge prints "(N of M)" for every package.
-    Catalyst runs every emerge with run_merge, which first prints the command. Update of seed (stage1 with
-    update_seed) is the first emerge after "Updating seed stage...", it has no progress, as it's not part of the
-    stage. Stages run several emerges, progress is of the current one (emerges of single package are skipped)."""
-    _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-    _COMPLETED = re.compile(r"^>>> Completed(?: binary)? \((\d+) of (\d+)\)")
-
-    def __init__(self):
-        self.seed_update = False
-        self.seed_update_started = False
-
-    def parse(self, line: str) -> float | None:
-        """Progress when line changes it, otherwise None."""
-        line = self._ANSI.sub("", line).strip()
-        if line.startswith("Updating seed stage"):
-            self.seed_update, self.seed_update_started = True, False
-        elif line.startswith("emerge ") and self.seed_update:
-            if self.seed_update_started:
-                self.seed_update = False # Next emerge after the seed update.
-            else:
-                self.seed_update_started = True
-        elif not self.seed_update and (match := self._COMPLETED.match(line)) and int(match.group(2)) > 1:
-            # Emerges of single package (eg. baselayout before stage1 packages) would show 100% before the real list.
-            return int(match.group(1)) / int(match.group(2))
-        return None
-
 class ProjectBuildStepBuildStage(ProjectBuildStep):
     def __init__(self, stage, multistage_process: ProjectBuild):
         super().__init__(name=f"Build {stage.name}", description=f"Builds {stage.target.replace('_', '-')} with catalyst", multistage_process=multistage_process)
         self.stage = stage
         self.build: StageBuild | None = None
         self._log_file = None
-        self._emerge_progress = EmergeProgress()
+        self._emerge_progress = EmergeProgress(completed_only=True, ignore_seed_update=True)
     def log(self, line: str):
         """Output is also saved as build.log in build directory, to keep it after app is closed. Packages built by
         catalyst are shown as progress."""
@@ -695,7 +664,7 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
         project = process.project_directory
         try:
             self.build = StageBuild(stage_id=self.stage.id, stage_name=self.stage.name, timestamp=process.timestamp,
-                                    order=process.plan.build_order().index(self.stage))
+                                    order=process._build_order.index(self.stage))
             self.build.details = run_details(process)
             self.build.details["inputs"]["seed"] = seed_details(process, self.stage)
             self.build.save(project)
@@ -716,6 +685,7 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             has_iso_overlay = generate_root_overlay(project, self.stage, iso_overlay_path, StageArgumentDetails.livecd_overlay)
             cache_paths = process.stage_cache_paths(self.stage)
             process.make_directories(list(cache_paths.values()))
+            rosetta_amd64 = process.rosetta_amd64_available()
             spec = generate_stage_spec(project, self.stage, StageSpecContext(
                 timestamp=process.timestamp,
                 source_subpath=source_subpath,
@@ -725,9 +695,9 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
                 cache_paths={argument: process.container_path(path) for argument, path in cache_paths.items()},
                 snapshot=process.snapshot,
                 path_mapper=process.container_path,
-                rosetta_amd64=process.rosetta_amd64_available(),
+                rosetta_amd64=rosetta_amd64,
             ))
-            if process.rosetta_amd64_available():
+            if rosetta_amd64:
                 self.log("Rosetta is active for amd64; Catalyst interpreter is omitted")
             values = _spec_values(spec)
             spec_path = os.path.join(work_directory, "stage.spec")
@@ -852,6 +822,7 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             command=f'bash "{process.container_path(build_script_path)}"',
             diagnostics_command=f'bash "{process.container_path(diagnostics_path)}"' if diagnostics_path else None,
             synced_caches=process.synced_caches(self.stage),
+            patch_catalyst_stage1=True,
         )
         self.log(f"$ bash {process.container_path(build_script_path)}")
         return process.executor.run_in_namespace(script, self.log, self.namespace_processes)
@@ -1029,15 +1000,19 @@ def _is_build_file(filename: str, name: str, iso_name: str | None) -> bool:
     """Files of build: archive of stage with DIGESTS, CONTENTS..., and ISO of livecd with its files."""
     return filename.startswith(name + ".") or (iso_name is not None and (filename == iso_name or filename.startswith(iso_name + ".")))
 
-def _move_stage_build_files(source_directory: str, name: str, destination_directory: str, iso_name: str | None = None) -> list[str]:
-    """Like move_stage_build_files, for files already owned by user (rootless builds)."""
+def _move_stage_build_files(source_directory: str, name: str, destination_directory: str,
+                            iso_name: str | None = None, owner_uid: int | None = None) -> list[str]:
+    """Moves catalyst outputs, optionally assigning them to the build owner."""
     os.makedirs(destination_directory, exist_ok=True)
     moved = []
     if not os.path.isdir(source_directory):
         return moved
     for filename in sorted(os.listdir(source_directory)):
         if _is_build_file(filename, name, iso_name):
-            shutil.move(os.path.join(source_directory, filename), os.path.join(destination_directory, filename))
+            target = os.path.join(destination_directory, filename)
+            shutil.move(os.path.join(source_directory, filename), target)
+            if owner_uid is not None:
+                os.chown(target, owner_uid, owner_uid)
             moved.append(filename)
     # Folder of target left by catalyst (eg. root of livecd ISO, already in ISO and tarball).
     leftover = os.path.join(source_directory, name)
@@ -1049,19 +1024,5 @@ def _move_stage_build_files(source_directory: str, name: str, destination_direct
 def move_stage_build_files(source_directory: str, name: str, destination_directory: str, iso_name: str | None = None) -> list[str]:
     """Moves files produced by catalyst for given build name (archive, DIGESTS, CONTENTS..., ISO of livecd) to
     destination, and makes them owned by user. Folder of target left by catalyst (root of livecd ISO) is removed."""
-    import os, shutil
     uid = RootHelperServer.shared().uid
-    os.makedirs(destination_directory, exist_ok=True)
-    moved = []
-    if not os.path.isdir(source_directory):
-        return moved
-    for filename in sorted(os.listdir(source_directory)):
-        if filename.startswith(name + ".") or (iso_name is not None and (filename == iso_name or filename.startswith(iso_name + "."))):
-            target = os.path.join(destination_directory, filename)
-            shutil.move(os.path.join(source_directory, filename), target)
-            os.chown(target, uid, uid)
-            moved.append(filename)
-    leftover = os.path.join(source_directory, name)
-    if moved and os.path.isdir(leftover) and not os.path.islink(leftover):
-        shutil.rmtree(leftover, ignore_errors=True)
-    return moved
+    return _move_stage_build_files(source_directory, name, destination_directory, iso_name, owner_uid=uid)

@@ -6,6 +6,7 @@ from enum import Enum, auto
 from abc import ABC, abstractmethod
 from .event_bus import EventBus
 from .root_helper_client import AuthorizationKeeper, ServerCall, ServerCallEvents
+from .root_helper_server import ServerResponse, ServerResponseStatusCode
 
 # ------------------------------------------------------------------------------
 # Process/Stage state:
@@ -109,12 +110,7 @@ class MultiStageProcess(ABC):
         running_stage = next((stage for stage in self.stages if stage.state == MultiStageProcessStageState.IN_PROGRESS), None)
         if running_stage:
             running_stage.cancel()
-        try:
-            self._cleanup()
-        except Exception as e:
-            print(e)
-        finally:
-            self.complete_process(success=False)
+        self._finish(success=False)
 
     @abstractmethod
     def complete_process(self, success: bool):
@@ -137,7 +133,7 @@ class MultiStageProcess(ABC):
         )
 
     def clean_from_started_processes(self):
-        if self.status == MultiStageProcessState.COMPLETED or self.status == MultiStageProcessState.FAILED or self.status == MultiStageProcessState.SETUP:
+        if self.status in (MultiStageProcessState.COMPLETED, MultiStageProcessState.FAILED, MultiStageProcessState.SETUP):
             if self in MultiStageProcess.started_processes:
                 MultiStageProcess.started_processes.remove(self)
                 MultiStageProcess.event_bus.emit(
@@ -157,27 +153,24 @@ class MultiStageProcess(ABC):
             self.authorization_keeper.release()
             self.authorization_keeper = None
 
+    def _finish(self, success: bool):
+        try:
+            self._cleanup()
+        except Exception as e:
+            print(e)
+        finally:
+            self.clean_from_started_processes()
+            self.complete_process(success)
+
     def _continue_process(self):
-        if self.status == MultiStageProcessState.COMPLETED or self.status == MultiStageProcessState.FAILED or self.status == MultiStageProcessState.SETUP:
+        if self.status in (MultiStageProcessState.COMPLETED, MultiStageProcessState.FAILED, MultiStageProcessState.SETUP):
             return # Prevents displaying multiple failure messages in some cases.
         next_stage = next((stage for stage in self.stages if stage.state == MultiStageProcessStageState.SCHEDULED), None)
         failed_stage = next((stage for stage in self.stages if stage.state == MultiStageProcessStageState.FAILED), None)
         if failed_stage:
             self.status = MultiStageProcessState.FAILED
             self.event_bus.emit(MultiStageProcessEvent.STATE_CHANGED, self.status)
-            try:
-                self._cleanup()
-            except Exception as e:
-                print(e)
-            finally:
-                if self in MultiStageProcess.started_processes:
-                    MultiStageProcess.started_processes.remove(self)
-                    MultiStageProcess.event_bus.emit(
-                        MultiStageProcessEvent.STARTED_PROCESSES_CHANGED,
-                        self.__class__,
-                        MultiStageProcess.get_started_processes_by_class(self.__class__)
-                    )
-                self.complete_process(success=False)
+            self._finish(success=False)
         elif next_stage:
             next_step_thread = threading.Thread(target=next_stage.start)
             next_step_thread.start()
@@ -186,18 +179,7 @@ class MultiStageProcess(ABC):
             if not getattr(self, "result_seen", False):
                 MultiStageProcess.finished_processes.append(self)
             self.event_bus.emit(MultiStageProcessEvent.STATE_CHANGED, self.status)
-            try:
-                self._cleanup()
-            except Exception as e:
-                print(e)
-            finally:
-                MultiStageProcess.started_processes.remove(self)
-                MultiStageProcess.event_bus.emit(
-                    MultiStageProcessEvent.STARTED_PROCESSES_CHANGED,
-                    self.__class__,
-                    MultiStageProcess.get_started_processes_by_class(self.__class__)
-                )
-                self.complete_process(success=True)
+            self._finish(success=True)
 
     @classmethod
     def get_started_processes_by_class(cls, process_class: type[MultiStageProcess]) -> list[MultiStageProcess]:
@@ -236,14 +218,46 @@ class MultiStageProcessStage(ABC):
         """Adds line to stage output. Can be used directly by stages running local processes."""
         self.output_lines.append(line)
         self.event_bus.emit(MultiStageProcessStageEvent.OUTPUT_LINE_ADDED, line)
+    def run_command_in_toolset(self, command: str, progress_handler=None) -> bool:
+        """Run a toolset command synchronously, forwarding output and progress."""
+        try:
+            succeeded = False
+
+            def on_complete(response: ServerResponse):
+                nonlocal succeeded
+                succeeded = response.code == ServerResponseStatusCode.OK
+
+            def on_output(line: str):
+                print(line)
+                if (progress := progress_handler(line)) is not None:
+                    self._update_progress(progress)
+
+            self.server_call = self.multistage_process.toolset.run_command(
+                command=command,
+                handler=on_output if progress_handler else None,
+                completion_handler=on_complete,
+            )
+            self.server_call.thread.join()
+            self.server_call = None
+            return succeeded
+        except Exception as error:
+            print(f"Error running toolset command: {error}")
+            self.complete(MultiStageProcessStageState.FAILED)
+            return False
     @abstractmethod
     def start(self):
+        self.server_call = None
         self._cancel_event.clear()
         self._update_state(MultiStageProcessStageState.IN_PROGRESS)
     def cancel(self):
         if self.state == MultiStageProcessStageState.IN_PROGRESS:
             self.complete(MultiStageProcessStageState.FAILED)
             self._cancel_event.set()
+        if self.server_call:
+            self.server_call.cancel()
+            if self.server_call.thread:
+                self.server_call.thread.join()
+            self.server_call = None
     def cleanup(self) -> bool:
         """Returns true if cleanup was needed and was started."""
         if self.state == MultiStageProcessStageState.SCHEDULED:

@@ -1,8 +1,9 @@
 from __future__ import annotations
 import os, threading
-from .repository import Repository, library_directory, library_path
+from .repository import Repository, library_path, resolve_path
+from .helper_functions import path_is_within
 from .build_machine import BuildMachine
-from .lima import run_limactl
+from .lima import run_limactl, remove_empty_build_machine_temporary_directory
 
 class BuildMachineManager:
     _instance = None
@@ -16,8 +17,9 @@ class BuildMachineManager:
         return cls._instance
 
     def add_machine(self, machine: BuildMachine):
-        Repository.BuildMachine.value = [item for item in Repository.BuildMachine.value if item.id != machine.id]
-        Repository.BuildMachine.value.append(machine)
+        Repository.BuildMachine.value = [
+            item for item in Repository.BuildMachine.value if item.id != machine.id
+        ] + [machine]
 
     def remove_machine(self, machine: BuildMachine):
         """Removes machine and deletes its Lima instance with its disk (in background). Toolsets linked to it are
@@ -39,6 +41,7 @@ class BuildMachineManager:
                 os.remove(machine.workspace_image_path)
             except FileNotFoundError:
                 pass
+            remove_empty_build_machine_temporary_directory(machine.instance_name)
         threading.Thread(target=delete, daemon=True).start()
 
     def is_name_available(self, name: str, machine: BuildMachine | None = None) -> bool:
@@ -48,16 +51,14 @@ class BuildMachineManager:
 
 def shared_paths() -> list[str]:
     """Managed data folders shared with machines, all derived from the Library root."""
-    from .lima import machines_directory
     locations = [
         library_path("Toolsets"), library_path("Snapshots"), library_path("Releng"),
         library_path("Overlays"), library_path("Projects"), library_path("Builds"),
         library_path("Cache"), library_path("Temporary"), library_path("Packages"),
-        os.path.join(machines_directory(), "workspaces"),
     ]
     paths = []
-    for location in sorted({os.path.realpath(os.path.expanduser(location)) for location in locations}, key=len):
-        if not any(location == path or location.startswith(path + os.sep) for path in paths):
+    for location in sorted({resolve_path(location) for location in locations}, key=len):
+        if not any(path_is_within(location, path) for path in paths):
             paths.append(location)
     for path in paths:
         os.makedirs(path, exist_ok=True)

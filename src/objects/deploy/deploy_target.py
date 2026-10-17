@@ -2,6 +2,7 @@ from __future__ import annotations
 import json, re
 from dataclasses import dataclass, field
 from enum import Enum
+from catalystlab.formatters import format_size as _format_size
 from .ssh_connection import SSHConnection, quote
 
 # ------------------------------------------------------------------------------
@@ -89,14 +90,8 @@ echo "dns=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | tr '\n' ' ')"
         for device in json.loads(values.get("disks") or "{}").get("blockdevices", []):
             if device.get("type") != "disk" or _flag(device.get("ro")) or int(device.get("size") or 0) == 0:
                 continue
-            machine.disks.append(TargetDisk(
-                path=device.get("path") or f"/dev/{device['name']}",
-                size=int(device["size"]),
-                model=(device.get("model") or "").strip() or None,
-                transport=device.get("tran"),
-                removable=_flag(device.get("rm")),
-                in_use=_has_mountpoints(device),
-            ))
+            mounted, _ = _disk_mount_state(device)
+            machine.disks.append(_target_disk(device, in_use=mounted))
         return machine
 
     @classmethod
@@ -111,16 +106,12 @@ echo "dns=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | tr '\n' ' ')"
             if (device.get("type") != "disk" or _flag(device.get("ro")) or int(device.get("size") or 0) == 0
                     or (device.get("name") or "").startswith(("zram", "ram", "nbd"))):
                 continue
-            reason = _local_in_use_reason(device)
-            disk = TargetDisk(
-                path=device.get("path") or f"/dev/{device['name']}",
-                size=int(device["size"]),
-                model=(device.get("model") or "").strip() or None,
-                transport=device.get("tran"),
-                removable=_flag(device.get("rm")),
+            mounted, reason = _disk_mount_state(device)
+            disk = _target_disk(
+                device,
                 in_use=reason is not None,
                 in_use_reason=reason,
-                automounted=_has_mountpoints(device),
+                automounted=mounted,
             )
             machine.disks.append(disk)
         # External disks first, they are usually the ones to install on.
@@ -138,9 +129,9 @@ echo "dns=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | tr '\n' ' ')"
     @property
     def description(self) -> str:
         if self.image:
-            return f"Image boots on {self.architecture} machine with {self.firmware.display_name(self.architecture)} firmware"
+            return f"Image boots on {self.architecture} machine with {self.firmware.display_name()} firmware"
         if self.local:
-            return f"Installed system runs on {self.architecture} machine with {self.firmware.display_name(self.architecture)} firmware"
+            return f"Installed system runs on {self.architecture} machine with {self.firmware.display_name()} firmware"
         firmware = "Raspberry Pi" if self.raspberry_pi else "UEFI" if self.uefi else "BIOS"
         model = f"{self.model}, " if self.model else ""
         return f"{model}{self.architecture}, {firmware} firmware, {format_size(self.memory)} memory"
@@ -166,7 +157,7 @@ class TargetFirmware(Enum):
     RASPBERRY_PI = "raspberry-pi"
     OTHER = "other"
 
-    def display_name(self, architecture: str) -> str:
+    def display_name(self) -> str:
         return {
             TargetFirmware.UEFI: "UEFI",
             TargetFirmware.BIOS: "BIOS (legacy boot)",
@@ -195,34 +186,35 @@ RASPBERRY_PI_ARCHITECTURES = ("aarch64", "armv7l", "armv6l")
 # by this computer.
 _AUTOMOUNT_LOCATIONS = ("/media/", "/run/media/")
 
-def _local_in_use_reason(device: dict) -> str | None:
-    for mountpoint in device.get("mountpoints") or []:
-        if not mountpoint:
-            continue
-        if mountpoint == "[SWAP]":
-            return "in use, has active swap"
-        if not mountpoint.startswith(_AUTOMOUNT_LOCATIONS):
-            return f"in use, mounted at {mountpoint}"
-    if device.get("type") not in ("disk", "part"):
-        return f"in use by {device.get('type')} volume"
+def _disk_mount_state(device: dict) -> tuple[bool, str | None]:
+    """Whether a disk tree has mounted filesystems, and why a local disk is unsafe to overwrite."""
+    mountpoints = [path for path in device.get("mountpoints") or [] if path]
+    reason = next(("in use, has active swap" if path == "[SWAP]" else f"in use, mounted at {path}"
+                   for path in mountpoints if path == "[SWAP]" or not path.startswith(_AUTOMOUNT_LOCATIONS)), None)
+    if reason is None and device.get("type") not in ("disk", "part"):
+        reason = f"in use by {device.get('type')} volume"
+    mounted = bool(mountpoints)
     for child in device.get("children") or []:
-        if reason := _local_in_use_reason(child):
-            return reason
-    return None
+        child_mounted, child_reason = _disk_mount_state(child)
+        mounted |= child_mounted
+        reason = reason or child_reason
+    return mounted, reason
 
 def _flag(value) -> bool:
     return value in (True, 1, "1", "true")
 
-def _has_mountpoints(device: dict) -> bool:
-    if any(device.get("mountpoints") or []):
-        return True
-    return any(_has_mountpoints(child) for child in device.get("children") or [])
+def _target_disk(device: dict, **state) -> TargetDisk:
+    return TargetDisk(
+        path=device.get("path") or f"/dev/{device['name']}",
+        size=int(device["size"]),
+        model=(device.get("model") or "").strip() or None,
+        transport=device.get("tran"),
+        removable=_flag(device.get("rm")),
+        **state,
+    )
 
 def format_size(size: int) -> str:
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if size < 1024 or unit == "TiB":
-            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-        size /= 1024
+    return _format_size(size, "TiB", ("B", "KiB", "MiB", "GiB", "TiB"))
 
 # Architectures of builds, as uname -m of machines that can run them.
 _MACHINE_ARCHITECTURES = {

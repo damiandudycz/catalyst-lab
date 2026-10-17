@@ -34,7 +34,7 @@ When adding an operation:
 
 - **Builds:** `ProjectBuildView` collects build choices and starts a `ProjectBuild`/stage process; build history/details can reopen records after the run.
 - **Deploy:** `DeployCreateView` handles destination/setup choices and deploy installation. `LiveIsoDeployView` is a specialized setup for live ISO configuration, sharing the broader deploy UI conventions.
-- **QEMU:** `QemuLaunchWizard` gathers VM settings; `QemuRunView` presents the active run; `QemuImagePreparation` is a multistage process. A QEMU run can remain active while its view is closed and reopened.
+- **QEMU and Apple Virtualization:** `QemuLaunchWizard` gathers VM settings, including a selectable Gentoo toolset for custom kernel builds, and warns that VM runs are in testing; `QemuRunView` presents the active run; `QemuImagePreparation` exposes cached-image, writable-image, and optional kernel-build phases as separate steps. A VM run can remain active while its view is closed and reopened.
 - **Repository install/update:** Git-backed installation and update classes are represented as processes, with their relevant repository detail screens providing entry points to run or inspect them.
 
 ## Avoiding fragile progress UI

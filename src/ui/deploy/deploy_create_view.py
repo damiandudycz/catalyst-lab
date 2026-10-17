@@ -18,6 +18,7 @@ from .combo_row_popup import fit_popup_to_items
 from .deploy_image import image_supported_reason, image_connection, image_path, initial_image_size
 from .deploy_target import default_image_layout
 from .item_select_view import ItemSelectionViewEvent
+from .disk_selection import populate_disk_rows
 
 class DeployMethod(Enum):
     """Where build is deployed."""
@@ -153,7 +154,7 @@ class DeployCreateView(Gtk.Box):
         self.local_architecture = machine_architecture(architecture.value if architecture else None)
         self.local_architecture_row.set_subtitle(self.local_architecture or "Unknown architecture of build")
         self.firmware_options = TargetFirmware.options(self.local_architecture) if self.local_architecture else []
-        self.target_firmware_row.set_model(Gtk.StringList.new([item.display_name(self.local_architecture) for item in self.firmware_options]))
+        self.target_firmware_row.set_model(Gtk.StringList.new([item.display_name() for item in self.firmware_options]))
         # Like warnings of stage settings: icon with details in tooltip.
         self.bootloader_warning_icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
         self.bootloader_warning_icon.add_css_class("warning")
@@ -439,28 +440,11 @@ class DeployCreateView(Gtk.Box):
     # Disk
 
     def _load_disks(self):
-        for row in self.disk_rows:
-            self.disks_group.remove(row)
-        self.disk_rows = []
-        self.selected_disk = None
         disks = self.machine.disks if self.machine else []
-        group = None
-        for disk in disks:
-            row = Adw.ActionRow(title=GLib.markup_escape_text(disk.title), subtitle=GLib.markup_escape_text(disk.subtitle))
-            check = Gtk.CheckButton(valign=Gtk.Align.CENTER)
-            if group:
-                check.set_group(group)
-            group = group or check
-            check.connect("toggled", self._on_disk_toggled, disk)
-            row.add_prefix(check)
-            row.set_activatable_widget(check)
-            row.set_sensitive(not disk.in_use)
-            self.disks_group.add(row)
-            self.disk_rows.append(row)
-        if not disks and self.machine:
-            row = Adw.ActionRow(title="No disks found")
-            self.disks_group.add(row)
-            self.disk_rows.append(row)
+        self.disk_rows = populate_disk_rows(
+            self.disks_group, self.disk_rows, disks, self._on_disk_toggled, show_empty=bool(self.machine)
+        )
+        self.selected_disk = None
         self.layout = []
         if self.machine and self.machine.image:
             self.selected_disk = self.machine.disks[0]
@@ -497,17 +481,18 @@ class DeployCreateView(Gtk.Box):
 
     @Gtk.Template.Callback()
     def on_table_changed(self, row, param):
+        self._reset_layout()
+
+    @Gtk.Template.Callback()
+    def on_default_layout_clicked(self, button):
+        self._reset_layout()
+
+    def _reset_layout(self):
         if self.selected_disk and self.machine:
             self.layout = self._default_layout()
             self._load_partition_rows()
 
     # Partitions
-
-    @Gtk.Template.Callback()
-    def on_default_layout_clicked(self, button):
-        if self.selected_disk and self.machine:
-            self.layout = self._default_layout()
-            self._load_partition_rows()
 
     @Gtk.Template.Callback()
     def on_add_partition_clicked(self, button):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import socket, threading
+from .ssh_connection import _command_output
 from .root_function import root_function
 from .root_helper_client import RootHelperClient
 from .root_helper_server import ServerResponseStatusCode
@@ -22,19 +23,32 @@ class LocalDiskConnection:
 
     # Connection:
 
-    def connect(self, password: str | None = None) -> str | None:
+    def connect(self, password: str | None = None, process_holder: list | None = None,
+                output_handler=print, cancel_event=None) -> str | None:
         """Asks for root access. Returns error message, or None when authorized."""
         authorized = threading.Event()
-        keepers = []
+        keeper = None
         def callback(authorization_keeper):
+            nonlocal keeper
+            if cancel_event is not None and cancel_event.is_set():
+                if authorization_keeper:
+                    authorization_keeper.release()
+                authorized.set()
+                return
             # Keeper is released when callback returns, connection retains it until closed.
             if authorization_keeper:
                 authorization_keeper.retain()
-            keepers.append(authorization_keeper)
+            keeper = authorization_keeper
             authorized.set()
         RootHelperClient.shared().authorize_and_run(name="Deploy", callback=callback)
-        authorized.wait()
-        self._authorization_keeper = keepers[0]
+        while not authorized.wait(0.1):
+            if cancel_event is not None and cancel_event.is_set():
+                return "Canceled"
+        if cancel_event is not None and cancel_event.is_set():
+            if keeper:
+                keeper.release()
+            return "Canceled"
+        self._authorization_keeper = keeper
         if self._authorization_keeper is None:
             return "Root access is needed to install on disks of this computer"
         self.connected = True
@@ -57,10 +71,7 @@ class LocalDiskConnection:
 
     def output(self, script: str) -> str:
         """Output of script, raises when it fails."""
-        lines = []
-        if not self.run(script, lines.append):
-            raise RuntimeError(lines[-1] if lines else "Command failed")
-        return "\n".join(lines)
+        return _command_output(self.run, script, "Command failed")
 
     def stream_file(self, path: str, command: str, output_handler=print, progress_handler=None,
                     process_holder: list | None = None) -> bool:

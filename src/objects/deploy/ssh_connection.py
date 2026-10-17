@@ -1,6 +1,12 @@
 from __future__ import annotations
 import os, shlex, stat, subprocess, threading, time, uuid
 
+def _command_output(run, script: str, failure_message: str) -> str:
+    lines = []
+    if not run(script, lines.append):
+        raise RuntimeError(lines[-1] if lines else failure_message)
+    return "\n".join(lines)
+
 # ------------------------------------------------------------------------------
 # SSH connection to machine where build is deployed (usually booted from Gentoo LiveCD).
 # Uses ssh of this computer with shared master connection: password is used once when connecting (passed to ssh
@@ -17,6 +23,7 @@ class SSHConnection:
         # Short path in /tmp, sockets paths are limited to about 100 characters.
         self.control_path = os.path.join("/tmp", f"catalystlab-ssh-{uuid.uuid4().hex[:12]}")
         self.connected = False
+        self._master = None
 
     @property
     def destination(self) -> str:
@@ -71,11 +78,24 @@ class SSHConnection:
                     self.connected = True
                     return None
                 time.sleep(0.2)
-            self._master.terminate()
+            self._stop_master()
             return f"Connection to {self.host} timed out"
+        except Exception:
+            self._stop_master()
+            raise
         finally:
             if askpass and os.path.exists(askpass):
                 os.remove(askpass)
+
+    def _stop_master(self):
+        if self._master is None or self._master.poll() is not None:
+            return
+        self._master.terminate()
+        try:
+            self._master.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self._master.kill()
+            self._master.wait()
 
     def _check(self) -> bool:
         result = subprocess.run(["ssh", "-o", f"ControlPath={self.control_path}", "-O", "check", self.destination],
@@ -83,14 +103,13 @@ class SSHConnection:
         return result.returncode == 0
 
     def close(self):
-        if not self.connected:
-            return
-        subprocess.run(["ssh", "-o", f"ControlPath={self.control_path}", "-O", "exit", self.destination],
-                       stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
-        master = getattr(self, "_master", None)
-        if master and master.poll() is None:
-            master.terminate()
-        self.connected = False
+        try:
+            if self.connected:
+                subprocess.run(["ssh", "-o", f"ControlPath={self.control_path}", "-O", "exit", self.destination],
+                               stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
+        finally:
+            self._stop_master()
+            self.connected = False
 
     def is_alive(self) -> bool:
         return self.connected and self._check()
@@ -116,10 +135,7 @@ class SSHConnection:
 
     def output(self, script: str) -> str:
         """Output of script, raises when it fails."""
-        lines = []
-        if not self.run(script, lines.append):
-            raise RuntimeError(lines[-1] if lines else "Command failed on remote machine")
-        return "\n".join(lines)
+        return _command_output(self.run, script, "Command failed on remote machine")
 
     def stream_file(self, path: str, command: str, output_handler=print, progress_handler=None,
                     process_holder: list | None = None) -> bool:

@@ -23,8 +23,6 @@ class Architecture(Enum):
     s390x = "s390x"         # IBM S/390 (64-bit)
 
     def releng_base_arch(self) -> RelengBaseArch | None:
-        # Catalyst supports architectures without a corresponding Gentoo Releng
-        # release tree (for example MIPS).
         return RelengBaseArch.__members__.get(self.name)
 
     def releases_directory(self) -> str:
@@ -41,8 +39,13 @@ class Architecture(Enum):
         """Tables in catalyst arch/*.toml files containing subarches of this architecture."""
         return _catalyst_arch_tables_mapping.get(self, [CatalystArchTable(name=self.value)])
 
+class CatalystArchTable(NamedTuple):
+    """Top level table in catalyst arch/*.toml files, eg. [ppc64.power9]."""
+    name: str
+    chost_prefix: str | None = None # Use only subarches with matching CHOST, for tables shared by multiple architectures.
+
 class RelengBaseArch(Enum):
-    """Basearch families used by releng templates. Value represents base directory in releng"""
+    """Base architecture directory for Gentoo release specs."""
     x86 = "x86"
     amd64 = "amd64"
     arm = "arm"
@@ -55,16 +58,11 @@ class RelengBaseArch(Enum):
     s390 = "s390/s390"
     s390x = "s390/s390x"
     sparc = "sparc"
-    # Missing in releng: riscv, loong, m68k, alpha
+    # These architectures don't have release spec directories.
     alpha = "alpha"
     riscv = "riscv"
     loong = "loong"
     m68k = "m68k"
-
-class CatalystArchTable(NamedTuple):
-    """Top level table in catalyst arch/*.toml files, eg. [ppc64.power9]."""
-    name: str
-    chost_prefix: str | None = None # Use only subarches with matching CHOST, for tables shared by multiple architectures.
 
 # Mappings:
 _arch_mapping = {

@@ -3,6 +3,7 @@ from io import BytesIO
 from pathlib import Path
 import shlex
 import sys
+import subprocess
 import tempfile
 import types
 import unittest
@@ -14,10 +15,20 @@ if 'catalystlab' not in sys.modules:
     package.__path__ = [str(ROOT / 'src')] + [str(path) for path in (ROOT / 'src').rglob('*') if path.is_dir()]
     sys.modules['catalystlab'] = package
 
-from catalystlab.ssh_connection import SSHConnection, quote
+from catalystlab.ssh_connection import SSHConnection, _command_output, quote
 
 
 class SSHCommandTests(unittest.TestCase):
+    def test_command_output_collects_lines_and_uses_contextual_failure(self):
+        def run(_script, output):
+            output('first')
+            output('second')
+            return True
+
+        self.assertEqual(_command_output(run, 'script', 'failed'), 'first\nsecond')
+        with self.assertRaisesRegex(RuntimeError, 'failed'):
+            _command_output(lambda *_: False, 'script', 'failed')
+
     def test_command_has_master_and_batch_modes(self):
         connection = SSHConnection('192.0.2.5', port=2222, user='admin')
         master = connection._command(master=True)
@@ -71,6 +82,19 @@ class SSHCommandTests(unittest.TestCase):
             error = connection.connect(None)
         self.assertEqual(error, 'Connection to host timed out')
         process.terminate.assert_called_once()
+        process.wait.assert_called_once_with(timeout=3)
+
+    def test_connect_stops_master_when_readiness_check_raises(self):
+        connection = SSHConnection('host')
+        process = Mock()
+        process.poll.return_value = None
+        with patch('catalystlab.ssh_connection.subprocess.Popen', return_value=process), \
+             patch('catalystlab.ssh_connection.os.path.exists', return_value=True), \
+             patch.object(connection, '_check', side_effect=RuntimeError('check failed')):
+            with self.assertRaisesRegex(RuntimeError, 'check failed'):
+                connection.connect(None)
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once_with(timeout=3)
 
     def test_close_exits_control_master_and_terminates_child(self):
         connection = SSHConnection('host')
@@ -82,7 +106,20 @@ class SSHCommandTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][1:4], ['-o', f'ControlPath={connection.control_path}', '-O'])
         self.assertEqual(run.call_args.args[0][4], 'exit')
         connection._master.terminate.assert_called_once()
+        connection._master.wait.assert_called_once_with(timeout=3)
         self.assertFalse(connection.connected)
+
+    def test_master_is_killed_when_it_does_not_stop_after_terminate(self):
+        connection = SSHConnection('host')
+        connection._master = Mock()
+        connection._master.poll.return_value = None
+        connection._master.wait.side_effect = [subprocess.TimeoutExpired('ssh', 3), 0]
+
+        connection._stop_master()
+
+        connection._master.terminate.assert_called_once()
+        connection._master.kill.assert_called_once()
+        self.assertEqual(connection._master.wait.call_count, 2)
 
     def test_close_when_not_connected_is_a_noop(self):
         connection = SSHConnection('host')

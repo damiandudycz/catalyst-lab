@@ -23,6 +23,7 @@ from .project_template import (
     APP_REPOSITORY_URL, ProjectTemplate, TemplateError, app_template_tree, apply_project_template,
     download_app_template, validate_template_repository, _run_git
 )
+from .git_directory import GitDirectory
 
 TEMPLATE_STATE_FILE = "project-template.json"
 TEMPLATE_STATE_FORMAT = 1
@@ -47,13 +48,14 @@ class TemplateState:
         try:
             with open(os.path.join(project_path, TEMPLATE_STATE_FILE), encoding="utf-8") as file:
                 data = json.load(file)
+            if data["format"] != TEMPLATE_STATE_FORMAT:
+                return None
             repository_url = data["repository_url"]
-            repository_path = data.get("repository_path", "")
-            source_kind = data.get("source_kind", "repository")
+            repository_path = data["repository_path"]
+            source_kind = data["source_kind"]
             return cls(repository_url=repository_url, repository_path=repository_path,
-                       template_name=data.get("template_name", ""), commit=data.get("commit"),
-                       selected=data.get("selected", {}), stage_ids=data.get("stage_ids", {}),
-                       template_tree=data.get("template_tree"), source_kind=source_kind)
+                       template_name=data["template_name"], commit=data["commit"], selected=data["selected"],
+                       stage_ids=data["stage_ids"], template_tree=data["template_tree"], source_kind=source_kind)
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
@@ -99,8 +101,8 @@ def template_tree(repository: str, repository_path: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 def template_update_available(project_directory) -> bool | None:
-    """Check whether the source template changed. In-app templates compare only their own directory tree; legacy
-    external templates also compare regenerated project output. None when it can't be checked (eg. offline)."""
+    """Check whether the source template changed. In-app templates compare only their own directory tree; external
+    templates also compare regenerated project output. None when it can't be checked (eg. offline)."""
     project_path = project_directory.directory_path()
     state = TemplateState.load(project_path)
     if state is None or not state.repository_url:
@@ -162,7 +164,6 @@ def read_project_version(root: str | None) -> ProjectVersion:
     version = ProjectVersion()
     if root is None or not os.path.isdir(root):
         return version
-    stages_root = os.path.join(root, _STAGES_DIRECTORY)
     for directory, directories, files in os.walk(root):
         directories[:] = [name for name in directories if name not in _IGNORED]
         relative_directory = os.path.relpath(directory, root)
@@ -316,8 +317,6 @@ def apply_changes(project_path: str, changes: list[TemplateChange], project: Pro
         return os.path.join(project_path, _STAGES_DIRECTORY, name)
     stage_files: dict[str, dict] = {}
     for change in [part for change in changes if change.use_template for part in change.flattened()]:
-        if not change.use_template:
-            continue
         if change.key.startswith("stage:") and "#" in change.key:
             stage_id, _, argument = change.key[len("stage:"):].partition("#")
             if stage_id not in stage_files:
@@ -378,10 +377,6 @@ def apply_changes(project_path: str, changes: list[TemplateChange], project: Pro
             empty = next(remaining, None) is None
         if empty:
             os.rmdir(directory)
-
-# ------------------------------------------------------------------------------
-# Update.
-# ------------------------------------------------------------------------------
 
 # ------------------------------------------------------------------------------
 # Git helpers.
@@ -494,7 +489,7 @@ class ProjectUpdate:
     """Update prepared for project: changes of new version, commit of new version and base of project."""
     source: str # "template" or "repository".
     onto: str # Commit of new version.
-    base: str # Last commit of project from previous version.
+    base: str # Last commit of the previously generated template version.
     changes: list[TemplateChange]
     temporary_directory: str
     fast_forward: bool # Project has no own commits since base, it's moved to new version.
@@ -527,13 +522,13 @@ class ProjectUpdate:
         project_directory.update_logs()
 
 def _new_temporary_directory(prefix: str) -> str:
-    from .repository import Repository
-    root = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
+    from .repository import Repository, resolve_path
+    root = resolve_path(Repository.Settings.value.temporary_location)
     os.makedirs(root, exist_ok=True)
     return tempfile.mkdtemp(prefix=prefix, dir=root)
 
 def _require_saved(project_path: str):
-    if not os.path.isdir(os.path.join(project_path, ".git")):
+    if not GitDirectory.is_git_directory(project_path):
         raise TemplateError("Project isn't Git repository")
     if has_unsaved_changes(project_path):
         raise TemplateError("Project has not saved changes, save or discard them first")
@@ -543,7 +538,6 @@ class _RenderTarget:
     def __init__(self, project_directory, path: str):
         self._project = project_directory
         self._path = path
-        self._stages = [] # Created stages (cleared by apply_project_template, then created again).
         class _NoEvents:
             def emit(self, *arguments):
                 pass
@@ -557,9 +551,7 @@ class _RenderTarget:
     @property
     def stages(self):
         # Created stages, cleared by apply_project_template.
-        if "_stages" not in self.__dict__:
-            self.__dict__["_stages"] = []
-        return self.__dict__["_stages"]
+        return self.__dict__.setdefault("_stages", [])
     def __getattr__(self, name):
         # Configuration of real project (toolset, releng...), its private state isn't shared.
         if name.startswith("_"):
@@ -650,7 +642,7 @@ class RepositoryOrigin:
 
 def repository_origin(project_path: str) -> RepositoryOrigin | None:
     """Remote repository of project cloned from Git repository (not created from template)."""
-    if TemplateState.load(project_path) is not None or not os.path.isdir(os.path.join(project_path, ".git")):
+    if TemplateState.load(project_path) is not None or not GitDirectory.is_git_directory(project_path):
         return None
     url = _git(project_path, "remote", "get-url", "origin", check=False)
     if not url:

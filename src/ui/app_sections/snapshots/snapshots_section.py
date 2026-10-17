@@ -1,7 +1,7 @@
 from gi.repository import Gtk, Adw
 from .app_section import app_section
 from .snapshot_installation import SnapshotInstallation
-from .status_indicator import items_status, processes_status
+from .status_indicator import processes_status
 from .snapshot_details_view import SnapshotDetailsView
 from .snapshot_create_view import SnapshotCreateView
 from .app_events import app_event_bus, AppEvents

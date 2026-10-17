@@ -11,10 +11,10 @@ from .project_build_process import ProjectBuild, ProjectBuildStepBuildStage, run
 from .project_build_view import ProjectBuildView
 from .build_queue_view import build_button_state, present_queued_build
 from .build_queue import BuildQueue, BuildQueueEvent
-from .multistage_process import MultiStageProcess, MultiStageProcessEvent, MultiStageProcessStageEvent, MultiStageProcessStageState, MultiStageProcessState
+from .multistage_process import MultiStageProcess, MultiStageProcessEvent, MultiStageProcessStageEvent, MultiStageProcessStageState
 from .app_events import app_event_bus, AppEvents
 from .helper_functions import get_file_size_string
-from .project_build_details import failure_details, format_duration
+from .project_build_details import format_duration
 from .deploy_installation import is_deployable
 from .deploy_live_iso import is_live_iso_build
 from .deploy_create_view import DeployCreateView
@@ -108,8 +108,7 @@ class ProjectBuildsView(Gtk.Box):
             if running_build and timestamp == running_build.timestamp:
                 entries = self._running_build_entries(running_build, run_builds)
             else:
-                # Stages in build order (older records without it by date).
-                ordered = sorted(run_builds, key=lambda build: (build.order is None, build.order or 0, build.date))
+                ordered = sorted(run_builds, key=lambda build: build.order)
                 entries = [(build.stage_name, build, _record_state(build)) for build in ordered]
             entries = [entry for entry in entries if _matches_filter(entry[2], self.status_filter.get_active())]
             if not entries:
@@ -190,13 +189,6 @@ class ProjectBuildsView(Gtk.Box):
                 details.append(size)
             if packages := (build.details.get("output") or {}).get("packages"):
                 details.append(f"{packages} packages")
-        # ISO of livecd stage, in build folder next to stage archive (builds made before ISO became their artifact).
-        if build and build.path and (iso := (build.details.get("output") or {}).get("iso")) and iso != build.artifact:
-            iso_path = os.path.join(build.path, iso)
-            if os.path.isfile(iso_path):
-                details.append(iso)
-                if size := get_file_size_string(iso_path):
-                    details.append(size)
         subtitle = " · ".join(details)
         if state == BuildRowState.FAILED and (failure := _failure_summary(build)):
             subtitle += f"\n{failure}"
@@ -346,7 +338,7 @@ class ProjectBuildsView(Gtk.Box):
             self._open_build_progress(process)
             return
         view = MultistageProcessExecutionView()
-        view.set_multistage_process(load_build_record(self.project_directory, timestamp, builds))
+        view.set_multistage_process(load_build_record(self.project_directory, timestamp))
         app_event_bus.emit(AppEvents.PRESENT_VIEW, view, "Build stages", 640, 480)
 
     def _update_build_row(self, running_build):
@@ -460,16 +452,8 @@ def _state_css_class(state: BuildRowState) -> str | None:
     return None
 
 def _failure_summary(build) -> str | None:
-    """Failed packages and reason. Builds made before details were recorded have them read from build.log."""
-    if build is None:
-        return None
-    if "failure" not in build.details and build.path:
-        try:
-            with open(os.path.join(build.path, "build.log"), encoding="utf-8", errors="replace") as file:
-                build.details["failure"] = failure_details(file.read().splitlines(), None)
-        except OSError:
-            return None
-    return build.failure_summary
+    """Failed packages and reason recorded for the build."""
+    return build.failure_summary if build else None
 
 
 def _matches_filter(state: BuildRowState, selected: int) -> bool:

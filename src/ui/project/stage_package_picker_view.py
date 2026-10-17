@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import threading
 
 from gi.repository import Gtk, Adw, GLib
@@ -11,6 +10,8 @@ from .project_stage_arguments import StageArgumentDetails
 from .project_stage_value_resolver import UNRESOLVED, resolve_stage_argument
 from .repository import Repository
 from .project_stage_automatic_option import StageAutomaticOption
+from .scrolled_window import scrolled_window
+from .package_search import filter_package_categories, package_version_key
 
 
 class StagePackagePickerView(Gtk.Box):
@@ -99,7 +100,7 @@ class StagePackagePickerView(Gtk.Box):
         self._repo_views.append(view)
         page_name = f"repo-{len(self._repo_views)}"
         self._repo_views_by_name[page_name] = view
-        self.stack.add_titled(_scrolled(view), page_name, title)
+        self.stack.add_titled(scrolled_window(view), page_name, title)
 
     def _page_changed(self, stack, _):
         if view := self._repo_views_by_name.get(stack.get_visible_child_name()):
@@ -167,6 +168,7 @@ class _SelectableRepositoryView(Gtk.Box):
             row = Adw.ExpanderRow(title=category)
             row.category = category
             row.packages = names
+            row.packages_filtered = names
             row.children = []
             row.connect("notify::expanded", self._expand_category)
             self.rows.append(row)
@@ -181,8 +183,8 @@ class _SelectableRepositoryView(Gtk.Box):
     def _expand_category(self, row, _):
         if row.get_expanded():
             row.children.clear()
-            for package, versions in row.packages.items():
-                row_widget = self._package_row(row.category, package, sorted(versions, key=_version_key))
+            for package, versions in row.packages_filtered.items():
+                row_widget = self._package_row(row.category, package, sorted(versions, key=package_version_key))
                 row.add_row(row_widget)
                 row.children.append(row_widget)
         else:
@@ -282,16 +284,18 @@ class _SelectableRepositoryView(Gtk.Box):
         self.set_selected(self.selected)
 
     def _filter(self, entry):
-        query = entry.get_text().strip().lower()
+        query = entry.get_text()
         for row in self.filtered:
             self.group.remove(row)
         for row in self.rows:
             row.set_expanded(False)
-        if len(query) < 2:
-            self.filtered = self.rows
-        else:
-            self.filtered = [row for row in self.rows if query in row.category.lower() or
-                             any(query in name.lower() for name in row.packages)]
+        query = query.strip().casefold()
+        categories = filter_package_categories(
+            {row.category: row.packages for row in self.rows}, query, minimum=2)
+        for row in self.rows:
+            row.packages_filtered = categories.get(row.category, {})
+        self.filtered = [row for row in self.rows if row.category in categories]
+        if len(query) >= 2:
             for row in self.filtered:
                 row.set_expanded(True)
         self._display()
@@ -334,12 +338,3 @@ def _selected_version_for_repo(atoms, base, repo_name):
         if value.startswith(base + "-"):
             return value[len(base) + 1:]
     return None
-
-
-def _scrolled(child):
-    return Gtk.ScrolledWindow(child=child, hexpand=True, vexpand=True,
-                              hscrollbar_policy=Gtk.PolicyType.NEVER)
-
-
-def _version_key(version: str):
-    return [int(part) for part in re.findall(r"\d+", version)]

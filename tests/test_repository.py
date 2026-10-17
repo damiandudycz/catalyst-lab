@@ -97,8 +97,20 @@ class RepositoryPersistenceTests(unittest.TestCase):
         del values[0]
         values.sort()
         values.reverse()
+        values += [6]
+        values *= 2
         values.clear()
-        self.assertEqual(len(calls), 10)
+        self.assertEqual(len(calls), 12)
+
+    def test_augmented_collection_assignment_saves_once(self):
+        repo = repository.Repository(SerializableItem, collection=True, alias='unit.augmented')
+        repo.save = Mock()
+        repo.value._save_callback = repo.save
+
+        repo.value += [SerializableItem('added')]
+        repo.value *= 2
+
+        self.assertEqual(repo.save.call_count, 2)
 
     def test_collection_rejects_non_list_assignment(self):
         repo = repository.Repository(SerializableItem, collection=True, alias='unit.typecheck')
@@ -107,6 +119,11 @@ class RepositoryPersistenceTests(unittest.TestCase):
 
 
 class LibraryLocationTests(unittest.TestCase):
+    def test_preferences_and_library_settings_share_config_root(self):
+        with patch.object(repository, '_system_config_directory', return_value='/config'):
+            self.assertEqual(repository.preferences_file(), '/config/catalystlab/preferences.json')
+            self.assertEqual(repository._library_location_file(), '/config/catalystlab-library.json')
+
     def test_library_location_is_loaded_and_cached(self):
         with tempfile.TemporaryDirectory() as temporary:
             config = Path(temporary, 'config')

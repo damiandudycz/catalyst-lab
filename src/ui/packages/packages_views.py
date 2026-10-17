@@ -4,17 +4,11 @@ from gi.repository import Gtk, GLib, Adw
 from .combo_row_popup import fit_popup_to_items
 from .repository import Repository, RepositoryEvent
 from .architecture import Architecture
-from .event_bus import SharedEvent
 from .status_indicator import StatusIndicatorState
+from catalystlab.formatters import format_size
 from .packages_directory import (
     PackagesDirectory, create_packages_directory, delete_packages_directory, is_packages_name_available, unique_packages_name
 )
-
-def format_size(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024 or unit == "TB":
-            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-        size /= 1024
 
 def open_folder(path: str):
     """Opens folder in file manager."""

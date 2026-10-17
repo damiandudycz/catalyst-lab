@@ -1,6 +1,7 @@
 """Exercise process and step lifecycle transitions with deterministic worker scheduling."""
 from pathlib import Path
 import sys
+import threading
 import types
 import unittest
 from unittest.mock import Mock, patch
@@ -108,11 +109,13 @@ class MultiStageProcessTests(unittest.TestCase):
         stage = process.stages[0]
         stage._update_state(StageState.IN_PROGRESS)
         process.status = ProcessState.IN_PROGRESS
+        Process.started_processes.append(process)
         process.cancel()
         self.assertEqual(process.status, ProcessState.FAILED)
         self.assertEqual(stage.state, StageState.FAILED)
         self.assertTrue(stage._cancel_event.is_set())
         self.assertEqual(process.completions, [False])
+        self.assertNotIn(process, Process.started_processes)
 
     def test_progress_is_average_of_stage_progress(self):
         process = ControlledProcess([StageState.SCHEDULED, StageState.SCHEDULED])
@@ -132,6 +135,71 @@ class MultiStageProcessTests(unittest.TestCase):
         stage.log('line one')
         self.assertEqual(stage.output_lines, ['line one'])
         self.assertEqual(received, ['line one'])
+
+    def test_stage_start_clears_previous_server_call(self):
+        process = ControlledProcess([StageState.SCHEDULED])
+        stage = process.stages[0]
+        stage._server_call = object()
+        stage.start()
+        self.assertIsNone(stage.server_call)
+
+    def test_stage_cancel_cancels_and_joins_server_call(self):
+        process = ControlledProcess([StageState.SCHEDULED])
+        stage = process.stages[0]
+        call = Mock()
+        call.thread = Mock()
+        stage._server_call = call
+        stage._update_state(StageState.IN_PROGRESS)
+
+        stage.cancel()
+
+        call.cancel.assert_called_once()
+        call.thread.join.assert_called_once()
+        self.assertIsNone(stage.server_call)
+
+    def test_toolset_command_forwards_progress_and_reports_success(self):
+        from catalystlab.root_helper_server import ServerResponseStatusCode
+
+        class Call:
+            output = []
+            output_lock = threading.Lock()
+            event_bus = Mock()
+            thread = Mock()
+
+        def run_command(**kwargs):
+            kwargs['handler']('halfway')
+            kwargs['completion_handler'](types.SimpleNamespace(code=ServerResponseStatusCode.OK))
+            return Call()
+
+        process = ControlledProcess([StageState.SCHEDULED])
+        process.toolset = types.SimpleNamespace(run_command=run_command)
+        stage = process.stages[0]
+        self.assertTrue(stage.run_command_in_toolset('emerge app', lambda _: 0.5))
+        self.assertEqual(stage.progress, 0.5)
+        self.assertIsNone(stage.server_call)
+
+    def test_toolset_command_failure_and_exception_are_reported(self):
+        from catalystlab.root_helper_server import ServerResponseStatusCode
+
+        class Call:
+            output = []
+            output_lock = threading.Lock()
+            event_bus = Mock()
+            thread = Mock()
+
+        def failed_command(**kwargs):
+            kwargs['completion_handler'](types.SimpleNamespace(code=ServerResponseStatusCode.COMMAND_EXECUTION_FAILED))
+            return Call()
+
+        process = ControlledProcess([StageState.SCHEDULED])
+        process.toolset = types.SimpleNamespace(run_command=failed_command)
+        self.assertFalse(process.stages[0].run_command_in_toolset('emerge app'))
+
+        process.toolset.run_command = Mock(side_effect=RuntimeError('toolset unavailable'))
+        stage = process.stages[0]
+        self.assertFalse(stage.run_command_in_toolset('emerge app'))
+        self.assertEqual(stage.state, StageState.FAILED)
+        self.assertIn('Error: toolset unavailable', stage.output_lines)
 
     def test_stage_cleanup_skips_scheduled_and_cancels_running(self):
         process = ControlledProcess([StageState.SCHEDULED])

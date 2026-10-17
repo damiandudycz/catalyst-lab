@@ -2,7 +2,7 @@ from __future__ import annotations
 import filecmp, os
 from enum import Enum
 from .architecture import Architecture
-from .project_stage_arguments import StageArgumentDetails, StageArgumentOption
+from .project_stage_arguments import StageArgumentDetails, StageArgumentOption, parent_stage
 
 # ------------------------------------------------------------------------------
 # portage_confdir is generated when building stage, by combining selected sources
@@ -34,8 +34,12 @@ def default_portage_confdir_sources(has_parent: bool) -> list[StagePortageConfdi
 
 def portage_confdir_sources(stage) -> list[StagePortageConfdirSource]:
     value = getattr(stage, StageArgumentDetails.portage_confdir.name, None)
-    values = value if isinstance(value, list) else [value]
+    values = _argument_values(value)
     return [source for source in PORTAGE_CONFDIR_SOURCES_ORDER if source in values]
+
+def _argument_values(value) -> list:
+    values = value if isinstance(value, list) else [value] if value is not None else []
+    return list(dict.fromkeys(values))
 
 # ------------------------------------------------------------------------------
 # Overlays:
@@ -47,10 +51,6 @@ def stage_overlay_path(project_directory, stage) -> str:
 def count_files(path: str) -> int:
     """Number of files in folder, including subfolders."""
     return sum(len(files) for _, _, files in os.walk(path))
-
-def _parent_stage(project_directory, stage):
-    parent_id = getattr(stage, StageArgumentDetails.parent.name, None)
-    return next((item for item in project_directory.stages if item.id == parent_id), None) if parent_id else None
 
 def overlay_stages(project_directory, stage, _visited: frozenset = frozenset()) -> list:
     """Stages whose overlays are used by stage, in order they are applied. Follows parent overlay through the chain
@@ -67,7 +67,7 @@ def overlay_stages(project_directory, stage, _visited: frozenset = frozenset()) 
 
 def parent_overlay_stages(project_directory, stage, _visited: frozenset = frozenset()) -> list:
     """Stages whose overlays are inherited from parent (all overlays used by parent)."""
-    parent = _parent_stage(project_directory, stage)
+    parent = parent_stage(project_directory, stage)
     return overlay_stages(project_directory, parent, _visited) if parent else []
 
 # ------------------------------------------------------------------------------
@@ -127,7 +127,7 @@ def portage_confdir_options(project_directory, stage) -> list[StageArgumentOptio
         subtitle=f"releases/portage/{variant}" if variant else "Releng configuration matching stage"
     )
     # Parent overlay:
-    has_parent = _parent_stage(project_directory, stage) is not None
+    has_parent = parent_stage(project_directory, stage) is not None
     parent_stages = parent_overlay_stages(project_directory, stage)
     parent_files = sum(count_files(stage_overlay_path(project_directory, item)) for item in parent_stages)
     parent_subtitle = (
@@ -176,10 +176,7 @@ def stage_root_overlay_path(project_directory, stage, argument: StageArgumentDet
     """Folder with stage overlay (root overlay by default), kept in stage directory of project."""
     return os.path.join(project_directory.stage_directory_path(name=stage.name), _FILE_OVERLAY_FOLDERS.get(argument, "root_overlay"))
 
-def default_root_overlay_sources(has_parent: bool) -> list[StagePortageConfdirSource]:
-    return default_portage_confdir_sources(has_parent=has_parent)
-
-def _expanded_path(project_directory, stage, path: str) -> str:
+def expand_stage_path(project_directory, stage, path: str) -> str:
     """Path with placeholders of project folders replaced (@STAGE_DIR@, @PROJECT_DIR@, @REPO_DIR@)."""
     releng_directory = project_directory.get_releng_directory()
     for placeholder, value in (("@STAGE_DIR@", project_directory.stage_directory_path(name=stage.name)),
@@ -189,25 +186,10 @@ def _expanded_path(project_directory, stage, path: str) -> str:
     return os.path.normpath(path)
 
 def root_overlay_values(project_directory, stage, argument: StageArgumentDetails | None = None) -> list:
-    """Selected sources of stage overlay (root overlay by default). Values stored by older versions are converted:
-    inherited from releng template or parent, and path of stage overlay folder. Other paths are kept (used as they
-    are)."""
-    from .project_stage_automatic_option import StageAutomaticOption
+    """Selected sources of stage overlay (root overlay by default)."""
     argument = argument or root_overlay_argument(stage)
     value = getattr(stage, argument.name, None) if argument else None
-    values = value if isinstance(value, list) else [value] if value is not None else []
-    own_path = os.path.realpath(stage_root_overlay_path(project_directory, stage, argument))
-    result = []
-    for item in values:
-        if item == StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE:
-            item = StagePortageConfdirSource.RELENG
-        elif item == StageAutomaticOption.INHERIT_FROM_PARENT:
-            item = StagePortageConfdirSource.PARENT_OVERLAY
-        elif isinstance(item, str) and os.path.realpath(_expanded_path(project_directory, stage, item)) == own_path:
-            item = StagePortageConfdirSource.STAGE_OVERLAY
-        if item not in result:
-            result.append(item)
-    return result
+    return _argument_values(value)
 
 def root_overlay_stages(project_directory, stage, argument: StageArgumentDetails | None = None, _visited: frozenset = frozenset()) -> list:
     """Stages whose overlay folders are used by stage, in order they are applied (like overlay_stages)."""
@@ -219,7 +201,7 @@ def root_overlay_stages(project_directory, stage, argument: StageArgumentDetails
     if StagePortageConfdirSource.PARENT_OVERLAY in values:
         # Parent uses root overlay argument of its own target (eg. stage4/root_overlay), ISO overlay is the same.
         parent_argument = None if argument in ROOT_OVERLAY_ARGUMENTS else argument
-        stages += root_overlay_stages(project_directory, _parent_stage(project_directory, stage), parent_argument, _visited | {stage.id})
+        stages += root_overlay_stages(project_directory, parent_stage(project_directory, stage), parent_argument, _visited | {stage.id})
     if StagePortageConfdirSource.STAGE_OVERLAY in values:
         stages.append(stage)
     return stages
@@ -227,7 +209,7 @@ def root_overlay_stages(project_directory, stage, argument: StageArgumentDetails
 def parent_root_overlay_stages(project_directory, stage, argument: StageArgumentDetails | None = None) -> list:
     argument = argument or root_overlay_argument(stage)
     parent_argument = None if argument in ROOT_OVERLAY_ARGUMENTS else argument
-    return root_overlay_stages(project_directory, _parent_stage(project_directory, stage), parent_argument, frozenset({stage.id}))
+    return root_overlay_stages(project_directory, parent_stage(project_directory, stage), parent_argument, frozenset({stage.id}))
 
 def releng_root_overlay_paths(project_directory, stage, argument: StageArgumentDetails | None = None) -> list[str]:
     """Overlay folders defined by releng template of stage."""
@@ -248,7 +230,7 @@ def root_overlay_folders(project_directory, stage, argument: StageArgumentDetail
     if StagePortageConfdirSource.RELENG in values:
         folders += releng_root_overlay_paths(project_directory, stage, argument)
     # Paths set directly (stored by older versions, or by templates).
-    folders += [_expanded_path(project_directory, stage, value) for value in values if isinstance(value, str)]
+    folders += [expand_stage_path(project_directory, stage, value) for value in values if isinstance(value, str)]
     if StagePortageConfdirSource.PARENT_OVERLAY in values:
         folders += [stage_root_overlay_path(project_directory, item, argument)
                     for item in parent_root_overlay_stages(project_directory, stage, argument)]
@@ -271,7 +253,7 @@ def root_overlay_options(project_directory, stage, argument: StageArgumentDetail
     )
     # Parent overlay:
     from .project_stage import parent_supports_argument
-    has_parent = _parent_stage(project_directory, stage) is not None
+    has_parent = parent_stage(project_directory, stage) is not None
     parent_supported = parent_supports_argument(project_directory, stage, argument)
     parent_stages = parent_root_overlay_stages(project_directory, stage, argument)
     parent_files = sum(count_files(stage_root_overlay_path(project_directory, item, argument)) for item in parent_stages)

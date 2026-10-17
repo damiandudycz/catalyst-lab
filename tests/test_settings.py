@@ -27,7 +27,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.qemu_cpus, 4)
         self.assertEqual(Settings.init_from(settings.serialize()).serialize(), settings.serialize())
 
-    def test_legacy_or_invalid_navigation_style_falls_back_to_push(self):
+    def test_missing_or_invalid_navigation_style_falls_back_to_push(self):
         self.assertEqual(Settings.init_from({}).navigation_style, NavigationStyle.PUSH)
         self.assertEqual(Settings.init_from({'navigation_style': 'unknown'}).navigation_style, NavigationStyle.PUSH)
         self.assertEqual(Settings.init_from({'navigation_style': None}).navigation_style, NavigationStyle.PUSH)

@@ -9,7 +9,9 @@ from .project_stage import load_catalyst_stage_arguments_details
 from .project_stage_arguments import StageArgumentDetails
 from .project_stage_automatic_option import StageAutomaticOption
 from .project_stage_compression_mode import StageCompressionMode
-from .project_stage_value_resolver import resolve_stage_argument, load_stage_releng_template_values, UNRESOLVED
+from .project_stage_value_resolver import (
+    resolve_stage_argument, load_stage_releng_template_values, stage_argument_uses_option, UNRESOLVED,
+)
 from .project_stage_portage_confdir import (
     StagePortageConfdirSource, portage_confdir_sources, releng_portage_variant, parent_overlay_stages,
     stage_overlay_path, is_emulated_build, root_overlay_values, root_overlay_folders
@@ -60,32 +62,37 @@ def generate_stage_spec(project_directory, stage, context: StageSpecContext) -> 
         if name in _virtual_arguments:
             continue
         value = _argument_value(project_directory, stage, name, argument, context)
-        text = _format_value(value, mapped)
-        if text is None:
+        line = _format_spec_line(name, value, mapped, placeholders)
+        if line is None:
             if argument.required:
                 missing.append(argument.display_name)
             continue
-        for placeholder, replacement in placeholders.items():
-            text = text.replace(placeholder, replacement)
-        lines.append(f"{name}: {text}")
+        lines.append(line)
     # Settings of kernels (boot/kernel/<name>/...), own of stage or from its releng template.
     if StageArgumentDetails.boot_kernel.value in arguments:
         from .project_stage_kernels import kernel_spec_values
         for name, value in kernel_spec_values(project_directory, stage):
-            if (text := _format_value(value, mapped)) is None:
-                continue
-            for placeholder, replacement in placeholders.items():
-                text = text.replace(placeholder, replacement)
-            lines.append(f"{name}: {text}")
+            if line := _format_spec_line(name, value, mapped, placeholders):
+                lines.append(line)
     if missing:
         raise RuntimeError(f"Missing required values: {', '.join(missing)}")
     return "\n".join(lines) + "\n"
+
+def _format_spec_line(name: str, value, path_mapper, placeholders: dict[str, str]) -> str | None:
+    if (text := _format_value(value, path_mapper)) is None:
+        return None
+    for placeholder, replacement in placeholders.items():
+        text = text.replace(placeholder, replacement)
+    return f"{name}: {text}"
 
 def _argument_value(project_directory, stage, name: str, argument, context: StageSpecContext):
     if (argument.details == StageArgumentDetails.interpreter
             and project_directory.get_architecture() == Architecture.amd64
             and context.rosetta_amd64
-            and _uses_automatic_interpreter(project_directory, stage)):
+            and stage_argument_uses_option(project_directory, stage, argument.attribute_name, {
+                StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE,
+                StageAutomaticOption.GENERATE_AUTOMATICALLY,
+            })):
         return None
     match argument.details:
         case StageArgumentDetails.target:
@@ -103,36 +110,10 @@ def _argument_value(project_directory, stage, name: str, argument, context: Stag
         case StageArgumentDetails.livecd_overlay:
             return context.iso_overlay
     value = resolve_stage_argument(project_directory, stage, name)
-    if value is UNRESOLVED and _is_automatic(project_directory, stage, argument):
+    if value is UNRESOLVED and stage_argument_uses_option(
+            project_directory, stage, argument.attribute_name, {StageAutomaticOption.GENERATE_AUTOMATICALLY}):
         value = _automatic_value(project_directory, argument, context)
     return value
-
-def _uses_automatic_interpreter(project_directory, stage, _visited: frozenset = frozenset()) -> bool:
-    """True when interpreter comes from an automatic option, including through parent stages."""
-    if stage is None or stage.id in _visited:
-        return False
-    value = getattr(stage, StageArgumentDetails.interpreter.name, None)
-    if isinstance(value, list) and len(value) == 1:
-        value = value[0]
-    if value == StageAutomaticOption.INHERIT_FROM_PARENT:
-        parent_id = getattr(stage, StageArgumentDetails.parent.name, None)
-        parent = next((item for item in project_directory.stages if item.id == parent_id), None)
-        return _uses_automatic_interpreter(project_directory, parent, _visited | {stage.id})
-    return value in (StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE,
-                     StageAutomaticOption.GENERATE_AUTOMATICALLY)
-
-def _is_automatic(project_directory, stage, argument, _visited: frozenset = frozenset()) -> bool:
-    """Argument uses automatic value, directly or inherited from parent stages."""
-    if stage is None or stage.id in _visited:
-        return False
-    value = getattr(stage, argument.attribute_name, None)
-    if isinstance(value, list) and len(value) == 1:
-        value = value[0]
-    if value == StageAutomaticOption.INHERIT_FROM_PARENT:
-        parent_id = getattr(stage, StageArgumentDetails.parent.name, None)
-        parent = next((item for item in project_directory.stages if item.id == parent_id), None)
-        return _is_automatic(project_directory, parent, argument, _visited | {stage.id})
-    return value == StageAutomaticOption.GENERATE_AUTOMATICALLY
 
 def _automatic_value(project_directory, argument, context: StageSpecContext):
     """Automatic values determined when building. None means catalyst default."""
@@ -144,7 +125,7 @@ def _automatic_value(project_directory, argument, context: StageSpecContext):
             return architecture.qemu_user_binary() if architecture and is_emulated_build(architecture) else None
     return None
 
-def _format_value(value, path_mapper=lambda path: path) -> str | None:
+def _format_value(value, path_mapper) -> str | None:
     if value is None or value is UNRESOLVED or isinstance(value, StageAutomaticOption) or value == "" or value == []:
         return None
     if isinstance(value, list):
@@ -181,10 +162,7 @@ def generate_portage_confdir(project_directory, stage, destination: str) -> bool
         folders.append(stage_overlay_path(project_directory, stage))
     if not sources:
         return False
-    os.makedirs(destination, exist_ok=True)
-    for folder in folders:
-        if os.path.isdir(folder):
-            shutil.copytree(folder, destination, dirs_exist_ok=True, symlinks=True)
+    _copy_folders(folders, destination)
     return True
 
 # ------------------------------------------------------------------------------
@@ -199,10 +177,15 @@ def generate_root_overlay(project_directory, stage, destination: str, argument: 
     folders = [folder for folder in root_overlay_folders(project_directory, stage, argument) if os.path.isdir(folder)]
     if not folders:
         return False
+    _copy_folders(folders, destination)
+    return True
+
+def _copy_folders(folders: list[str], destination: str) -> None:
+    """Merge folders in order; later folders overwrite earlier files."""
     os.makedirs(destination, exist_ok=True)
     for folder in folders:
-        shutil.copytree(folder, destination, dirs_exist_ok=True, symlinks=True)
-    return True
+        if os.path.isdir(folder):
+            shutil.copytree(folder, destination, dirs_exist_ok=True, symlinks=True)
 
 # ------------------------------------------------------------------------------
 # Seeds of root stages:

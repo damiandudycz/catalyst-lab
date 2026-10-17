@@ -3,8 +3,10 @@ import hashlib, os, re, shutil, subprocess, sys, tarfile, urllib.request
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
-from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessStageState, MultiStageProcessEvent
+from .multistage_process import MultiStageProcess, MultiStageProcessEvent
 from .ssh_connection import quote
+from .deploy_log import write_log_line
+from .deploy_step import DeployStep, check_tools_script
 
 # ------------------------------------------------------------------------------
 # Deploying live CD builds (ISO images): written to disk of this computer (USB drive, SD card), or saved as new ISO
@@ -245,12 +247,7 @@ class LiveIsoDeployment(MultiStageProcess):
         return f"{self.build.stage_name} on {self.target_name}"
 
     def write_log(self, line: str):
-        try:
-            if self._log_file is None:
-                self._log_file = open(self.log_path, "a", encoding="utf-8", buffering=1)
-            self._log_file.write(line + "\n")
-        except OSError as e:
-            print(f"Failed to write deploy log: {e}")
+        self._log_file = write_log_line(self.log_path, self._log_file, line)
 
     def complete_process(self, success: bool):
         if self.live_directory and self.connection:
@@ -278,36 +275,7 @@ class LiveIsoDeployment(MultiStageProcess):
                 except Exception as e:
                     print(f"Failed to close connection: {e}")
 
-class _Step(MultiStageProcessStage):
-    def log(self, line: str):
-        super().log(line)
-        self.multistage_process.write_log(line)
-
-    def start(self):
-        self.processes = []
-        super().start()
-        self.multistage_process.write_log(f"=== {self.name}")
-        try:
-            self.run()
-            self.complete(MultiStageProcessStageState.COMPLETED)
-        except Exception as e:
-            print(f"Error during '{self.name}': {e}")
-            self.complete(MultiStageProcessStageState.FAILED)
-
-    def run(self):
-        raise NotImplementedError
-
-    def remote(self, script: str, error: str):
-        if not self.multistage_process.connection.run(script, self.log, self.processes):
-            raise RuntimeError(error)
-
-    def cancel(self):
-        super().cancel()
-        for process in getattr(self, "processes", []):
-            if process.poll() is None:
-                process.terminate()
-
-class _StepPrepare(_Step):
+class _StepPrepare(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Prepare", description="Checks tools that make new ISO", multistage_process=multistage_process)
 
@@ -320,11 +288,8 @@ class _StepPrepare(_Step):
             raise RuntimeError(error)
         tools = ["xorriso"] + (["mkfs.vfat", "mcopy"] if process.raspberry_pi is not None else []) \
             + (["unsquashfs", "mksquashfs", "chroot"] if process.system is not None else [])
-        self.remote(f"""
-missing=""
-for tool in {" ".join(tools)}; do command -v "$tool" > /dev/null || missing="$missing $tool"; done
-[ -z "$missing" ] || {{ echo "Missing tools:$missing (packages xorriso, dosfstools, mtools and squashfs-tools)"; exit 1; }}
-""", "Tools needed to create ISO are missing")
+        self.remote(check_tools_script(tools, "packages xorriso, dosfstools, mtools and squashfs-tools"),
+                    "Tools needed to create ISO are missing")
         shutil.rmtree(process.work_directory, ignore_errors=True)
         os.makedirs(process.work_directory)
         if process.system is not None:
@@ -395,7 +360,7 @@ def live_system_script(live_directory: str, iso_path: str, system) -> str:
     ]
     return "\n".join(lines) + "\n"
 
-class _StepLiveSystem(_Step):
+class _StepLiveSystem(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Configure live system", description="Unpacks live system, applies settings and packs it again",
                          multistage_process=multistage_process)
@@ -404,7 +369,7 @@ class _StepLiveSystem(_Step):
         process = self.multistage_process
         self.remote(live_system_script(process.live_directory, process.iso_path, process.system), "Failed to configure live system")
 
-class _StepReadIso(_Step):
+class _StepReadIso(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Read ISO", description="Reads kernel, its arguments and EFI partition of ISO",
                          multistage_process=multistage_process)
@@ -438,7 +403,7 @@ chmod -R u+rw {work}
             if not os.path.isfile(os.path.join(boot, os.path.basename(name))):
                 raise RuntimeError(f"{name} is missing in ISO")
 
-class _StepFirmware(_Step):
+class _StepFirmware(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Raspberry Pi boot files", description="Downloads device trees and firmware of kernel release",
                          multistage_process=multistage_process)
@@ -550,7 +515,7 @@ class _StepFirmware(_Step):
             except OSError:
                 pass
 
-class _StepBootPartition(_Step):
+class _StepBootPartition(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Boot partition", description="Creates FAT partition read by Raspberry Pi firmware",
                          multistage_process=multistage_process)
@@ -569,14 +534,16 @@ class _StepBootPartition(_Step):
                 shutil.copy2(source, boot)
         kernel = os.path.basename(process.kernel_name)
         initramfs = os.path.basename(process.initramfs_name) if process.initramfs_name else None
+        config = raspberry_pi_config(kernel, initramfs, process.raspberry_pi)
+        cmdline = raspberry_pi_cmdline(process.kernel_arguments, process.raspberry_pi)
         with open(os.path.join(boot, "config.txt"), "w", encoding="utf-8") as file:
-            file.write(raspberry_pi_config(kernel, initramfs, process.raspberry_pi))
+            file.write(config)
         with open(os.path.join(boot, "cmdline.txt"), "w", encoding="utf-8") as file:
-            file.write(raspberry_pi_cmdline(process.kernel_arguments, process.raspberry_pi))
+            file.write(cmdline)
         self.log("config.txt:")
-        for line in raspberry_pi_config(kernel, initramfs, process.raspberry_pi).splitlines():
+        for line in config.splitlines():
             self.log(f"  {line}")
-        self.log(f"cmdline.txt: {raspberry_pi_cmdline(process.kernel_arguments, process.raspberry_pi).strip()}")
+        self.log(f"cmdline.txt: {cmdline.strip()}")
         size = sum(os.path.getsize(os.path.join(root, name)) for root, _, names in os.walk(boot) for name in names)
         # FAT32 with 512 byte clusters: files fit with little waste, enough clusters for FAT32 from 64 MiB.
         kib = max(64 * 1024, (size * 12 // 10) // 1024 + 16 * 1024)
@@ -589,7 +556,7 @@ export MTOOLS_SKIP_CHECK=1
 mcopy -s -i {quote(image)} ./* ::/
 """, "Failed to create boot partition")
 
-class _StepWriteIso(_Step):
+class _StepWriteIso(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Create ISO", description="Writes new ISO with changes", multistage_process=multistage_process)
 
@@ -624,7 +591,7 @@ chmod a+r {quote(temporary)}
         os.replace(temporary, process.prepared_iso)
         self.log(f"Created ISO ({os.path.getsize(process.prepared_iso) // (1024 * 1024)} MiB)")
 
-class _StepWriteDisk(_Step):
+class _StepWriteDisk(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Write to disk", description="Writes ISO to disk of this computer",
                          multistage_process=multistage_process)
@@ -651,7 +618,7 @@ wipefs -a {device} > /dev/null
             raise RuntimeError(f"Failed to write {disk.path}")
         self.remote(f"sync; blockdev --rereadpt {device} 2>/dev/null || true; echo 'Written'", "Failed to finish writing")
 
-class _StepSaveIso(_Step):
+class _StepSaveIso(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Save ISO", description="Saves ISO in selected location", multistage_process=multistage_process)
 
@@ -660,19 +627,10 @@ class _StepSaveIso(_Step):
         source, destination = process.prepared_iso, process.output_path
         if not destination:
             raise RuntimeError("Location of ISO is not selected")
-        partial = destination + ".part"
         size = os.path.getsize(source)
         if source != process.iso_path and os.stat(source).st_dev == os.stat(os.path.dirname(destination) or ".").st_dev:
             os.replace(source, destination) # Prepared ISO on the same disk is moved.
         else:
             # Copied with progress (ISO of build is kept, other disk).
-            copied = 0
-            with open(source, "rb") as input_file, open(partial, "wb") as output_file:
-                while chunk := input_file.read(8 * 1024 * 1024):
-                    if self._cancel_event.is_set():
-                        raise RuntimeError("Canceled")
-                    output_file.write(chunk)
-                    copied += len(chunk)
-                    self._update_progress(copied / size * 0.99)
-            os.replace(partial, destination)
+            self.copy_file(source, destination)
         self.log(f"Saved {destination} ({size // (1024 * 1024)} MiB)")

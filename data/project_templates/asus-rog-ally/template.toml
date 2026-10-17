@@ -46,7 +46,6 @@ default = false
 id = "extra_stages"
 title = "Extra stages"
 section = "Extra stages"
-previous_id = "desktop"
 description = "Select the console stage4, optional GNOME and KDE Plasma stage4 systems, a minimal install ISO, or a Plasma live ISO."
 type = "multiple"
 default = []

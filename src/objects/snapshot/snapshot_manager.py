@@ -1,11 +1,7 @@
 from typing import final
 from .repository import Repository
 import os
-from .snapshot import Snapshot
-
-def sorted_snapshots(snapshots: list[Snapshot]) -> list[Snapshot]:
-    """Newest snapshots first, snapshots without date last."""
-    return sorted(snapshots, key=lambda snapshot: snapshot.date.timestamp() if snapshot.date else 0, reverse=True)
+from .snapshot import Snapshot, sorted_snapshots
 
 @final
 class SnapshotManager:
@@ -20,11 +16,7 @@ class SnapshotManager:
         return cls._instance
 
     def refresh(self):
-        snapshots = Repository.Snapshot.value
-        snapshots_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.snapshots_location))
-        if not os.path.isdir(snapshots_location):
-            return
-        Repository.Snapshot.value = Repository.Snapshot._cls.load_all()
+        Repository.Snapshot.value = Snapshot.load_all()
 
     def add_snapshot(self, snapshot: Snapshot):
         # Remove existing snapshot with the same filename
@@ -86,12 +78,8 @@ class SnapshotManager:
                 print(f"Failed to remove snapshot {snapshot.filename}: {e}")
 
     def remove_snapshot(self, snapshot: Snapshot):
-        from .rootless import remove_extracted_squashfs, MachineExecutor
+        from .rootless import remove_extracted_squashfs
         remove_extracted_squashfs(snapshot.file_path(), kind="snapshots")
-        # Snapshots are extracted in machines that built with them, running ones are cleaned too.
-        for machine in Repository.BuildMachine.value:
-            if machine.is_running:
-                remove_extracted_squashfs(snapshot.file_path(), kind="snapshots", executor=MachineExecutor(machine))
         if os.path.isfile(snapshot.file_path()):
             os.remove(snapshot.file_path())
         marker = snapshot.file_path() + ".json"

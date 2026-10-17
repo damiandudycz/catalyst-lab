@@ -78,6 +78,8 @@ knowledge of Catalyst internals is needed.
   - they start when needed and stop when nothing uses them;
   - they emulate other architectures with QEMU;
   - their processors, memory and working space can be changed.
+  The build and toolset storage lifecycle is described in
+  [Build execution and virtual machines](docs/architecture/build-execution.md).
 
 ### 📚 Releng, snapshots and overlays
 - **Releng** directories: clones of the Gentoo Release Engineering repository (or your fork), used as defaults for
@@ -114,6 +116,8 @@ Builds with a generic kernel run in a virtual machine from their row in Builds:
 - **Live CD ISO images** boot with EFI firmware.
 - **stage3 and stage4 with kernel** boot their own kernel and initramfs, with system in disk image made from the stage
   (once, kept with the build). Changes are discarded when the machine stops, root logs in without password.
+- Stages without a boot kernel can build one at VM startup. In **Advanced**, choose a free Gentoo toolset, snapshot,
+  and kernel package; preparation progress shows image and kernel steps separately.
 - Kernels of devices QEMU doesn't emulate (Raspberry Pi, PS3) can't run, their builds show why.
 - Test VM CPU and memory defaults are under **Settings → Test built images**. Toolset VMs have separate resource settings.
 
@@ -239,7 +243,8 @@ tools and Lima, so it runs on Macs without Homebrew.
   ```bash
   ./run.sh
   ```
-  It rebuilds changes and launches the app using a local installation in `.build-linux`, without `sudo`.
+  It rebuilds changes and launches the app using a local installation in `.build-linux`, without `sudo`. The app
+  checks and downloads official templates from the current Git branch; that branch must exist on GitHub.
   It uses your real Catalyst Lab folder and settings. Building toolsets also needs the Linux runtime requirements above.
   Alternatively, use GNOME Builder with `packaging/flatpak/com.damiandudycz.CatalystLab.json` or
   `packaging/flatpak/build.sh`.
@@ -248,7 +253,8 @@ tools and Lima, so it runs on Macs without Homebrew.
   brew install gtk4 libadwaita pygobject3 meson ninja squashfs lima
   ./run.sh
   ```
-  It uses your real Catalyst Lab folder and settings. Build files are kept in `.build-macos`.
+  It uses your real Catalyst Lab folder and settings, and checks and downloads official templates from the current Git
+  branch, which must exist on GitHub. Build files are kept in `.build-macos`.
 
 ### Updating Flatpak dependencies
 

@@ -1,11 +1,10 @@
 from typing import final, Any
-import os, shutil, json, uuid
+import os, shutil, json
 from .git_manager import GitManager
 from .repository import Repository
 from .project_directory import ProjectDirectory
-from .project_stage import ProjectStage, ProjectStageEvent
+from .project_stage import ProjectStage
 from .git_directory import GitDirectoryEvent
-from .snapshot import PortageProfile
 from .project_stage import StageArgumentDetails
 
 @final

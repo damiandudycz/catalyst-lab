@@ -1,6 +1,7 @@
 from gi.repository import Gtk, Adw, GLib
-import re, threading
+import threading
 from typing import Callable
+from .package_search import filter_package_categories, package_version_key
 
 # ------------------------------------------------------------------------------
 # Browser of packages of ebuild repository (snapshot, overlay): categories with their packages, and search. Packages
@@ -65,7 +66,7 @@ class PackagesBrowserView(Gtk.Box):
         # Package rows are created only for expanded categories (repositories have many packages).
         if row.get_expanded():
             for package, versions in row.packages_filtered.items():
-                package_row = Adw.ActionRow(title=package, subtitle=", ".join(sorted(versions, key=_version_key)))
+                package_row = Adw.ActionRow(title=package, subtitle=", ".join(sorted(versions, key=package_version_key)))
                 package_row.package = package
                 row.add_row(package_row)
                 row.package_rows_shown.append(package_row)
@@ -80,49 +81,21 @@ class PackagesBrowserView(Gtk.Box):
             self.packages_list.remove(row)
         for row in self.category_rows:
             row.set_expanded(False)
-        search_text = entry.get_text().lower()
-        if len(search_text) < 3: # Start search from 3 chars
-            self.category_rows_filtered = self.category_rows
-            for category_row in self.category_rows:
-                category_row.packages_filtered = category_row.packages
-            self.display_rows()
-            return
-        # Filter results:
-        if "/" in search_text:
-            search_full_name = True
-            search_text_category, search_text_package = search_text.split("/", 1)
-        else:
-            search_full_name = False
-            search_text_category = search_text
-            search_text_package = search_text
+        query = entry.get_text().strip().casefold()
+        filtered = filter_package_categories(
+            {row.category: row.packages for row in self.category_rows}, query, minimum=3,
+            match_full_paths=True)
         for row in self.category_rows:
-            row.packages_filtered = {
-                package: versions
-                for package, versions in row.packages.items()
-                if (
-                    not search_full_name and search_text_package in package
-                    or search_full_name and search_text in f"{row.category}/{package}"
-                )
-            }
-        filtered_category_rows = []
-        expanded_rows = []
-        for row in self.category_rows:
-            if row.packages_filtered:
-                expanded_rows.append(row)
-            if search_text_category in row.category and not search_full_name:
-                row.packages_filtered = row.packages
-            if row.packages_filtered:
-                filtered_category_rows.append(row)
-        self.category_rows_filtered = filtered_category_rows
-        for row in expanded_rows:
-            row.set_expanded(True)
+            row.packages_filtered = filtered.get(row.category, {})
+        self.category_rows_filtered = [row for row in self.category_rows if row.category in filtered]
+        if len(query) >= 3:
+            for row in self.category_rows_filtered:
+                if "/" in query or query not in row.category.casefold() or any(
+                        query in package.casefold() for package in row.packages):
+                    row.set_expanded(True)
         self.display_rows()
 
     def display_rows(self):
         for category_row in self.category_rows_filtered:
             self.packages_list.add(category_row)
         self.no_results_page.set_visible(not self.category_rows_filtered)
-
-def _version_key(version: str) -> list:
-    """Versions in order of their numbers (6.6.62 before 6.12.16)."""
-    return [int(part) for part in re.findall(r"\d+", version)]

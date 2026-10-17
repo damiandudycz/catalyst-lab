@@ -3,53 +3,11 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, cairo, GLib
 import math
-from enum import Enum, auto
 from collections import namedtuple
-
-# Item can have many states at once (eg. running and has changes). Indicator shows the most important one, details
-# list all of them with their own states (shown when indicator is hovered).
-StatusDetail = namedtuple("StatusDetail", ["state", "text"])
-StatusIndicatorValues = namedtuple("StatusIndicatorValues", ["state", "blinking", "details"], defaults=((),))
-
-class StatusIndicatorState(Enum):
-    """States of items shown with color of indicator, from least to most important (item with many states shows the
-    most important one). Item that is actively used (eg. building, running operation) blinks. Described in README."""
-    IDLE = auto()     # Gray: not used, not mounted, no changes.
-    SUCCEEDED = auto() # Green: last operation completed (eg. build).
-    LOADED = auto()   # Blue: mounted, loaded or running.
-    CHANGED = auto()  # Purple: has changes (eg. not saved changes of Git directory).
-    WARNING = auto()  # Orange: has warnings.
-    ERROR = auto()    # Red: has errors.
-
-    def color(self) -> tuple[float, float, float]:
-        """Colors of GNOME palette (gray is light 5, others are 3), the same in light and dark style."""
-        match self:
-            case StatusIndicatorState.IDLE: return (0x9a / 255, 0x99 / 255, 0x96 / 255)
-            case StatusIndicatorState.SUCCEEDED: return (0x33 / 255, 0xd1 / 255, 0x7a / 255)
-            case StatusIndicatorState.LOADED: return (0x35 / 255, 0x84 / 255, 0xe4 / 255)
-            case StatusIndicatorState.CHANGED: return (0x91 / 255, 0x41 / 255, 0xac / 255)
-            case StatusIndicatorState.WARNING: return (0xff / 255, 0x78 / 255, 0x00 / 255)
-            case StatusIndicatorState.ERROR: return (0xe0 / 255, 0x1b / 255, 0x24 / 255)
-
-def status_values(state: StatusIndicatorState, blinking: bool = False, description: str | None = None) -> StatusIndicatorValues:
-    """Indicator values of item with single state. Actively used item is at least loaded, so blinking is visible."""
-    return item_status([StatusDetail(state, description)] if description else [], blinking=blinking, state=state)
-
-def item_status(details: list[StatusDetail | None], blinking: bool = False,
-                state: StatusIndicatorState | None = None) -> StatusIndicatorValues:
-    """Indicator values of item with states in details (none are skipped). Indicator shows the most important of them
-    (or given state), actively used item is at least loaded, so blinking is visible."""
-    # Most important first, like the state shown by indicator.
-    details = tuple(sorted((detail for detail in details if detail is not None and detail.text),
-                           key=lambda detail: detail.state.value, reverse=True))
-    if state is None:
-        state = most_important_state(*(detail.state for detail in details)) if details else StatusIndicatorState.IDLE
-    if blinking and state == StatusIndicatorState.IDLE:
-        state = StatusIndicatorState.LOADED
-    return StatusIndicatorValues(state=state, blinking=blinking, details=details)
-
-def most_important_state(*states: StatusIndicatorState) -> StatusIndicatorState:
-    return max(states, key=lambda state: state.value)
+from .status import (
+    StatusDetail, StatusIndicatorState, StatusIndicatorValues, item_status,
+    most_important_state, process_result_status,
+)
 
 class StatusIndicator(Gtk.DrawingArea):
     def __init__(self):
@@ -68,6 +26,8 @@ class StatusIndicator(Gtk.DrawingArea):
         self._details: tuple = ()
         self.set_has_tooltip(False)
         self.connect("query-tooltip", self._on_query_tooltip)
+        self.connect("realize", self._start_blinking)
+        self.connect("unrealize", self._stop_blinking)
 
     def set_values(self, values: StatusIndicatorValues):
         values = item_status(list(values.details), values.blinking, values.state)
@@ -101,13 +61,20 @@ class StatusIndicator(Gtk.DrawingArea):
             return
         self._blinking = blinking
         if blinking:
-            self._tick_id = GLib.timeout_add(500, self._tick)
+            self._start_blinking()
         else:
-            if self._tick_id:
-                GLib.source_remove(self._tick_id)
-                self._tick_id = None
+            self._stop_blinking()
             self._dimmed = False
             self.queue_draw()
+
+    def _start_blinking(self, *_):
+        if self._blinking and self._tick_id is None and self.get_realized():
+            self._tick_id = GLib.timeout_add(500, self._tick)
+
+    def _stop_blinking(self, *_):
+        if self._tick_id is not None:
+            GLib.source_remove(self._tick_id)
+            self._tick_id = None
 
     def _tick(self):
         if not self._blinking:
@@ -168,19 +135,6 @@ def items_status(items, property_name: str = "status_indicator_values") -> list[
         except Exception as e:
             print(f"Failed to read status of {item}: {e}")
     return result
-
-def process_result_status(process) -> StatusIndicatorValues | None:
-    """Running process blinks, finished one shows its result (completed, failed) until it's seen."""
-    from .multistage_process import MultiStageProcessState
-    if process.status == MultiStageProcessState.IN_PROGRESS:
-        return status_values(StatusIndicatorState.LOADED, blinking=True, description=process.title)
-    if getattr(process, "result_seen", False):
-        return None
-    if process.status == MultiStageProcessState.COMPLETED:
-        return status_values(StatusIndicatorState.SUCCEEDED, description=f"{process.title} completed")
-    if process.status == MultiStageProcessState.FAILED:
-        return status_values(StatusIndicatorState.ERROR, description=f"{process.title} failed")
-    return None
 
 def processes_status(*process_classes) -> list[StatusEntry]:
     """Processes (installations, updates, builds, deploys) of given classes: running ones as blinking indicators,

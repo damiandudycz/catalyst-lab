@@ -2,24 +2,23 @@ from __future__ import annotations
 import os, subprocess
 from .multistage_process import (
     MultiStageProcess, MultiStageProcessStage,
-    MultiStageProcessState, MultiStageProcessStageState
+    MultiStageProcessStageState
 )
 from .git_directory import GitDirectory
 from .git_manager import GitManager
-from abc import ABC, abstractmethod
 
 # ------------------------------------------------------------------------------
 # Git update.
 # ------------------------------------------------------------------------------
 
-class GitUpdate(MultiStageProcess, ABC):
+class GitUpdate(MultiStageProcess):
     """Handles the Git directory update lifecycle."""
 
-    # Overwrite in subclassed
+    manager_type: type[GitManager]
+
     @classmethod
-    @abstractmethod
     def manager(cls) -> GitManager:
-        pass
+        return cls.manager_type.shared()
 
     def __init__(self, directory: GitDirectory):
         self.directory = directory
@@ -32,8 +31,6 @@ class GitUpdate(MultiStageProcess, ABC):
                 multistage_process=self
             )
         )
-        super().setup_stages()
-
     def complete_process(self, success: bool):
         if success:
             self.__class__.manager().repository().save()
@@ -54,45 +51,21 @@ class GitUpdateStepUpdate(MultiStageProcessStage):
             multistage_process=multistage_process
         )
         self.directory = directory
-    def run_git_command(self, repo_path: str, args):
-        self.log(f"$ git {' '.join(args)}")
-        result = subprocess.run(
-            ["git"] + args,
-            cwd=repo_path,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True
-        )
-        for line in (result.stdout + result.stderr).splitlines():
-            self.log(line)
-        result.check_returncode()
-        return result.stdout.strip()
     def start(self):
         super().start()
         try:
-            self.process_started = True
             update_git_directory(self.directory, self.log)
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
             print(f"Error during Git directory update: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
-    def cleanup(self) -> bool:
-        if not super().cleanup():
-            return False
-        if self.multistage_process.status == MultiStageProcessState.FAILED and self.process_started:
-            self.run_git_command(self.directory.directory_path(), ["rebase", "--abort"])
-        return True
 
 def update_git_directory(directory: GitDirectory, log):
     """Fetches latest changes of Git directory and rebases its commits on top of them (like update process), outside
     of process (eg. overlays updated with project). Raises when update fails, rebase is aborted then."""
     path = directory.directory_path()
     def git(*arguments):
-        log(f"$ git {' '.join(arguments)}")
-        result = subprocess.run(["git", *arguments], cwd=path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                universal_newlines=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
-        for line in result.stdout.splitlines():
-            log(line)
+        result = directory.run_git_logged(arguments, log, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
         if result.returncode != 0:
             raise RuntimeError(f"git {arguments[0]} failed in {directory.name}")
     with directory.operation():

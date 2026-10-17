@@ -41,6 +41,21 @@ class SnapshotCleanupTests(unittest.TestCase):
     def test_previous_build_and_import_do_not_retain_old_snapshots(self):
         self.assertEqual(self.manager.unused_snapshots(), [self.old, self.imported])
 
+    def test_refresh_reloads_snapshots_from_existing_library_folder(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(manager.Snapshot, 'base_location', return_value=directory), \
+                patch.object(manager.Snapshot, 'load_all', return_value=[self.latest]) as load_all:
+            self.manager.refresh()
+        load_all.assert_called_once_with()
+        self.assertEqual(self.repository.Snapshot.value, [self.latest])
+
+    def test_refresh_clears_stale_snapshots_when_library_folder_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(manager.Snapshot, 'base_location', return_value=str(Path(directory, 'missing'))):
+            self.manager.refresh()
+
+        self.assertEqual(self.repository.Snapshot.value, [])
+
     def test_running_operation_protects_snapshot_only_until_finished(self):
         process = types.SimpleNamespace(snapshot=self.old, status=MultiStageProcessState.IN_PROGRESS)
         MultiStageProcess.started_processes.append(process)
@@ -79,7 +94,7 @@ class SnapshotCleanupTests(unittest.TestCase):
             self.assertFalse(marker.exists())
             self.assertEqual(self.repository.Snapshot.value, [])
 
-    def test_remove_snapshot_clears_cache_on_running_build_machines(self):
+    def test_remove_snapshot_does_not_visit_machines_for_temporary_extractions(self):
         from catalystlab import rootless
         machine = types.SimpleNamespace(is_running=True)
         self.repository.BuildMachine = types.SimpleNamespace(value=[machine])
@@ -89,9 +104,8 @@ class SnapshotCleanupTests(unittest.TestCase):
             self.repository.Snapshot.value = [self.old]
             with patch.object(manager.Snapshot, 'base_location', return_value=temporary), \
                  patch.object(rootless, 'remove_extracted_squashfs') as remove_cache, \
-                 patch.object(rootless, 'MachineExecutor', return_value='executor') as executor, \
+                 patch.object(rootless, 'MachineExecutor', side_effect=AssertionError('snapshot cache is temporary')) as executor, \
                  patch.object(manager.Repository, 'BuildMachine', self.repository.BuildMachine, create=True):
                 self.manager.remove_snapshot(self.old)
-            executor.assert_called_once_with(machine)
-            self.assertEqual(remove_cache.call_count, 2)
-            self.assertEqual(remove_cache.call_args_list[1].kwargs, {'kind': 'snapshots', 'executor': 'executor'})
+            executor.assert_not_called()
+            remove_cache.assert_called_once_with(str(archive), kind='snapshots')

@@ -28,15 +28,15 @@ class GitManager(ABC):
         repository = self.__class__.repository()
         git_directories = repository.value
         # Detect missing git directories and add them to repository.
-        storage_location = self.__class__.repository()._cls.base_location()
+        item_class = repository._cls
+        storage_location = item_class.base_location()
         # --- Step 1: Scan directory for existing directories ---
         if not os.path.isdir(storage_location):
             return
         found_directories = {
             f for f in os.listdir(storage_location)
             if not f.startswith(".") and os.path.isdir(os.path.join(storage_location, f))
-            and (os.path.isdir(os.path.join(storage_location, f, ".git"))
-                 or os.path.isfile(os.path.join(storage_location, f, ".git")))
+            and GitDirectory.is_git_directory(os.path.join(storage_location, f))
         }
         # --- Step 2: Check for new directories not in repository ---
         existing_dirnames = {
@@ -44,8 +44,7 @@ class GitManager(ABC):
         }
         missing_dirs = found_directories - existing_dirnames
         for dirname in missing_dirs:
-            full_path = os.path.join(storage_location, dirname)
-            self.add_directory(self.__class__.repository()._cls(name=dirname))
+            self.add_directory(item_class(name=dirname))
         # --- Step 3: Remove records for deleted directories ---
         deleted_directories = [
             directory for directory in git_directories
@@ -58,12 +57,8 @@ class GitManager(ABC):
             directory.update_status()
 
     def add_directory(self, directory: GitDirectory):
-        # Remove existing directory with the same name
-        self.__class__.repository().value = [
-            s for s in self.__class__.repository().value
-            if s.id != directory.id
-        ]
-        self.__class__.repository().value.append(directory)
+        repository = self.__class__.repository()
+        repository.value = [item for item in repository.value if item.id != directory.id] + [directory]
 
     def remove_directory(self, directory: GitDirectory):
         if os.path.isdir(directory.directory_path()):

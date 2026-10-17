@@ -34,16 +34,6 @@ type = "boolean"
 default = false
 
 [[variables]]
-id = "kernel"
-title = "Kernel"
-description = "Compiled kernel is built by Catalyst (kernel rpi of every stage4, genkernel) from Raspberry Pi kernel sources with bcm2712_defconfig, which takes long. Sources stay in the system, kernel can be built again on Raspberry Pi with /usr/local/sbin/build-raspberrypi-kernel."
-default = "compiled"
-options = [
-    { value = "compiled", title = "Compiled from sources (raspberrypi-sources)" },
-    { value = "prebuilt", title = "Prebuilt (raspberrypi-image)" },
-]
-
-[[variables]]
 id = "overclock"
 title = "CPU frequency"
 description = "Overclocking needs Active Cooler or other good cooling."
@@ -65,7 +55,6 @@ default = true
 id = "extra_stages"
 title = "Extra stages"
 section = "Extra stages"
-previous_id = "desktop"
 description = "Select the console stage4, GNOME or KDE Plasma stage4 builds, optional customized GNOME stage4, or experimental ISO stages. Raspberry Pi firmware doesn't boot ISO images directly, so the ISO stages are intended for testing."
 type = "multiple"
 default = []
@@ -120,12 +109,8 @@ gnome_stage4_name = "stage4-gnome-{{ init }}"
 gnome_extras_stage4_name = "stage4-gnome-customized-{{ init }}"
 plasma_stage4_name = "stage4-plasma-{{ init }}"
 desktop_profile_suffix = "{{ '/systemd' if init == 'systemd' else '' }}"
-compiled_kernel = "{{ kernel == 'compiled' }}"
-# Compiled kernel is built by catalyst from its sources (kernel rpi), it needs tools to build them (not in stage3).
-kernel_packages = "{{ ['sys-devel/bc', 'sys-devel/bison', 'sys-devel/flex'] if compiled_kernel else ['sys-kernel/raspberrypi-image'] }}"
-# Installs built kernel for firmware (kernel_2712.img, device trees, overlays) and keeps its sources in world.
-kernel_fsscript = "{{ '@STAGE_DIR@/install-kernel.sh' if compiled_kernel else None }}"
-base_packages = "{{ ['app-admin/sudo', 'app-portage/gentoolkit', 'net-misc/networkmanager', 'net-misc/chrony', 'sys-power/cpupower'] + kernel_packages + (['app-admin/sysklogd'] if openrc else []) + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
+# Catalyst builds the Raspberry Pi kernel from raspberrypi-sources for stage4 and ISO stages.
+base_packages = "{{ ['app-admin/sudo', 'app-portage/gentoolkit', 'net-misc/networkmanager', 'net-misc/chrony', 'sys-power/cpupower', 'sys-devel/bc', 'sys-devel/bison', 'sys-devel/flex'] + (['app-admin/sysklogd'] if openrc else []) + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
 base_services = "{{ (['cpupower|boot', 'dbus|default', 'NetworkManager|default', 'sysklogd|default', 'chronyd|default', 'sshd|default'] + ([] if zram == 'off' else ['zram-init|boot'])) if openrc else [] }}"
 
 [[stages]]
@@ -156,12 +141,13 @@ stage4_use = ["networkmanager", "bluetooth"]
 stage4_packages = "{{ base_packages }}"
 stage4_rcadd = "{{ base_services }}"
 stage4_empty = ["/var/cache/distfiles"]
-stage4_fsscript = "{{ kernel_fsscript }}"
-boot_kernel = "{{ ['rpi'] if compiled_kernel else [] }}"
+stage4_fsscript = "@STAGE_DIR@/install-kernel.sh"
+boot_kernel = ["rpi"]
 stage4_rm = ["/root/.bash_history"]
 [stages.arguments.boot_kernels.rpi]
-sources = "{{ 'sys-kernel/raspberrypi-sources' if compiled_kernel else '' }}"
-config = "{{ '@STAGE_DIR@/kernel.config' if compiled_kernel else '' }}"
+sources = "sys-kernel/raspberrypi-sources"
+config = "@STAGE_DIR@/kernel.config"
+gk_kernargs = "--kernname=rpi"
 
 [[stages]]
 id = "stage3-desktop"
@@ -184,12 +170,13 @@ stage4_use = ["networkmanager", "bluetooth", "pulseaudio"]
 stage4_packages = "{{ base_packages + ['gnome-base/gnome', 'gnome-base/gdm'] }}"
 stage4_rcadd = "{{ base_services + (['display-manager|default'] if openrc else []) }}"
 stage4_empty = ["/var/cache/distfiles"]
-stage4_fsscript = "{{ kernel_fsscript }}"
-boot_kernel = "{{ ['rpi'] if compiled_kernel else [] }}"
+stage4_fsscript = "@STAGE_DIR@/install-kernel.sh"
+boot_kernel = ["rpi"]
 stage4_rm = ["/root/.bash_history"]
 [stages.arguments.boot_kernels.rpi]
-sources = "{{ 'sys-kernel/raspberrypi-sources' if compiled_kernel else '' }}"
-config = "{{ '@STAGE_DIR@/kernel.config' if compiled_kernel else '' }}"
+sources = "sys-kernel/raspberrypi-sources"
+config = "@STAGE_DIR@/kernel.config"
+gk_kernargs = "--kernname=rpi"
 
 [[stages]]
 id = "stage4-gnome-extras"
@@ -216,15 +203,16 @@ stage4_packages = "{{ base_packages + ['kde-plasma/plasma-meta', 'x11-misc/sddm'
 stage4_rcadd = "{{ base_services + (['display-manager|default'] if openrc else []) }}"
 stage4_empty = ["/var/cache/distfiles"]
 stage4_fsscript = "@STAGE_DIR@/configure-plasma.sh"
-boot_kernel = "{{ ['rpi'] if compiled_kernel else [] }}"
+boot_kernel = ["rpi"]
 stage4_rm = ["/root/.bash_history"]
 [stages.arguments.boot_kernels.rpi]
-sources = "{{ 'sys-kernel/raspberrypi-sources' if compiled_kernel else '' }}"
-config = "{{ '@STAGE_DIR@/kernel.config' if compiled_kernel else '' }}"
+sources = "sys-kernel/raspberrypi-sources"
+config = "@STAGE_DIR@/kernel.config"
+gk_kernargs = "--kernname=rpi"
 
-# Installation ISO (experimental): releng minimal installation CD (installcd specs) with Raspberry Pi kernel compiled
-# by catalyst (kernel rpi, genkernel, bcm2712_defconfig) and additional tools. Raspberry Pi firmware boots kernel from
-# FAT partition, not from ISO images.
+# Installation ISO (experimental): releng minimal installation CD (installcd specs) with its Raspberry Pi kernel
+# configured through Catalyst's boot/kernel settings and additional tools. Raspberry Pi firmware boots kernels from
+# FAT partitions, not directly from ISO images; Catalyst's ISO kernel/initramfs are used by the firmware-prepared ISO.
 [[stages]]
 id = "livecd-stage1"
 parent = "stage3"
@@ -250,6 +238,7 @@ livecd_rcadd = "{{ ['@releng'] + iso_services }}"
 [stages.arguments.boot_kernels.rpi]
 sources = "sys-kernel/raspberrypi-sources"
 config = "@STAGE_DIR@/kernel.config"
+gk_kernargs = "--kernname=rpi"
 
 # Live ISO with desktop (experimental): KDE Plasma live system like Gentoo LiveGUI (releng livegui specs), from
 # desktop stage3, with the same kernel as installation ISO.
@@ -286,54 +275,37 @@ livecd_empty = ["/var/db/repos", "/usr/src"]
 [stages.arguments.boot_kernels.rpi]
 sources = "sys-kernel/raspberrypi-sources"
 config = "@STAGE_DIR@/kernel.config"
+gk_kernargs = "--kernname=rpi"
 
 # CPU features and GPU of Raspberry Pi 5, inherited by all stages (parent overlay).
 [[files]]
 source = "files/stage1"
 destination = "stages/{{ stage1_name }}"
 
-# Compiled kernel: configuration, script installing it for firmware (run by catalyst in every stage4) and sources
-# allowed from testing branch (~arm64); script building kernel again installed in system.
-[[files]]
-source = "files/kernel-sources"
-destination = "stages/{{ stage4_name }}"
-when = "compiled_kernel and 'stage4' in extra_stages"
-
-[[files]]
-source = "files/kernel-rebuild/build-kernel.sh"
-destination = "stages/{{ stage4_name }}/root_overlay/usr/local/sbin/build-raspberrypi-kernel"
-when = "compiled_kernel and 'stage4' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources"
-destination = "stages/{{ gnome_stage4_name }}"
-when = "compiled_kernel and 'gnome' in extra_stages"
-
-[[files]]
-source = "files/kernel-rebuild/build-kernel.sh"
-destination = "stages/{{ gnome_stage4_name }}/root_overlay/usr/local/sbin/build-raspberrypi-kernel"
-when = "compiled_kernel and 'gnome' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources"
-destination = "stages/{{ plasma_stage4_name }}"
-when = "compiled_kernel and 'plasma' in extra_stages"
-
-[[files]]
-source = "files/kernel-rebuild/build-kernel.sh"
-destination = "stages/{{ plasma_stage4_name }}/root_overlay/usr/local/sbin/build-raspberrypi-kernel"
-when = "compiled_kernel and 'plasma' in extra_stages"
-
-# Plasma's fsscript invokes this installer after Catalyst has built its kernel, then removes it.
-[[files]]
-source = "files/kernel-sources/install-kernel.sh"
-destination = "stages/{{ plasma_stage4_name }}/root_overlay/usr/local/libexec/catalystlab-install-kernel"
-when = "compiled_kernel and 'plasma' in extra_stages"
-
 # Raspberry Pi kernel, firmware and boot configuration.
 [[files]]
 source = "files/stage4"
 destination = "stages/{{ stage4_name }}"
+when = "'stage4' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/kernel.config"
+destination = "stages/{{ stage4_name }}/kernel.config"
+when = "'stage4' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/portage"
+destination = "stages/{{ stage4_name }}/portage"
+when = "'stage4' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/root_overlay"
+destination = "stages/{{ stage4_name }}/root_overlay"
+when = "'stage4' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/install-kernel.sh"
+destination = "stages/{{ stage4_name }}/install-kernel.sh"
 when = "'stage4' in extra_stages"
 
 [[files]]
@@ -345,6 +317,26 @@ when = "'stage4' in extra_stages and zram != 'off'"
 [[files]]
 source = "files/stage4"
 destination = "stages/{{ gnome_stage4_name }}"
+when = "'gnome' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/kernel.config"
+destination = "stages/{{ gnome_stage4_name }}/kernel.config"
+when = "'gnome' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/portage"
+destination = "stages/{{ gnome_stage4_name }}/portage"
+when = "'gnome' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/root_overlay"
+destination = "stages/{{ gnome_stage4_name }}/root_overlay"
+when = "'gnome' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/install-kernel.sh"
+destination = "stages/{{ gnome_stage4_name }}/install-kernel.sh"
 when = "'gnome' in extra_stages"
 
 [[files]]
@@ -385,6 +377,26 @@ when = "'gnome' in extra_stages and lto and tuned"
 [[files]]
 source = "files/stage4"
 destination = "stages/{{ plasma_stage4_name }}"
+when = "'plasma' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/kernel.config"
+destination = "stages/{{ plasma_stage4_name }}/kernel.config"
+when = "'plasma' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/portage"
+destination = "stages/{{ plasma_stage4_name }}/portage"
+when = "'plasma' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/root_overlay"
+destination = "stages/{{ plasma_stage4_name }}/root_overlay"
+when = "'plasma' in extra_stages"
+
+[[files]]
+source = "files/kernel-sources/install-kernel.sh"
+destination = "stages/{{ plasma_stage4_name }}/install-kernel.sh"
 when = "'plasma' in extra_stages"
 
 [[files]]

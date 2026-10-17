@@ -4,10 +4,8 @@ from .project_installation import ProjectInstallation
 from .repository import Repository
 from .status_indicator import items_status, processes_status
 from .project_create_view import ProjectCreateView
-from .project_manager import ProjectManager
 from .project_update import ProjectUpdate
 from .app_events import app_event_bus, AppEvents
-from .git_directory_details_view import GitDirectoryDetailsView
 from .project_details_view import ProjectDetailsView
 
 @app_section(title="Projects", icon="notes-minimalistic-svgrepo-com-symbolic", order=2_000)

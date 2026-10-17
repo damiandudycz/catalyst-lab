@@ -598,21 +598,6 @@ class Job:
                         self.conn.close()
                         self.server.remove_job(self)
 
-class PipeWriter:
-    def __init__(self, queue, pipe_id: int):
-        self.buffer = ""
-        self.queue = queue
-        self.pipe_id = pipe_id
-    def write(self, message):
-        self.buffer += message
-        while "\n" in self.buffer:
-            line, self.buffer = self.buffer.split("\n", 1)
-            self.queue.put((self.pipe_id, line))
-    def flush(self):
-        if self.buffer:
-            self.queue.put((self.pipe_id, self.buffer))
-            self.buffer = ""
-
 class OutputCapture:
     @staticmethod
     def run_function_with_streaming_output(job: Job, func, args, kwargs) -> Any | None:

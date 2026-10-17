@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os, tempfile
-from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessStageState
+from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessStageState, MultiStageProcessState
 from .build_machine import BuildMachine
 from .build_machine_manager import BuildMachineManager, shared_paths
 from .lima import lima_unavailable_reason, machine_configuration, run_limactl
@@ -81,7 +81,7 @@ class BuildMachineStepCreate(BuildMachineStep):
         if not super().cleanup():
             return False
         # Machine is removed when creation didn't finish.
-        if self.created and self.multistage_process.status.name != "COMPLETED":
+        if self.created and self.multistage_process.status != MultiStageProcessState.COMPLETED:
             run_limactl(["delete", "--force", self.multistage_process.machine.instance_name], print, home=self.multistage_process.machine.lima_home)
             self.multistage_process.machine.delete_swap_disk()
         return True
@@ -110,7 +110,7 @@ class BuildMachineStepStart(BuildMachineStep):
             machine = self.multistage_process.machine
             machine.end_use(self.USER)
             # Machine of failed creation is stopped now, before it's removed.
-            if self.multistage_process.status.name != "COMPLETED":
+            if self.multistage_process.status != MultiStageProcessState.COMPLETED:
                 machine.stop_if_started_automatically()
         return True
 

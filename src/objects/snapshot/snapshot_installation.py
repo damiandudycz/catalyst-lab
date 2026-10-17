@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, threading, subprocess
+import os, subprocess
 from typing import final
 from .multistage_process import (
     MultiStageProcess, MultiStageProcessStage,
@@ -9,10 +9,9 @@ from .toolset import Toolset, BindMount
 from .snapshot_manager import SnapshotManager
 from .snapshot import Snapshot, existing_latest_snapshot
 from .root_function import root_function
-from .repository import Repository
-from .root_helper_server import ServerResponse, ServerResponseStatusCode
+from .repository import Repository, resolve_path
 from datetime import datetime
-from .helper_functions import mount_squashfs, umount_squashfs, parse_strict_rfc_datetime
+from .helper_functions import parse_strict_rfc_datetime
 
 # ------------------------------------------------------------------------------
 # Installation process.
@@ -50,48 +49,10 @@ class SnapshotInstallation(MultiStageProcess):
 # Installation process steps.
 # ------------------------------------------------------------------------------
 
-class SnapshotInstallationStep(MultiStageProcessStage):
-    def start(self):
-        self.server_call = None
-        super().start()
-    def cancel(self):
-        super().cancel()
-        if self.server_call:
-            self.server_call.cancel()
-            if self.server_call.thread:
-                self.server_call.thread.join()
-            self.server_call = None
-    def run_command_in_toolset(self, command: str, progress_handler: Callable[[str], float | None] | None = None) -> bool:
-        try:
-            return_value = False
-            done_event = threading.Event()
-            def completion_handler(response: ServerResponse):
-                nonlocal return_value
-                return_value = response.code == ServerResponseStatusCode.OK
-                done_event.set()
-            def output_handler(output_line: str):
-                print(output_line)
-                progress = progress_handler(output_line)
-                if progress is not None:
-                    self._update_progress(progress)
-            self.server_call = self.multistage_process.toolset.run_command(
-                command=command,
-                handler=output_handler if progress_handler is not None else None,
-                completion_handler=completion_handler
-            )
-            self.server_call.thread.join()
-            done_event.wait()
-            self.server_call = None
-            return return_value
-        except Exception as e:
-            print(f"Error running toolset command: {e}")
-            self.complete(MultiStageProcessStageState.FAILED)
-            return False
-
-# Steps implementations:
+# Installation process steps.
 
 @final
-class SnapshotInstallationStepPrepareToolset(SnapshotInstallationStep):
+class SnapshotInstallationStepPrepareToolset(MultiStageProcessStage):
     def __init__(self, toolset: Toolset, multistage_process: MultiStageProcess):
         super().__init__(name="Prepare toolset", description="Spawns toolset with required bindings", multistage_process=multistage_process)
         self.toolset = toolset
@@ -152,25 +113,27 @@ class SnapshotInstallationStepPrepareToolset(SnapshotInstallationStep):
         return [
             BindMount(
                 mount_path="/var/tmp/catalyst/snapshots",
-                host_path=Repository.Settings.value.snapshots_location,
+                host_path=resolve_path(Repository.Settings.value.snapshots_location),
                 store_changes=True,
                 create_if_missing=True
             )
         ]
 
 @final
-class SnapshotInstallationStepCopyFile(SnapshotInstallationStep):
+class SnapshotInstallationStepCopyFile(MultiStageProcessStage):
     def __init__(self, file: GLocalFile, custom_filename: str | None, multistage_process: MultiStageProcess):
         super().__init__(name="Copy snapshot file", description="Copies snapshot file to repository location", multistage_process=multistage_process)
         self.file = file
         self.custom_filename = custom_filename
     def start(self):
         super().start()
+        snapshot_copy_path = None
+        copy_created = False
         try:
             def sanitize_filename_linux(name: str) -> str:
                 return name.replace('/', '_').replace('\0', '_')
             filename = sanitize_filename_linux(self.custom_filename or self.file.get_basename())
-            snapshots_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.snapshots_location))
+            snapshots_location = resolve_path(Repository.Settings.value.snapshots_location)
             snapshot_copy_path = os.path.join(snapshots_location, filename)
             source_path = self.file.get_path()
             creation_timestamp = os.stat(source_path).st_ctime
@@ -180,7 +143,8 @@ class SnapshotInstallationStepCopyFile(SnapshotInstallationStep):
             total_size = os.path.getsize(source_path)
             copied_size = 0
             buffer_size = 1024 * 1024  # 1 MB
-            with open(source_path, 'rb') as src, open(snapshot_copy_path, 'wb') as dst:
+            with open(source_path, 'rb') as src, open(snapshot_copy_path, 'xb') as dst:
+                copy_created = True
                 while True:
                     buf = src.read(buffer_size)
                     if not buf:
@@ -191,11 +155,16 @@ class SnapshotInstallationStepCopyFile(SnapshotInstallationStep):
             self.multistage_process.snapshot = Snapshot(filename=filename, date=creation_date, from_file=True)
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
-            print(f"Error during toolset copying: {e}")
+            if copy_created and snapshot_copy_path and os.path.exists(snapshot_copy_path):
+                try:
+                    os.remove(snapshot_copy_path)
+                except OSError as cleanup_error:
+                    print(f"Failed to remove partial snapshot {snapshot_copy_path}: {cleanup_error}")
+            print(f"Error while copying snapshot file: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 
 @final
-class SnapshotInstallationStepGenerateSnapshot(SnapshotInstallationStep):
+class SnapshotInstallationStepGenerateSnapshot(MultiStageProcessStage):
     def __init__(self, multistage_process: MultiStageProcess):
         super().__init__(name="Generate snapshot", description="Fetches latest portage snapshot tree", multistage_process=multistage_process)
     def start(self):
@@ -223,7 +192,7 @@ class SnapshotInstallationStepGenerateSnapshot(SnapshotInstallationStep):
             self.complete(MultiStageProcessStageState.FAILED)
 
 @final
-class SnapshotInstallationStepSetupPermissions(SnapshotInstallationStep):
+class SnapshotInstallationStepSetupPermissions(MultiStageProcessStage):
     def __init__(self, multistage_process: MultiStageProcess):
         super().__init__(name="Setup permissions", description="Sets generated snapshot file permissions", multistage_process=multistage_process)
     def start(self):
@@ -231,7 +200,7 @@ class SnapshotInstallationStepSetupPermissions(SnapshotInstallationStep):
         try:
             if self.multistage_process.snapshot is None:
                 raise RuntimeError("Unknown spanshot")
-            snapshots_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.snapshots_location))
+            snapshots_location = resolve_path(Repository.Settings.value.snapshots_location)
             snapshot_real_path = os.path.join(snapshots_location, self.multistage_process.snapshot.filename)
             base_name, _ = os.path.splitext(self.multistage_process.snapshot.filename)
             lock_filename = base_name + ".lock"
@@ -248,13 +217,13 @@ class SnapshotInstallationStepSetupPermissions(SnapshotInstallationStep):
         # Remove file if installation failed
         if (self.multistage_process.status == MultiStageProcessState.FAILED and self.multistage_process.snapshot
                 and not self.multistage_process.reused_snapshot):
-            snapshots_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.snapshots_location))
+            snapshots_location = resolve_path(Repository.Settings.value.snapshots_location)
             snapshot_real_path = os.path.join(snapshots_location, self.multistage_process.snapshot.filename)
             delete_file(file_path=snapshot_real_path, root_dir=snapshots_location)
         return True
 
 @final
-class SnapshotInstallationStepAnalyze(SnapshotInstallationStep):
+class SnapshotInstallationStepAnalyze(MultiStageProcessStage):
     def __init__(self, multistage_process: MultiStageProcess):
         super().__init__(name="Analyze snapshots", description="Read metadata from snapshot", multistage_process=multistage_process)
     def start(self):
@@ -262,19 +231,15 @@ class SnapshotInstallationStepAnalyze(SnapshotInstallationStep):
         try:
             if self.multistage_process.snapshot is None:
                 raise RuntimeError("Unknown spanshot")
-            snapshots_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.snapshots_location))
+            snapshots_location = resolve_path(Repository.Settings.value.snapshots_location)
             snapshot_real_path = os.path.join(snapshots_location, self.multistage_process.snapshot.filename)
             # Mount snapshot and read timestamp from it.
             output = subprocess.check_output(['unsquashfs', '-cat', snapshot_real_path, "metadata/timestamp.chk"], text=True)
-            def read_timestamp_from_output(output: str):
-                try:
-                    timestamp = parse_strict_rfc_datetime(output.strip())
-                    print(f"TS: >>> {timestamp}")
-                    return timestamp
-                except Exception as e:
-                    print(e)
-                    return None
-            self.multistage_process.snapshot.date = read_timestamp_from_output(output=output)
+            try:
+                self.multistage_process.snapshot.date = parse_strict_rfc_datetime(output.strip())
+            except Exception as e:
+                print(e)
+                self.multistage_process.snapshot.date = None
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
             print(f"Error during snapshot generation: {e}")

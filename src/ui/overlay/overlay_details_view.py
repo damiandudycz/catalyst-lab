@@ -3,6 +3,7 @@ from .git_directory_details_view import GitDirectoryDetailsView
 from .overlay_manager import OverlayManager
 from .overlay_update import OverlayUpdate
 from .packages_browser_view import PackagesBrowserView
+from .scrolled_window import scrolled_window
 
 class OverlayDetailsView(Gtk.Box):
     """Portage overlay: its Git directory (status, updates, changes) and packages, in tabs like project details.
@@ -23,18 +24,14 @@ class OverlayDetailsView(Gtk.Box):
         details.set_margin_start(24)
         details.set_margin_end(24)
         details.set_margin_bottom(24)
-        self.stack.add_titled_with_icon(self._scrolled(details), "overlay", "Overlay", "layers-minimalistic-svgrepo-com-symbolic")
+        self.stack.add_titled_with_icon(scrolled_window(details), "overlay", "Overlay", "layers-minimalistic-svgrepo-com-symbolic")
         # Packages:
         self.browser = PackagesBrowserView(loader=overlay.load_ebuilds, loading_title="Reading packages…")
         self.browser.set_margin_start(24)
         self.browser.set_margin_end(24)
         self.browser.set_margin_bottom(24)
-        self.stack.add_titled_with_icon(self._scrolled(self.browser), "packages", "Packages", "archive-minimalistic-svgrepo-com-symbolic")
+        self.stack.add_titled_with_icon(scrolled_window(self.browser), "packages", "Packages", "archive-minimalistic-svgrepo-com-symbolic")
         self.stack.connect("notify::visible-child-name", self._on_page_changed)
-
-    @staticmethod
-    def _scrolled(child: Gtk.Widget) -> Gtk.ScrolledWindow:
-        return Gtk.ScrolledWindow(child=child, hexpand=True, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
 
     def _on_page_changed(self, stack, _param):
         if stack.get_visible_child_name() == "packages":

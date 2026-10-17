@@ -56,12 +56,13 @@ _CATEGORY = "sys-kernel"
 _cache: dict[tuple, dict[str, KernelPackageKind]] = {}
 _cache_lock = threading.Lock()
 
-def load_kernel_packages(project_directory, stage) -> list[KernelPackage]:
+def load_kernel_packages(project_directory, stage, snapshot=None) -> list[KernelPackage]:
     """Kernel packages of snapshot of project and overlays used by stage. Slow at first (snapshot is read), call it in
-    background. Packages with kernel sources first."""
+    background. An explicit snapshot can be supplied for temporary build choices. Packages with kernel sources first."""
     packages: dict[str, KernelPackage] = {}
     sources = []
-    if (snapshot := project_directory.get_snapshot()) is not None and os.path.isfile(snapshot.file_path()):
+    snapshot = snapshot or project_directory.get_snapshot()
+    if snapshot is not None and os.path.isfile(snapshot.file_path()):
         sources.append(("gentoo", ("snapshot", snapshot.filename), lambda snapshot=snapshot: _snapshot_packages(snapshot.file_path())))
     for name, path in _stage_overlays(project_directory, stage):
         sources.append((name, ("overlay", path, _tree_state(path)), lambda path=path: _folder_packages(path)))
@@ -134,13 +135,19 @@ def _stage_overlays(project_directory, stage) -> list[tuple[str, str]]:
             overlays.append((os.path.basename(item.rstrip("/")), item))
     return overlays
 
-def _tree_state(path: str) -> float:
-    """Changes when packages of folder change (cache of overlay is read again)."""
+def _tree_state(path: str) -> tuple:
+    """State of ebuild files, used to invalidate cached overlay classifications."""
     category = os.path.join(path, _CATEGORY)
-    try:
-        return max([os.path.getmtime(category)] + [os.path.getmtime(entry.path) for entry in os.scandir(category)])
-    except OSError:
-        return 0
+    state = []
+    for root, _directories, files in os.walk(category):
+        for name in files:
+            if name.endswith(".ebuild"):
+                try:
+                    stat = os.stat(os.path.join(root, name))
+                except OSError:
+                    continue
+                state.append((os.path.relpath(os.path.join(root, name), category), stat.st_mtime_ns, stat.st_size))
+    return tuple(sorted(state))
 
 def _newest_ebuilds(names: list[str]) -> dict[str, str]:
     """Ebuild with the newest version of every package, from paths category/package/package-version.ebuild."""

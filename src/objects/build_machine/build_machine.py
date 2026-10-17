@@ -1,11 +1,12 @@
 from __future__ import annotations
-import os, threading, uuid, json
+import os, threading, uuid, json, shlex
 from typing import Self
 from .event_bus import EventBus, SharedEvent
 from .repository import Repository
-from .status_indicator import StatusIndicatorState, StatusIndicatorValues, StatusDetail, item_status, status_values
-from .lima import list_instances, run_limactl, run_as_root_in_instance, swap_activation_script, default_lima_home, MACHINE_DATA_DIRECTORY, kill_instance_processes, instance_process_ids
-from .lima import lima_home as default_new_lima_home
+from .lima import (list_instances, run_limactl, run_as_root_in_instance, swap_activation_script,
+                   MACHINE_DATA_DIRECTORY, kill_instance_processes, instance_process_ids,
+                   move_lima_disk_to_temporary, remove_temporary_lima_disk_data,
+                   remove_empty_build_machine_temporary_directory, lima_home as default_new_lima_home)
 
 class BuildMachine:
     """Virtual machine (Lima instance) where toolsets run, on systems that can't build stages themselves (macOS).
@@ -27,8 +28,7 @@ class BuildMachine:
 
     @classmethod
     def base_location(cls) -> str:
-        from .lima import machines_directory
-        return machines_directory()
+        return default_new_lima_home()
 
     @classmethod
     def _metadata_path(cls, machine) -> str:
@@ -38,20 +38,17 @@ class BuildMachine:
     def load_all(cls):
         items = []
         root = cls.base_location()
-        from .lima import default_lima_home
-        roots = {root, default_lima_home()}
-        for location in roots:
-            if not os.path.isdir(location):
+        if not os.path.isdir(root):
+            return items
+        for entry in os.scandir(root):
+            if not entry.is_dir(follow_symlinks=False) or not entry.name.startswith("catalystlab-"):
                 continue
-            for entry in os.scandir(location):
-                if not entry.is_dir(follow_symlinks=False) or not entry.name.startswith("catalystlab-"):
-                    continue
-                path = os.path.join(entry.path, "catalystlab.json")
-                try:
-                    with open(path, encoding="utf-8") as file:
-                        items.append(cls.init_from(json.load(file)))
-                except (OSError, ValueError, json.JSONDecodeError) as error:
-                    print(f"Failed to load machine metadata in {entry.path}: {error}")
+            path = os.path.join(entry.path, "catalystlab.json")
+            try:
+                with open(path, encoding="utf-8") as file:
+                    items.append(cls.init_from(json.load(file)))
+            except (OSError, ValueError) as error:
+                print(f"Failed to load machine metadata in {entry.path}: {error}")
         return items
 
     @classmethod
@@ -93,11 +90,8 @@ class BuildMachine:
 
     @classmethod
     def init_from(cls, data: dict) -> Self:
-        return cls(id=uuid.UUID(data["id"]), name=data["name"], cpus=data.get("cpus", 4),
-                   memory_gib=data.get("memory_gib", cls.DEFAULT_MEMORY_GIB), workspace_gib=data.get("workspace_gib", 64),
-                   swap_gib=data.get("swap_gib", cls.DEFAULT_SWAP_GIB),
-                   # Machines created before machines directory are in ~/.lima.
-                   lima_home=data.get("lima_home") or default_lima_home())
+        return cls(id=uuid.UUID(data["id"]), name=data["name"], cpus=data["cpus"], memory_gib=data["memory_gib"],
+                   workspace_gib=data["workspace_gib"], swap_gib=data["swap_gib"], lima_home=data["lima_home"])
 
     # Status:
 
@@ -118,9 +112,7 @@ class BuildMachine:
             return
         instance = list_instances(self.lima_home).get(self.instance_name)
         status = instance.get("status", self.STATUS_STOPPED) if instance else self.STATUS_MISSING
-        if status != self._status:
-            self._status = status
-            self.event_bus.emit(SharedEvent.STATE_UPDATED, self)
+        self._set_status(status)
 
     @property
     def is_running(self) -> bool:
@@ -135,6 +127,8 @@ class BuildMachine:
     def status_indicator_values(self) -> StatusIndicatorValues:
         """Running is loaded, missing (removed outside of app) is error. Blinks while starting, stopping or used by
         operations."""
+        # StatusIndicator is a UI component. Keep the machine model importable by headless maintenance scripts.
+        from .status import StatusIndicatorState, StatusIndicatorValues, StatusDetail, item_status, status_values
         match self.status:
             case self.STATUS_RUNNING:
                 return item_status([StatusDetail(StatusIndicatorState.LOADED, "Running"),
@@ -259,7 +253,6 @@ class BuildMachine:
             output_handler(f"Starting virtual machine {self.name}...")
             self._set_status(self.STATUS_STARTING)
             try:
-                self._update_provision_script(output_handler, process_holder)
                 self._update_mounts(output_handler, process_holder)
                 self._prepare_swap_disk(output_handler, process_holder)
                 success = run_limactl(["start", self.instance_name], output_handler, process_holder, home=self.lima_home)
@@ -309,17 +302,9 @@ class BuildMachine:
         return instance is not None and instance.get("status") == self.STATUS_STOPPED
 
     def ensure_running(self, output_handler=print, process_holder: list | None = None):
-        """Starts machine if needed, raises when it can't be started. Setup of machine is updated once while app runs,
-        when it's older than current one (machines created by previous versions)."""
+        """Starts machine if needed, raising when it can't be started."""
         if not self.start(output_handler, process_holder, automatically=True):
             raise RuntimeError(f"Failed to start virtual machine {self.name}")
-        if not getattr(self, "_setup_checked", False):
-            from .lima import machine_setup_update_script
-            from .rootless import MachineExecutor
-            self._setup_checked = True # Before running, executor ensures machine is running too.
-            if not MachineExecutor(self).run(machine_setup_update_script(), output_handler, process_holder):
-                self._setup_checked = False
-                raise RuntimeError(f"Failed to update setup of virtual machine {self.name}")
 
     # Swap:
     # Raw disk attached to machine (Lima additional disk), used only as swap, so builds needing more memory than
@@ -336,9 +321,11 @@ class BuildMachine:
         disabled."""
         if self.swap_gib:
             run_limactl(["disk", "delete", "--force", self.swap_disk_name], lambda line: None, home=self.lima_home)
+            remove_temporary_lima_disk_data(self.swap_disk_name, self.lima_home)
             if not run_limactl(["disk", "create", self.swap_disk_name, f"--size={self.swap_gib}GiB", "--format=raw"],
                                output_handler, process_holder, home=self.lima_home):
                 raise RuntimeError(f"Failed to create swap disk of virtual machine {self.name}")
+            move_lima_disk_to_temporary(self.swap_disk_name, self.lima_home)
         if self._swap_disk_attached() != bool(self.swap_gib):
             expression = (f'.additionalDisks = [{{"name": "{self.swap_disk_name}", "format": false}}]' if self.swap_gib
                           else "del(.additionalDisks)")
@@ -346,24 +333,7 @@ class BuildMachine:
                 raise RuntimeError(f"Failed to configure swap disk of virtual machine {self.name}")
         if not self.swap_gib:
             run_limactl(["disk", "delete", "--force", self.swap_disk_name], lambda line: None, home=self.lima_home)
-
-    def _update_provision_script(self, output_handler, process_holder: list | None = None):
-        """Lima runs provisioning script (stored in configuration of machine) on every boot. Machines created by
-        previous versions get current script, which doesn't install packages again when machine is set up."""
-        import json
-        from .lima import machine_setup_script
-        script = machine_setup_script()
-        try:
-            with open(os.path.join(self.machine_directory, "lima.yaml"), encoding="utf-8") as file:
-                configuration = file.read()
-        except OSError:
-            return
-        if all(line.strip() in configuration for line in script.splitlines() if line.strip()):
-            return
-        output_handler(f"Updating provisioning of virtual machine {self.name}")
-        expression = f'.provision = [{{"mode": "system", "script": {json.dumps(script)}}}]'
-        if not run_limactl(["edit", "--set", expression, self.instance_name], output_handler, process_holder, home=self.lima_home):
-            output_handler(f"Warning: provisioning of virtual machine {self.name} was not updated")
+            remove_temporary_lima_disk_data(self.swap_disk_name, self.lima_home)
 
     def _update_mounts(self, output_handler, process_holder: list | None = None):
         """Machine shares current folders of Catalyst Lab (they change when library is moved to other place)."""
@@ -401,6 +371,7 @@ class BuildMachine:
 
     def delete_swap_disk(self, output_handler=print):
         run_limactl(["disk", "delete", "--force", self.swap_disk_name], output_handler, home=self.lima_home)
+        remove_temporary_lima_disk_data(self.swap_disk_name, self.lima_home)
 
     # Settings:
 
@@ -425,15 +396,14 @@ class BuildMachine:
         self.event_bus.emit(SharedEvent.STATE_UPDATED, self)
 
     # Working space:
-    # Ext4 image in shared folder, mounted in machine at MACHINE_DATA_DIRECTORY while operations use it (environments,
-    # builds, installations). It's created for first operation and deleted when last one finishes, so data doesn't
-    # stay in machine nor take space on this computer.
+    # Ext4 image in Library/Temporary/BuildMachines/<instance>, mounted in the machine at MACHINE_DATA_DIRECTORY
+    # while operations use it. The temporary swap disk lives beside it; each is removed at the end of its lifecycle.
 
     @property
     def workspace_image_path(self) -> str:
-        """In a dedicated shared folder, so both host management and the guest can access it."""
-        from .lima import machines_directory
-        return os.path.join(machines_directory(), "workspaces", self.instance_name + ".img")
+        """Temporary ext4 workspace image shared with the machine while an operation is running."""
+        from .lima import workspace_image_path
+        return workspace_image_path(self.instance_name)
 
     @property
     def machine_directory(self) -> str:
@@ -471,14 +441,17 @@ class BuildMachine:
         image = self.workspace_image_path
         os.makedirs(os.path.dirname(image), exist_ok=True)
         output_handler(f"Preparing working space of {self.name}")
+        image_argument = shlex.quote(image)
+        directory_argument = shlex.quote(os.path.dirname(image))
         # Left by previous session of app (eg. after crash) is replaced.
         script = f"""
 set -e
-sudo umount -l {MACHINE_DATA_DIRECTORY} 2>/dev/null || true
-rm -f "{image}"
-truncate -s {self.workspace_gib}G "{image}"
-mkfs.ext4 -q -F -m 0 "{image}"
-sudo mount -o loop "{image}" {MACHINE_DATA_DIRECTORY}
+sudo umount -R -l {MACHINE_DATA_DIRECTORY} 2>/dev/null || true
+mkdir -p {directory_argument}
+rm -f {image_argument}
+truncate -s {self.workspace_gib}G {image_argument}
+mkfs.ext4 -q -F -m 0 {image_argument}
+sudo mount -o loop {image_argument} {MACHINE_DATA_DIRECTORY}
 sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
 """
         if not MachineExecutor(self).run(script, output_handler, process_holder):
@@ -493,8 +466,10 @@ sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
         if self.is_running:
             try:
                 # Do not unlink the backing file if the guest couldn't unmount it.
-                cleanup = (f'if mountpoint -q {MACHINE_DATA_DIRECTORY}; then sudo umount -l {MACHINE_DATA_DIRECTORY}; fi; '
-                           f'rm -f "{image}"')
+                # Toolset SquashFS mounts live inside this workspace. Recursively unmount them too if the app exited
+                # before normal toolset cleanup, so the workspace image can be detached safely.
+                cleanup = (f'if mountpoint -q {MACHINE_DATA_DIRECTORY}; then sudo umount -R -l {MACHINE_DATA_DIRECTORY}; fi; '
+                           f'rm -f {shlex.quote(image)}')
                 if not MachineExecutor(self).run(cleanup, output_handler):
                     output_handler(f"Failed to remove working space of {self.name}: guest unmount failed")
                     return
@@ -504,6 +479,7 @@ sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
         try:
             if os.path.exists(image):
                 os.remove(image)
+            remove_empty_build_machine_temporary_directory(self.instance_name)
         except OSError as e:
             output_handler(f"Failed to remove working space of {self.name}: {e}")
 

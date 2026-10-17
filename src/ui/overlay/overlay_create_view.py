@@ -1,6 +1,5 @@
 from __future__ import annotations
 from gi.repository import Gtk, Adw
-from .multistage_process import MultiStageProcessState
 from .overlay_installation import OverlayInstallation
 from .git_directory_create_config_view import GitDirectoryCreateConfigViewEvent
 from .git_directory_default_content_builder import DefaultDirContentBuilder

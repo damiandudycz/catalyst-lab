@@ -8,7 +8,7 @@ from .helper_functions import get_file_size_string
 import os
 from datetime import datetime
 from urllib.parse import urlparse
-from .root_helper_client import RootHelperClient, AuthorizationKeeper
+from .root_helper_client import AuthorizationKeeper
 from .repository import Repository
 from .toolset_update import ToolsetUpdate
 from .multistage_process import MultiStageProcess, MultiStageProcessEvent, MultiStageProcessState

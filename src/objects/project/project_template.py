@@ -9,182 +9,31 @@ small evaluator that only allows constants, template values, operators, conditio
 (see TemplateExpression), so templates from other repositories are safe to use.
 """
 from __future__ import annotations
-import ast, hashlib, os, re, shutil, subprocess, tempfile, tomllib, uuid
+import hashlib, os, re, shutil, subprocess, tempfile, tomllib, uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from .architecture import Architecture
 from .project_stage_arguments import StageArgumentDetails
 from .project_stage_automatic_option import StageAutomaticOption
 from .project_stage_kernels import BOOT_KERNELS_ATTRIBUTE, kernel_settings_from_template, merge_kernel_settings
+from .project_template_expressions import (
+    EXPRESSION_FUNCTION_NAMES,
+    TemplateError,
+    TemplateExpression,
+    evaluate_condition,
+    render_value,
+)
 
 TEMPLATE_FILE = "template.toml"
 TEMPLATE_FORMAT = 1
 RENDERED_FILE_SUFFIX = ".template"
-
-class TemplateError(Exception):
-    pass
-
-# ------------------------------------------------------------------------------
-# Expressions.
-# ------------------------------------------------------------------------------
-
-_MAX_EXPRESSION_LENGTH = 2_000
-_MAX_EVALUATION_STEPS = 10_000
-_MAX_STRING_LENGTH = 100_000
-_MAX_LIST_LENGTH = 10_000
-_PLACEHOLDER_PATTERN = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
-
-def _string_argument(function_name: str, value) -> str:
-    if not isinstance(value, str):
-        raise TemplateError(f"{function_name}() expects text, got {type(value).__name__}")
-    return value
-
-# Functions available in expressions.
-_FUNCTIONS: dict[str, Callable] = {
-    "lower": lambda text: _string_argument("lower", text).lower(),
-    "upper": lambda text: _string_argument("upper", text).upper(),
-    "replace": lambda text, old, new: _string_argument("replace", text).replace(
-        _string_argument("replace", old), _string_argument("replace", new)),
-    "join": lambda separator, items: _string_argument("join", separator).join(
-        _string_argument("join", item) for item in items),
-}
-
-class TemplateExpression:
-    """Evaluates expression with whitelisted subset of Python syntax: constants, names of template values, lists,
-    and/or/not, comparisons, in, +, -, conditional expressions (a if condition else b), f-strings and functions
-    lower(text), upper(text), replace(text, old, new) and join(separator, items). Nothing else is allowed, so
-    expressions can't access files, attributes of objects or run code."""
-
-    def __init__(self, source: str):
-        if not isinstance(source, str):
-            raise TemplateError(f"Expression must be text: {source!r}")
-        source = source.strip()
-        if len(source) > _MAX_EXPRESSION_LENGTH:
-            raise TemplateError(f"Expression is too long: {source[:50]}...")
-        try:
-            self.tree = ast.parse(source, mode="eval")
-        except SyntaxError as e:
-            raise TemplateError(f"Invalid expression '{source}': {e.msg}") from None
-        self.source = source
-
-    def evaluate(self, names: dict[str, Any]) -> Any:
-        self._steps = 0
-        self._names = names
-        try:
-            return self._evaluate(self.tree.body)
-        except TemplateError as e:
-            raise TemplateError(f"{e} (in '{self.source}')") from None
-        except (TypeError, ValueError) as e:
-            raise TemplateError(f"Failed to evaluate '{self.source}': {e}") from None
-
-    def _checked(self, value):
-        if isinstance(value, str) and len(value) > _MAX_STRING_LENGTH:
-            raise TemplateError("Text value is too long")
-        if isinstance(value, list) and len(value) > _MAX_LIST_LENGTH:
-            raise TemplateError("List value is too long")
-        return value
-
-    def _evaluate(self, node: ast.AST):
-        self._steps += 1
-        if self._steps > _MAX_EVALUATION_STEPS:
-            raise TemplateError("Expression is too complex")
-        match node:
-            case ast.Constant(value=value) if value is None or isinstance(value, (str, int, float, bool)):
-                return value
-            case ast.Name(id=name):
-                if name not in self._names:
-                    raise TemplateError(f"Unknown name '{name}'")
-                return self._names[name]
-            case ast.List(elts=elements) | ast.Tuple(elts=elements):
-                return self._checked([self._evaluate(element) for element in elements])
-            case ast.BoolOp(op=op, values=values):
-                result = None
-                for value in values:
-                    result = self._evaluate(value)
-                    if isinstance(op, ast.And) and not result:
-                        return result
-                    if isinstance(op, ast.Or) and result:
-                        return result
-                return result
-            case ast.UnaryOp(op=ast.Not(), operand=operand):
-                return not self._evaluate(operand)
-            case ast.UnaryOp(op=ast.USub(), operand=operand):
-                value = self._evaluate(operand)
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    raise TemplateError("Minus can be used only with numbers")
-                return -value
-            case ast.BinOp(left=left, op=ast.Add() | ast.Sub() as op, right=right):
-                left_value, right_value = self._evaluate(left), self._evaluate(right)
-                numbers = all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in (left_value, right_value))
-                if isinstance(op, ast.Sub):
-                    if not numbers:
-                        raise TemplateError("Minus can be used only with numbers")
-                    return left_value - right_value
-                if not numbers and not (type(left_value) is type(right_value) and isinstance(left_value, (str, list))):
-                    raise TemplateError(f"Can't add {type(left_value).__name__} and {type(right_value).__name__}")
-                return self._checked(left_value + right_value)
-            case ast.Compare(left=left, ops=ops, comparators=comparators):
-                left_value = self._evaluate(left)
-                for op, comparator in zip(ops, comparators):
-                    right_value = self._evaluate(comparator)
-                    match op:
-                        case ast.Eq(): result = left_value == right_value
-                        case ast.NotEq(): result = left_value != right_value
-                        case ast.Lt(): result = left_value < right_value
-                        case ast.LtE(): result = left_value <= right_value
-                        case ast.Gt(): result = left_value > right_value
-                        case ast.GtE(): result = left_value >= right_value
-                        case ast.In() | ast.NotIn():
-                            if not isinstance(right_value, (str, list)):
-                                raise TemplateError("'in' can be used only with text and lists")
-                            result = (left_value in right_value) == isinstance(op, ast.In)
-                        case _:
-                            raise TemplateError(f"Comparison {type(op).__name__} is not allowed")
-                    if not result:
-                        return False
-                    left_value = right_value
-                return True
-            case ast.IfExp(test=test, body=body, orelse=orelse):
-                return self._evaluate(body) if self._evaluate(test) else self._evaluate(orelse)
-            case ast.JoinedStr(values=values):
-                return self._checked("".join(str(self._evaluate(value)) for value in values))
-            case ast.FormattedValue(value=value, conversion=-1, format_spec=None):
-                return self._evaluate(value)
-            case ast.Call(func=ast.Name(id=name), args=args, keywords=[]) if name in _FUNCTIONS and not any(
-                    isinstance(arg, ast.Starred) for arg in args):
-                return self._checked(_FUNCTIONS[name](*[self._evaluate(arg) for arg in args]))
-        raise TemplateError(f"{type(node).__name__} is not allowed in template expressions")
-
-def evaluate_condition(condition: str | None, names: dict[str, Any]) -> bool:
-    """Value of "when" condition, conditions that are not set are true."""
-    return True if condition is None else bool(TemplateExpression(condition).evaluate(names))
-
-def render_value(value, names: dict[str, Any]):
-    """Replaces {{ expressions }} in text, also in lists and tables. Text that is only one expression gets value of
-    that expression (can be list, boolean...), otherwise values are inserted as text."""
-    if isinstance(value, str):
-        placeholders = list(_PLACEHOLDER_PATTERN.finditer(value))
-        if len(placeholders) == 1 and placeholders[0].span() == (0, len(value)):
-            return TemplateExpression(placeholders[0].group(1)).evaluate(names)
-        def replace(match: re.Match) -> str:
-            result = TemplateExpression(match.group(1)).evaluate(names)
-            return "" if result is None else str(result)
-        rendered = _PLACEHOLDER_PATTERN.sub(replace, value)
-        if len(rendered) > _MAX_STRING_LENGTH:
-            raise TemplateError("Text value is too long")
-        return rendered
-    if isinstance(value, list):
-        return [render_value(item, names) for item in value]
-    if isinstance(value, dict):
-        return {key: render_value(item, names) for key, item in value.items()}
-    return value
 
 # ------------------------------------------------------------------------------
 # Template definition.
 # ------------------------------------------------------------------------------
 
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_RESERVED_NAMES = {"project_name", "groups", "true", "false", "none"} | set(_FUNCTIONS)
+_RESERVED_NAMES = {"project_name", "groups", "true", "false", "none"} | EXPRESSION_FUNCTION_NAMES
 _GROUP_STAGES_NAME = "_group_stages" # Stages selected for enabled groups, used when generating.
 _RESERVED_STAGE_ARGUMENTS = {"id", "parent", "target", "name", "releng_template", "event_bus"}
 
@@ -211,7 +60,6 @@ class TemplateVariable:
     default: Any
     when: str | None
     section: str = "Options"
-    previous_id: str | None = None
 
     def available_options(self, names: dict[str, Any]) -> list[TemplateOption]:
         return [option for option in self.options if evaluate_condition(option.when, names)]
@@ -338,7 +186,7 @@ class ProjectTemplate:
     architecture: Architecture | None = None # Fixed architecture of projects, for templates without architecture variable.
     repository_url: str | None = None # Git repository of template.
     repository_path: str = "" # Directory of template in repository, empty for template in root of repository.
-    source_kind: str = "repository" # "app" for templates stored in Catalyst Lab, "repository" for legacy external templates.
+    source_kind: str = "repository" # "app" for templates stored in Catalyst Lab, "repository" for external templates.
     source_tree: str | None = None # Git tree hash for the template directory on its source branch.
     temporary_files: Any = field(default=None, repr=False, compare=False)
     min_app_version: str | None = None # Oldest version of Catalyst Lab that supports template.
@@ -367,7 +215,7 @@ class ProjectTemplate:
                 raise TemplateError("Template: min_app_version must be version like 2.0.0")
             if app_info.version_tuple(app_info.APP_VERSION) < app_info.version_tuple(min_app_version):
                 raise TemplateError(f"Requires Catalyst Lab {min_app_version} or newer (this is {app_info.APP_VERSION})")
-        if data.get("format", TEMPLATE_FORMAT) != TEMPLATE_FORMAT:
+        if data.get("format") != TEMPLATE_FORMAT:
             raise TemplateError(f"Template format {data.get('format')} is not supported, update Catalyst Lab")
         name = _text(data, "name", "Template")
         description = _text(data, "description", "Template", required=False) or ""
@@ -416,8 +264,7 @@ class ProjectTemplate:
                 id=variable_id, title=_text(variable_data, "title", context, required=False) or variable_id,
                 description=_text(variable_data, "description", context, required=False),
                 type=variable_type, options=options, default=default, when=_condition(variable_data, context),
-                section=_text(variable_data, "section", context, required=False) or "Options",
-                previous_id=_text(variable_data, "previous_id", context, required=False)
+                section=_text(variable_data, "section", context, required=False) or "Options"
             ))
         if sum(variable.type == TemplateVariableType.ARCHITECTURE for variable in variables) > 1:
             raise TemplateError("Template can have only one architecture variable")
@@ -529,9 +376,7 @@ class ProjectTemplate:
         if self.architecture is not None:
             names["architecture"] = self.architecture.name
         for variable in self.variables:
-            selected_value = selected.get(variable.id) if variable.id in selected else (
-                selected.get(variable.previous_id) if variable.previous_id else None
-            )
+            selected_value = selected.get(variable.id)
             if not evaluate_condition(variable.when, names):
                 names[variable.id] = None
                 continue
@@ -540,8 +385,6 @@ class ProjectTemplate:
                 # (for example, a customized GNOME stage is available only when GNOME is selected).
                 # Seed the current selection before evaluating option conditions so its name exists.
                 current_selection = selected_value
-                if isinstance(current_selection, str):
-                    current_selection = [current_selection]
                 if not isinstance(current_selection, list):
                     current_selection = variable.default if isinstance(variable.default, list) else []
                 names[variable.id] = current_selection
@@ -550,7 +393,7 @@ class ProjectTemplate:
                 # Selection of user, or default, without options that are not available.
                 value = selected_value
                 if isinstance(value, str):
-                    value = [value] # Selected when variable was single choice (projects created by older template).
+                    value = None
                 value = variable.default if not isinstance(value, list) else value
                 names[variable.id] = [option for option in options if option in value]
                 continue
@@ -578,9 +421,6 @@ class ProjectTemplate:
         for key, expression in self.values.items():
             names[key] = render_value(expression, names)
         return names
-
-    def _files_paths(self, entry: TemplateFiles, names: dict[str, Any], base: str) -> tuple[str, str]:
-        return _template_files_paths(self, entry, names, base)
 
     def generated_stage_ids(self, names: dict[str, Any]) -> set[str]:
         """Ids of stages created for selected options (with conditions that are true, and their parents)."""
@@ -682,7 +522,7 @@ class ProjectTemplate:
         files = []
         for entry in self.files:
             if evaluate_condition(entry.when, names):
-                files.append(self._files_paths(entry, names, base=""))
+                files.append(_template_files_paths(self, entry, names, base=""))
         # Files of groups, in directories of stages group is applied to.
         stage_names = {stage.template_id: stage.name for stage in stages}
         for group in self.groups:
@@ -691,7 +531,8 @@ class ProjectTemplate:
                     continue
                 for entry in group.files:
                     if evaluate_condition(entry.when, names):
-                        files.append(self._files_paths(entry, names, base=os.path.join("stages", stage_names[stage_id])))
+                        base = os.path.join("stages", stage_names[stage_id])
+                        files.append(_template_files_paths(self, entry, names, base))
         architecture_variable = self.architecture_variable
         architecture_name = names.get(architecture_variable.id) if architecture_variable else None
         # Overlays: used ones have to be available for selected options.
@@ -732,6 +573,8 @@ def _overlay_references(value) -> list[TemplateOverlayReference]:
 def _replace_overlay_references(value, overlay_ids: dict[str, Any]):
     if isinstance(value, TemplateOverlayReference):
         return overlay_ids[value.id]
+    if isinstance(value, dict):
+        return {key: _replace_overlay_references(item, overlay_ids) for key, item in value.items()}
     if isinstance(value, list):
         return [_replace_overlay_references(item, overlay_ids) for item in value]
     return value
@@ -785,24 +628,18 @@ def _stage_argument_value(value, context: str):
 
 APP_REPOSITORY_URL = "https://github.com/damiandudycz/catalyst-lab"
 APP_TEMPLATE_ROOT = "data/project_templates"
-APP_TEMPLATE_BRANCH = "main"
+
+def _app_template_branch() -> str:
+    return os.environ.get("CATALYSTLAB_TEMPLATE_BRANCH") or "main"
 
 def _app_repository_checkout(path: str) -> None:
     """Fetches the current app commit and Git trees, leaving file blobs lazy until requested."""
     _run_git(["git", "clone", "--depth", "1", "--filter=blob:none", "--no-checkout", "--quiet",
-              "--single-branch", "--branch", APP_TEMPLATE_BRANCH, APP_REPOSITORY_URL, path])
-
-def _app_git_output(repository: str, *arguments: str) -> bytes:
-    result = subprocess.run(["git", "-C", repository, *arguments], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            timeout=60, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
-    if result.returncode != 0:
-        output = result.stderr.decode(errors="replace").strip()
-        raise TemplateError(output.splitlines()[-1] if output else f"git {' '.join(arguments[:2])} failed")
-    return result.stdout
+              "--single-branch", "--branch", _app_template_branch(), APP_REPOSITORY_URL, path])
 
 def _app_template_entries(repository: str) -> list[tuple[str, str]]:
     entries = []
-    output = _app_git_output(repository, "ls-tree", "-z", f"HEAD:{APP_TEMPLATE_ROOT}")
+    output = _run_git(["git", "-C", repository, "ls-tree", "-z", f"HEAD:{APP_TEMPLATE_ROOT}"], timeout=60)
     for item in output.split(b"\0"):
         if not item:
             continue
@@ -817,8 +654,8 @@ def _app_template_entries(repository: str) -> list[tuple[str, str]]:
 
 def _app_template_tree_in(repository: str, repository_path: str) -> str | None:
     try:
-        tree_hash = _app_git_output(repository, "rev-parse", f"HEAD:{repository_path}").decode().strip()
-        object_type = _app_git_output(repository, "cat-file", "-t", tree_hash).decode().strip()
+        tree_hash = _run_git(["git", "-C", repository, "rev-parse", f"HEAD:{repository_path}"], timeout=60).decode().strip()
+        object_type = _run_git(["git", "-C", repository, "cat-file", "-t", tree_hash], timeout=60).decode().strip()
         return tree_hash if object_type == "tree" else None
     except (TemplateError, UnicodeDecodeError):
         return None
@@ -835,7 +672,7 @@ def load_app_templates() -> list[ProjectTemplate | tuple[str, TemplateError]]:
         for name, tree_hash in _app_template_entries(repository):
             repository_path = f"{APP_TEMPLATE_ROOT}/{name}"
             try:
-                content = _app_git_output(repository, "show", f"HEAD:{repository_path}/{TEMPLATE_FILE}")
+                content = _run_git(["git", "-C", repository, "show", f"HEAD:{repository_path}/{TEMPLATE_FILE}"], timeout=60)
                 if len(content) > 1_000_000:
                     raise TemplateError(f"{TEMPLATE_FILE} is too large")
                 path = os.path.join(temporary_files.name, name)
@@ -869,7 +706,7 @@ def load_app_template_definition(repository_path: str) -> ProjectTemplate:
         tree_hash = _app_template_tree_in(repository, repository_path)
         if tree_hash is None:
             raise TemplateError(f"Template {name} is no longer in Catalyst Lab")
-        content = _app_git_output(repository, "show", f"HEAD:{repository_path}/{TEMPLATE_FILE}")
+        content = _run_git(["git", "-C", repository, "show", f"HEAD:{repository_path}/{TEMPLATE_FILE}"], timeout=60)
     except Exception:
         temporary_files.cleanup()
         raise
@@ -924,14 +761,15 @@ def download_app_template(repository_path: str, expected_tree: str | None = None
         shutil.rmtree(root, ignore_errors=True)
         raise
 
-def _run_git(command: list[str], timeout: int = 300):
+def _run_git(command: list[str], timeout: int = 300) -> bytes:
     result = subprocess.run(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout,
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"} # Fails instead of waiting for credentials.
     )
     if result.returncode != 0:
-        output = result.stdout.strip()
+        output = result.stdout.decode(errors="replace").strip()
         raise TemplateError(output.splitlines()[-1] if output else f"{' '.join(command[:2])} failed")
+    return result.stdout
 
 # Template repositories can contain only templates: one in root of repository, or many in its directories. Template
 # has template.toml, files used by it in files directory and README. Root of repository can also have common
@@ -1049,8 +887,8 @@ def fetch_template_repository(url: str) -> list[ProjectTemplate | tuple[str, Tem
     options. Other files are used from repository cloned when project is created. Uses partial clone without contents
     of files, servers that don't support it send whole latest commit. Templates that can't be used are returned as
     (directory, error)."""
-    from .repository import Repository
-    temporary = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
+    from .repository import Repository, resolve_path
+    temporary = resolve_path(Repository.Settings.value.temporary_location)
     path = os.path.join(temporary, "Project templates", hashlib.sha1(url.encode()).hexdigest()[:16])
     if os.path.exists(path):
         shutil.rmtree(path)
@@ -1073,15 +911,15 @@ def load_cloned_template(path: str, repository_url: str, repository_path: str) -
     """Template from repository cloned as project directory. Files of repository are copied to temporary directory
     first, as project directory is replaced with generated content. Returns template and temporary directory, remove
     it when done."""
-    from .repository import Repository
+    from .repository import Repository, resolve_path
     if repository_path not in validate_template_repository(path, check_sizes=True):
         raise TemplateError(f"Template {repository_path or TEMPLATE_FILE} is not in repository anymore")
-    temporary = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
+    temporary = resolve_path(Repository.Settings.value.temporary_location)
     os.makedirs(temporary, exist_ok=True)
     temporary_directory = tempfile.mkdtemp(prefix="project-template-", dir=temporary)
     copy_path = os.path.join(temporary_directory, "repository")
-    shutil.copytree(path, copy_path, symlinks=True, ignore=shutil.ignore_patterns(".git"))
     try:
+        shutil.copytree(path, copy_path, symlinks=True, ignore=shutil.ignore_patterns(".git"))
         template = ProjectTemplate.load(os.path.join(copy_path, repository_path), repository_url=repository_url,
                                         repository_path=repository_path)
     except Exception:

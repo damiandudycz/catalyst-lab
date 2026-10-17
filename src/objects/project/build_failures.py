@@ -8,6 +8,11 @@ from urllib.parse import quote
 # Packages that failed to build in stages of projects (Bugs section), from failure details of stage builds.
 
 _VERSION = re.compile(r"-\d[^-/]*(-r\d+)?$")
+_RESOLUTION_STATES = ("open", "solved", "potentially_solved", "potentially_resurfaced")
+
+def _resolution_status(item: dict) -> str:
+    status = item.get("resolution")
+    return status if status in _RESOLUTION_STATES else "solved" if item.get("fixed") else "open"
 
 def package_atom(package: str) -> str:
     """Category and name of package with version (sys-libs/readline-8.3_p6 -> sys-libs/readline)."""
@@ -20,7 +25,7 @@ def bugzilla_url(atom: str) -> str:
 @dataclass
 class PackageFailure:
     package: str              # With version, eg. sys-libs/readline-8.3_p6.
-    repository: str | None    # Repository of package (gentoo or overlay), None in records made before it was saved.
+    repository: str           # Repository of package (gentoo or overlay).
     phase: str | None         # Ebuild phase that failed (configure, compile...).
     reason: str | None        # Known reason found in output (eg. out of memory).
     project_directory: object
@@ -36,11 +41,7 @@ class PackageFailure:
 
     @property
     def resolution_status(self) -> str:
-        item = self._item()
-        status = item.get("resolution")
-        if status in ("open", "solved", "potentially_solved", "potentially_resurfaced"):
-            return status
-        return "solved" if item.get("fixed") else "open"
+        return _resolution_status(self._item())
 
     def set_fixed(self, fixed: bool):
         """Marks failure as fixed (or not), saved in build."""
@@ -74,7 +75,7 @@ class PackageFailure:
         if project_id is None or stage_id is None:
             return None
         return (str(project_id), str(stage_id), self.atom,
-                (self.repository or "gentoo").casefold(), (self.phase or "").casefold(), reason)
+                self.repository.casefold(), (self.phase or "").casefold(), reason)
 
     @property
     def version(self) -> str:
@@ -86,8 +87,8 @@ class PackageFailure:
 
     @property
     def is_gentoo(self) -> bool:
-        """Package of Gentoo repository (its bugs are in Gentoo Bugzilla), assumed for records without repository."""
-        return self.repository in (None, "gentoo")
+        """Package of Gentoo repository (its bugs are in Gentoo Bugzilla)."""
+        return self.repository == "gentoo"
 
     @property
     def failure_directory(self) -> str | None:
@@ -124,7 +125,7 @@ def collect_package_failures() -> list[PackageFailure]:
             failure = (build.details or {}).get("failure") or {}
             for index, item in enumerate(failure.get("packages") or []):
                 if (package := item.get("package")) and not item.get("removed"):
-                    failures.append(PackageFailure(package=package, repository=item.get("repository"), phase=item.get("phase"),
+                    failures.append(PackageFailure(package=package, repository=item["repository"], phase=item["phase"],
                                                    reason=failure.get("reason"), project_directory=project, build=build,
                                                    index=index))
     failures.sort(key=lambda failure: failure.date, reverse=True)
@@ -132,7 +133,7 @@ def collect_package_failures() -> list[PackageFailure]:
 
 
 def reconcile_project_failure_states(project):
-    """Update automatic resolution states after a build is saved (also backfills older runs)."""
+    """Reconcile automatic resolution states across the project's build history."""
     from .project_build import load_project_builds
     try:
         _reconcile_resolution_states(project, load_project_builds(project))
@@ -151,9 +152,6 @@ def _configuration_key(build) -> str | None:
             spec = file.read()
     except OSError:
         return None
-    # Recompute instead of trusting the persisted fingerprint: older builds stored
-    # Portage/root overlay contents in that value, which incorrectly made overlay
-    # fixes look like unrelated configurations.
     inputs = build.details.get("inputs") or {}
     toolset = inputs.get("toolset") or {}
     try:
@@ -195,7 +193,7 @@ def _reconcile_resolution_states(project, builds: list):
                     if (history_stage, history_config) != (stage, config):
                         continue
                     for old_build, item in occurrences:
-                        status = item.get("resolution", "solved" if item.get("fixed") else "open")
+                        status = _resolution_status(item)
                         if status in ("open", "potentially_resurfaced"):
                             item["resolution"] = "potentially_solved"
                             changed[str(old_build.id)] = old_build
@@ -209,8 +207,8 @@ def _reconcile_resolution_states(project, builds: list):
         for index, item in enumerate(failure.get("packages") or []):
             if not item.get("package"):
                 continue
-            current = PackageFailure(package=item["package"], repository=item.get("repository"),
-                                     phase=item.get("phase"), reason=failure.get("reason"),
+            current = PackageFailure(package=item["package"], repository=item["repository"],
+                                     phase=item["phase"], reason=failure.get("reason"),
                                      project_directory=project, build=build, index=index)
             issue = current.issue_key
             if issue is None or config is None:
@@ -218,7 +216,7 @@ def _reconcile_resolution_states(project, builds: list):
             key = (stage, config, issue)
             if process_event:
                 for old_build, old_item in histories.get(key, []):
-                    status = old_item.get("resolution", "solved" if old_item.get("fixed") else "open")
+                    status = _resolution_status(old_item)
                     if status == "potentially_solved":
                         old_item["resolution"] = "open"
                         old_item["fixed"] = False

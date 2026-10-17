@@ -13,6 +13,7 @@ from .local_disk_connection import LocalDiskConnection
 from .item_select_view import ItemSelectionViewEvent
 from .deploy_installation import DeploySystemSettings
 from .deploy_system import LocalizationSettings, WifiSettings, local_localization, local_public_keys, local_wifi_ssid
+from .disk_selection import populate_disk_rows
 
 class LiveIsoBoot(Enum):
     """How live CD is started."""
@@ -323,31 +324,14 @@ class LiveIsoDeployView(Gtk.Box):
             self.disk_status_label.add_css_class("error")
 
     def _load_disks(self):
-        for row in self.disk_rows:
-            self.disks_group.remove(row)
-        self.disk_rows = []
-        self.selected_disk = None
         disks = self.machine.disks if self.machine else []
         size = os.path.getsize(self.build.artifact_path) if self.build and os.path.isfile(self.build.artifact_path or "") else 0
-        group = None
-        for disk in disks:
-            too_small = disk.size < size * 1.1
-            subtitle = disk.subtitle + (", too small for ISO" if too_small else "")
-            row = Adw.ActionRow(title=GLib.markup_escape_text(disk.title), subtitle=GLib.markup_escape_text(subtitle))
-            check = Gtk.CheckButton(valign=Gtk.Align.CENTER)
-            if group:
-                check.set_group(group)
-            group = group or check
-            check.connect("toggled", self._on_disk_toggled, disk)
-            row.add_prefix(check)
-            row.set_activatable_widget(check)
-            row.set_sensitive(not disk.in_use and not too_small)
-            self.disks_group.add(row)
-            self.disk_rows.append(row)
-        if not disks and self.machine:
-            row = Adw.ActionRow(title="No disks found")
-            self.disks_group.add(row)
-            self.disk_rows.append(row)
+        self.disk_rows = populate_disk_rows(
+            self.disks_group, self.disk_rows, disks, self._on_disk_toggled,
+            show_empty=bool(self.machine),
+            disabled_reason=lambda disk: "too small for ISO" if disk.size < size * 1.1 else None,
+        )
+        self.selected_disk = None
         self.wizard_view._refresh_buttons_state()
 
     def _on_disk_toggled(self, check: Gtk.CheckButton, disk):

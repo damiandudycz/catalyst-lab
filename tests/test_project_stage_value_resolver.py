@@ -18,7 +18,7 @@ from catalystlab.project_stage_automatic_option import StageAutomaticOption as A
 from catalystlab.project_stage_arguments import StageArgumentDetails as Argument
 from catalystlab.project_stage_value_resolver import (
     UNRESOLVED, _convert_releng_value, _parse_spec_file, format_stage_argument_value,
-    load_stage_releng_template_values, resolve_stage_argument, split_additions,
+    load_stage_releng_template_values, resolve_stage_argument, split_additions, stage_argument_uses_option,
 )
 
 
@@ -108,6 +108,29 @@ class StageValueResolutionTests(unittest.TestCase):
         self.assertEqual(format_stage_argument_value(['one', 'two', 'three', 'four']), 'one, two, three (+1 more)')
         self.assertIsNone(format_stage_argument_value([]))
         self.assertEqual(format_stage_argument_value('value'), 'value')
+
+    def test_automatic_option_detection_follows_parent_and_stops_on_cycles(self):
+        parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+        parent = types.SimpleNamespace(id=parent_id, interpreter=Automatic.GENERATE_AUTOMATICALLY)
+        child = types.SimpleNamespace(id=child_id, parent=parent_id, interpreter=Automatic.INHERIT_FROM_PARENT)
+        project = types.SimpleNamespace(stages=[parent, child])
+        self.assertTrue(stage_argument_uses_option(project, child, Argument.interpreter.name,
+                                                   {Automatic.GENERATE_AUTOMATICALLY}))
+        parent.parent, parent.interpreter = child_id, Automatic.INHERIT_FROM_PARENT
+        self.assertFalse(stage_argument_uses_option(project, child, Argument.interpreter.name,
+                                                    {Automatic.GENERATE_AUTOMATICALLY}))
+
+    def test_automatic_option_detection_handles_options_joined_with_custom_values(self):
+        parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+        parent = types.SimpleNamespace(id=parent_id, cflags=Automatic.GENERATE_AUTOMATICALLY)
+        child = types.SimpleNamespace(id=child_id, parent=parent_id,
+                                      cflags=[Automatic.INHERIT_FROM_PARENT, '-O3'])
+        project = types.SimpleNamespace(stages=[parent, child])
+        self.assertTrue(stage_argument_uses_option(project, child, 'cflags',
+                                                   {Automatic.GENERATE_AUTOMATICALLY}))
+        child.cflags = [Automatic.INHERIT_FROM_RELENG_TEMPLATE, '-O3']
+        self.assertTrue(stage_argument_uses_option(project, child, 'cflags',
+                                                   {Automatic.INHERIT_FROM_RELENG_TEMPLATE}))
 
 
 if __name__ == '__main__':

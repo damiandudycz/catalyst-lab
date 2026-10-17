@@ -1,9 +1,9 @@
 from __future__ import annotations
 import uuid
+import weakref
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import Callable
 from gi.repository import GLib
 from .event_bus import EventBus
 from .multistage_process import MultiStageProcess, MultiStageProcessEvent, MultiStageProcessState
@@ -58,7 +58,7 @@ class BuildQueue:
         self.paused = False
         self.pause_reason: str | None = None
         self._check_scheduled = False
-        self._observed: set[int] = set()
+        self._observed: weakref.WeakSet = weakref.WeakSet()
         MultiStageProcess.event_bus.subscribe(MultiStageProcessEvent.STARTED_PROCESSES_CHANGED, self._on_processes_changed)
 
     def _changed(self):
@@ -116,14 +116,14 @@ class BuildQueue:
     def _on_processes_changed(self, *args):
         # Running builds are observed, queue continues when they finish.
         build = running_build()
-        if build is not None and id(build) not in self._observed:
-            self._observed.add(id(build))
+        if build is not None and build not in self._observed:
+            self._observed.add(build)
             build.event_bus.subscribe(MultiStageProcessEvent.STATE_CHANGED, self._on_build_state_changed)
         self._schedule_check()
 
     def _on_build_state_changed(self, *args):
         from .repository import Repository
-        build = next((build for build in MultiStageProcess.started_processes if id(build) in self._observed
+        build = next((build for build in MultiStageProcess.started_processes if build in self._observed
                       and build.status == MultiStageProcessState.FAILED), None)
         if build is not None and not getattr(build, "_queue_failure_handled", False):
             build._queue_failure_handled = True

@@ -1,17 +1,20 @@
 from __future__ import annotations
-import os, re, threading
+import re, threading
+from dataclasses import replace
 from gi.repository import Gtk, Gdk, Adw, GLib, Pango
-from .qemu_run import QemuRun, QemuRunEvent, QemuBuildKind, qemu_support, stage_image_ready, stage_image_directory, stage_image_script
+from .qemu_run import (QemuRun, QemuRunEvent, QemuBuildKind, qemu_support, stage_image_ready,
+                       create_stage_image_directory, cleanup_stage_image_directory)
 from .apple_virtualization import AppleVirtualizationRun, apple_support
 from .vnc_view import VncView
 from .cl_toggle_group import CLToggle, CLToggleGroup
-from .usage_graph import UsageGraph, USAGE_INTERVAL_SECONDS
-from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessStageState, MultiStageProcessEvent, MultiStageProcessState
+from .usage_graph import USAGE_INTERVAL_SECONDS, usage_row, format_gib
 from .app_events import AppEvents, app_event_bus
+from .qemu_run import QemuImagePreparation
+from .multistage_process import MultiStageProcessEvent, MultiStageProcessStageEvent, MultiStageProcessState
 
 # ------------------------------------------------------------------------------
-# Build running in QEMU: screen of machine (VNC), its serial console and QEMU log, with power controls. Stage gets
-# disk image made first (once, kept in the library cache).
+# Build running in QEMU: screen of machine (VNC), its serial console and QEMU log, with power controls. A pristine stage
+# image is cached per build; each run gets a writable copy in Library/Temporary that is cleaned up when it stops.
 
 _ANSI = re.compile(r"\x1b\[[0-9;?=<>:]*[A-Za-z]|\x1b[()][A-Za-z0-9]|\x1b[=>78]|\r")
 
@@ -19,10 +22,6 @@ _ANSI = re.compile(r"\x1b\[[0-9;?=<>:]*[A-Za-z]|\x1b[()][A-Za-z0-9]|\x1b[=>78]|\
 def _visible_serial_text(text: str) -> str:
     text = _ANSI.sub("", text)
     return "".join(char for char in text if char in "\n\t" or char.isprintable())
-
-def _gib(size: int) -> str:
-    return f"{size / 1024 ** 3:.1f} GiB"
-
 
 def present_qemu_run(run: QemuRun):
     """Show an existing VM view, or create a fresh view attached to the running machine."""
@@ -45,76 +44,23 @@ def present_qemu_run(run: QemuRun):
     elif window is not None:
         window.present()
 
-class QemuImagePreparation(MultiStageProcess):
-    """Creates disk image of stage for QEMU (in virtual machine on macOS, as root on Linux)."""
-
-    def __init__(self, project_directory, build, support):
-        self.project_directory = project_directory
-        self.project_id = project_directory.id if project_directory else None
-        self.build = build
-        self.support = support
-        super().__init__(title="Test VM disk image")
-
-    def setup_stages(self):
-        self.stages.append(_StepImage(multistage_process=self))
-
-    def name(self) -> str:
-        return self.build.stage_name
-
-    def complete_process(self, success: bool):
-        pass
-
-class _StepImage(MultiStageProcessStage):
-    def __init__(self, multistage_process):
-        super().__init__(name="Create disk image", description="Extracts stage to a disk image for testing",
-                         multistage_process=multistage_process)
-
-    def start(self):
-        super().start()
-        process = self.multistage_process
-        connection = None
-        try:
-            from .deploy_image import image_connection
-            build = process.build
-            if not process.support.kernel:
-                raise RuntimeError("Stage has no kernel to boot")
-            directory = stage_image_directory(build, process.support.backend)
-            os.makedirs(directory, exist_ok=True)
-            connection = image_connection(process.project_directory)
-            if error := connection.connect():
-                raise RuntimeError(error)
-            # Size: stage unpacked (about 4 times its archive) and free space, sparse file takes only used space.
-            size = max(8 << 30, (os.path.getsize(build.artifact_path) * 5 // (1 << 30) + 4) << 30)
-            script = stage_image_script(build.artifact_path, directory, size, process.support.kernel,
-                                        process.support.initramfs)
-            if not connection.run(script, self.log):
-                raise RuntimeError("Failed to create disk image")
-            self.complete(MultiStageProcessStageState.COMPLETED)
-        except Exception as e:
-            print(f"Failed to create QEMU image: {e}")
-            self.complete(MultiStageProcessStageState.FAILED)
-        finally:
-            if connection is not None:
-                try:
-                    connection.close()
-                except Exception:
-                    pass
-
 class QemuRunView(Gtk.Box):
     """Shows a QEMU machine; closing the view detaches it without stopping the machine."""
 
     def __init__(self, project_directory, build, content_navigation_view: Adw.NavigationView | None = None,
                  memory_mib: int = 4096, cpus: int = 4, start_immediately: bool = False,
-                 run: QemuRun | None = None, backend: str = "qemu"):
+                 run: QemuRun | None = None, backend: str = "qemu", support=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.project_directory = project_directory
         self.build = build
         self.backend = "apple" if isinstance(run, AppleVirtualizationRun) else backend
         self.backend_name = "Apple Virtualization" if self.backend == "apple" else "QEMU"
         self.apple = apple_support(project_directory, build) if self.backend == "apple" else None
-        self.support = run.support if run is not None else (
+        self.support = run.support if run is not None else (support or (
             self.apple.support if self.apple and self.apple.support else
-            qemu_support(project_directory, build, check_runtime=self.backend == "qemu"))
+            qemu_support(project_directory, build, check_runtime=self.backend == "qemu")))
+        if self.apple is not None and support is not None:
+            self.apple = replace(self.apple, support=self.support)
         self.run: QemuRun | None = None
         self._serial_pending = ""
         self._auto_console_detection = False
@@ -142,11 +88,16 @@ class QemuRunView(Gtk.Box):
         self.status_label = Gtk.Label(xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
         self.status_label.add_css_class("caption")
         bar.append(self.status_label)
+        self.cancel_start_button = Gtk.Button(label="Cancel startup", icon_name="process-stop-symbolic",
+                                              tooltip_text="Cancel virtual machine startup", visible=False)
+        self.cancel_start_button.add_css_class("flat")
+        self.cancel_start_button.connect("clicked", self._cancel_vm_startup)
+        bar.append(self.cancel_start_button)
         self.buttons = []
         for icon, tooltip, handler in (("system-shutdown-symbolic", "Power off (ACPI, system shuts down)", lambda: self.run.power_off()),
                                        ("view-refresh-symbolic", "Reset", lambda: self.run.reset()),
                                        ("input-keyboard-symbolic", "Send Ctrl+Alt+Del", lambda: self.run.send_ctrl_alt_delete()),
-                                       ("media-playback-stop-symbolic", "Stop machine immediately", lambda: self.run.stop())):
+                                       ("media-playback-stop-symbolic", "Cancel startup or stop machine immediately", lambda: self.run.stop())):
             button = Gtk.Button(icon_name=icon, tooltip_text=tooltip, valign=Gtk.Align.CENTER, sensitive=False)
             button.add_css_class("flat")
             button.connect("clicked", lambda _, handler=handler: self.run and GLib.idle_add(lambda: (handler(), False)[1]))
@@ -235,10 +186,10 @@ class QemuRunView(Gtk.Box):
             self.usage_memory_row.set_subtitle(f"{(run.memory_mib if run else memory_mib) / 1024:g} GiB")
             description = "CPU and memory show configured limits. Live host CPU and memory usage is unavailable for Apple Virtualization."
         else:
-            self.usage_cpu_row = self._usage_row("CPU (host)")
-            self.usage_memory_row = self._usage_row("Memory (resident)")
+            self.usage_cpu_row = usage_row("CPU (host)")
+            self.usage_memory_row = usage_row("Memory (resident)")
             description = "Host-side usage."
-        self.usage_disk_row = self._usage_row("Disk storage (host)")
+        self.usage_disk_row = usage_row("Disk storage (host)")
         self.usage_disk_row.set_visible(self.support.kind == QemuBuildKind.STAGE)
         if self.support.kind == QemuBuildKind.STAGE:
             description += " Disk shows storage allocated to the VM's writable image, not free space inside the guest."
@@ -374,8 +325,13 @@ class QemuRunView(Gtk.Box):
 
     def _show_progress(self, text: str):
         self._screen_widget.remove_css_class("qemu-screen")
-        preparing = text.startswith("Preparing disk image")
-        self.status_heading.set_label("Preparing disk image" if preparing else "Starting virtual machine")
+        if text.startswith("Preparing disk image"):
+            heading = "Preparing disk image"
+        elif text.startswith("Building custom kernel"):
+            heading = "Building custom kernel"
+        else:
+            heading = "Starting virtual machine"
+        self.status_heading.set_label(heading)
         detail = text.split(" · ", 1)[-1] if " · " in text else text
         self.screen_status.set_label(detail)
         self.screen_status.set_visible(True)
@@ -403,12 +359,12 @@ class QemuRunView(Gtk.Box):
             GLib.source_remove(self._progress_timer)
             self._progress_timer = None
 
-    def _set_screen_status(self, text: str):
+    def _set_screen_status(self, text: str, heading: str | None = None):
         self.screen_status.set_label(text)
         self.screen_status.set_visible(bool(text))
         if text:
             self._screen_widget.remove_css_class("qemu-screen")
-            self.status_heading.set_label("Virtual machine")
+            self.status_heading.set_label(heading or "Virtual machine")
             self._screen_widget.set_visible_child_name("status")
         else:
             self._screen_widget.set_visible_child_name("native" if self.backend == "apple" else "display")
@@ -422,7 +378,10 @@ class QemuRunView(Gtk.Box):
 
     def _set_running(self, running: bool):
         ready = running and (self.backend == "qemu" or self.run.ready)
-        self.control_bar.set_visible(ready)
+        starting = running and not ready
+        self.control_bar.set_visible(ready or starting)
+        self.cancel_start_button.set_visible(starting)
+        self.cancel_start_button.set_sensitive(starting)
         if ready:
             self._hide_progress()
             self._set_screen_status("")
@@ -432,6 +391,14 @@ class QemuRunView(Gtk.Box):
             self._screen_widget.add_css_class("qemu-screen")
         else:
             self._screen_widget.remove_css_class("qemu-screen")
+
+    def _cancel_vm_startup(self, *_):
+        run = self.run
+        if run is None or not run.is_running:
+            return
+        self.cancel_start_button.set_sensitive(False)
+        self.cancel_start_button.set_label("Canceling…")
+        run.stop()
 
     def _attach_run(self, run: QemuRun):
         self.run = run
@@ -593,8 +560,12 @@ class QemuRunView(Gtk.Box):
             self._set_status(availability.reason or "Backend is unavailable")
             self._set_screen_status(availability.reason or "Backend is unavailable")
             return
+        if self.support.kind == QemuBuildKind.STAGE and not self.support.image_directory:
+            self.support = replace(self.support, image_directory=create_stage_image_directory())
+            if self.apple is not None:
+                self.apple = replace(self.apple, support=self.support)
         self._auto_console_detection = True
-        if self.support.kind == QemuBuildKind.STAGE and not stage_image_ready(self.build, self.support):
+        if self.support.kind == QemuBuildKind.STAGE and not stage_image_ready(self.support):
             self._prepare_image()
             return
         self._show_progress("Starting virtual machine…")
@@ -617,6 +588,7 @@ class QemuRunView(Gtk.Box):
             self._auto_console_detection = False
             self._detach_run()
             self.run = None
+            cleanup_stage_image_directory(self.support.image_directory)
             self._set_status(f"Failed to start {self.backend_name}: {e}")
             self._set_screen_status(f"Failed to start {self.backend_name}: {e}")
             return
@@ -628,9 +600,8 @@ class QemuRunView(Gtk.Box):
 
     def _prepare_image(self):
         self._set_status("Preparing disk image…")
-        self._show_progress("Preparing disk image · This is only needed the first time you run this build.")
+        self._show_progress("Preparing disk image · Creating a writable VM image.")
         self.preparation = QemuImagePreparation(self.project_directory, self.build, self.support)
-        from .multistage_process import MultiStageProcessStageEvent
         # Kept: event bus refers to handlers weakly.
         self._preparation_log = lambda line: GLib.idle_add(lambda: (self._on_preparation_output(line), False)[1])
         for stage in self.preparation.stages:
@@ -657,6 +628,14 @@ class QemuRunView(Gtk.Box):
             self.progress_bar.set_fraction(percent / 100)
             self.progress_bar.set_show_text(False)
             return
+        if line.startswith("Emerging custom kernel package "):
+            self._set_status("Building custom kernel…")
+            self._show_progress("Building custom kernel · Starting Portage emerge.")
+            return
+        if line.startswith(">>> Emerging "):
+            self._set_status("Building custom kernel…")
+            self._show_progress(f"Building custom kernel · {line}")
+            return
         # Image preparation output is repetitive shell chatter, not VM output. Keep it out
         # of the VM log tab; extraction progress is shown in the status view above.
 
@@ -668,8 +647,15 @@ class QemuRunView(Gtk.Box):
                 self.start()
             elif state == MultiStageProcessState.FAILED:
                 self._hide_progress()
-                self._set_status("Failed to prepare disk image, see Log tab")
-                self._set_screen_status("Failed to prepare disk image")
+                reason = self.preparation.failure_reason if self.preparation else None
+                self._set_status(f"Failed to prepare VM image: {reason}" if reason else
+                                 "Failed to prepare VM image; see Log tab for details")
+                self._set_screen_status(reason or "See the Log tab for details.",
+                                        heading="VM image preparation failed")
+                if self.preparation and self.preparation.stages:
+                    lines = self.preparation.stages[-1].output_lines
+                    self.log_view.get_buffer().set_text("\n".join(lines[-200:]))
+                    self._update_log_page()
             return False
         GLib.idle_add(update)
 
@@ -728,13 +714,6 @@ class QemuRunView(Gtk.Box):
         has_output = self.log_view.get_buffer().get_char_count() > 0
         self.log_stack.set_visible_child_name("output" if has_output else "empty")
 
-    @staticmethod
-    def _usage_row(title: str) -> Adw.ActionRow:
-        row = Adw.ActionRow(title=title, subtitle="Waiting for sample…")
-        row.graph = UsageGraph()
-        row.add_suffix(row.graph)
-        return row
-
     def _start_usage_updates(self):
         if self._usage_timer is None:
             self._usage_timer = GLib.timeout_add_seconds(USAGE_INTERVAL_SECONDS, self._read_usage)
@@ -774,7 +753,7 @@ class QemuRunView(Gtk.Box):
             self.usage_cpu_row.set_subtitle(f"{cpu_fraction:.0%} of {run.cpus} vCPUs")
             memory_limit = run.memory_mib * 1024 * 1024
             self.usage_memory_row.graph.add(min(resident_bytes / memory_limit, 1) if memory_limit else 0)
-            self.usage_memory_row.set_subtitle(f"{_gib(resident_bytes)} of {run.memory_mib / 1024:.1f} GiB configured")
+            self.usage_memory_row.set_subtitle(f"{format_gib(resident_bytes)} of {run.memory_mib / 1024:.1f} GiB configured")
         if self.support.kind == QemuBuildKind.STAGE:
             if disk_usage is None:
                 self.usage_disk_row.set_subtitle("Storage sample unavailable")
@@ -783,7 +762,7 @@ class QemuRunView(Gtk.Box):
                 fraction = min(allocated_bytes / virtual_bytes, 1) if virtual_bytes else 0
                 self.usage_disk_row.graph.add(fraction)
                 self.usage_disk_row.set_subtitle(
-                    f"{_gib(allocated_bytes)} used on host of {_gib(virtual_bytes)} virtual"
+                    f"{format_gib(allocated_bytes)} used on host of {format_gib(virtual_bytes)} virtual"
                 )
         return False
 

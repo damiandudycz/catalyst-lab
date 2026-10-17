@@ -4,8 +4,9 @@ New projects can be created from a template. A template describes the stages of 
 Portage configuration), and can have options, like architecture or init system, that change what is created.
 
 Official templates live in [`data/project_templates`](../data/project_templates) in the Catalyst Lab repository. The
-app loads the current template list and definitions from the `main` branch when opening the template chooser. It does
-not use local copies bundled with the app. Existing projects created from these templates can receive template
+app loads the current template list and definitions from the `main` branch when opening the template chooser. When
+launched with `./run.sh`, it uses the checkout's current branch instead; that branch must exist on GitHub. It does not
+use local copies bundled with the app. Existing projects created from these templates can receive template
 changes through **Update template**. The app checks the Git tree hash of only that template's directory. Changes
 elsewhere in the application repository do not make the template appear out of date. When an update is opened, the app
 downloads only the selected template directory and its files.
@@ -15,7 +16,8 @@ Projects created from external template repositories keep their existing update 
 applies to projects created from these templates going forward; prior template project metadata is left unchanged.
 
 Templates can't run code. Values are generated with small expressions (see [Expressions](#expressions)) that only
-allow a fixed set of operations.
+allow a fixed set of operations. The evaluator is isolated in `src/objects/project/project_template_expressions.py`;
+template parsing, generation, and repository operations are in `src/objects/project/project_template.py`.
 
 ## Repository layout
 
@@ -38,7 +40,7 @@ than 10 MB, or more than 50 MB in total.
 ## template.toml
 
 ```toml
-format = 1                      # Optional, version of template format.
+format = 1                      # Required, version of template format.
 min_app_version = "2.0.0"       # Optional, oldest version of Catalyst Lab that supports the template.
 name = "Gentoo release"         # Shown in list of templates and used as default project name.
 description = "Stages built like official Gentoo releases."
@@ -308,6 +310,6 @@ Templates are added to Catalyst Lab with a pull request:
 2. Open a pull request describing the template, its supported architectures, and the Releng specs it was checked with.
 
 Use `min_app_version` when a template needs features of a newer Catalyst Lab. The app checks updates by comparing
-the Git tree hash of each template directory with the matching path on `main`, so unrelated code commits do not
-trigger template updates. The check downloads directory metadata only; template files are fetched only when the user
-opens an update.
+the Git tree hash of each template directory with the matching path on `main` (or the current branch when launched
+with `./run.sh`), so unrelated code commits do not trigger template updates. The check downloads directory metadata
+only; template files are fetched only when the user opens an update.

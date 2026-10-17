@@ -71,7 +71,7 @@ class NetworkSettings:
                 return "Address needs prefix length, eg. 192.168.1.10/24"
             if self.gateway:
                 ipaddress.ip_address(self.gateway)
-            for server in self.dns.replace(",", " ").split():
+            for server in self.dns_servers:
                 ipaddress.ip_address(server)
         except ValueError as e:
             return f"Invalid address: {e}"

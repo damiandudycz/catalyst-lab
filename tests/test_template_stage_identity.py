@@ -93,12 +93,12 @@ target = "stage3"
         switched_back = self.apply(template, 'openrc', systemd)
         self.assertTrue(set(systemd.values()).isdisjoint(switched_back.values()))
 
-    def test_legacy_templates_keep_ids_and_adoption_invalidates_old_builds(self):
-        legacy = self.apply(self.template(suffix=None), 'openrc')
-        self.assertEqual(set(legacy), {'stage1', 'stage3'})
-        self.assertEqual(legacy, self.apply(self.template(suffix=None), 'openrc', legacy))
-        updated = self.apply(self.template(), 'openrc', legacy)
-        self.assertTrue(set(legacy.values()).isdisjoint(updated.values()))
+    def test_adding_identity_suffix_changes_generated_stage_ids(self):
+        unsuffixed = self.apply(self.template(suffix=None), 'openrc')
+        self.assertEqual(set(unsuffixed), {'stage1', 'stage3'})
+        self.assertEqual(unsuffixed, self.apply(self.template(suffix=None), 'openrc', unsuffixed))
+        suffixed = self.apply(self.template(), 'openrc', unsuffixed)
+        self.assertTrue(set(unsuffixed.values()).isdisjoint(suffixed.values()))
 
     def test_invalid_suffix_is_rejected(self):
         for suffix in ['', '{{ [] }}', '{{ True }}', '{{ None }}']:

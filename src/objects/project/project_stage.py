@@ -3,33 +3,31 @@ import os, subprocess, ast, uuid, tomllib
 from functools import lru_cache
 from .repository import Serializable
 from .toolset import Toolset, ToolsetApplication, ToolsetEnv
-from .root_helper_client import RootHelperClient
 from .releng_directory import RelengDirectory
-from .event_bus import EventBus, SharedEvent
+from .event_bus import EventBus
 from .architecture import Architecture
 from .snapshot import PortageProfile
-from .snapshot import Snapshot
 from .repository import Repository
 from typing import Any
 from dataclasses import dataclass
-from typing import Self, FrozenSet
+from typing import Self
 from enum import Enum, auto
-from collections.abc import Iterable
 from .project_stage_arguments import (
     StageArguments, StageArgumentTargetDetails, StageArgumentOption,
-    StageArgumentType, StageArgumentDetails
+    StageArgumentDetails, parent_stage
 )
 from .project_stage_compression_mode import StageCompressionMode
 from .project_stage_argument_serialization import ProjectStageArgumentSerialization
 from .project_stage_automatic_option import StageAutomaticOption
 from .project_stage_portage_confdir import (
-    portage_confdir_options, default_portage_confdir_sources, root_overlay_options, default_root_overlay_sources, FILE_OVERLAY_ARGUMENTS,
+    portage_confdir_options, default_portage_confdir_sources, root_overlay_options, FILE_OVERLAY_ARGUMENTS,
     ROOT_OVERLAY_ARGUMENTS, root_overlay_argument
 )
+from .tree_node import walk_tree
 
 class ProjectStage(Serializable):
 
-    def __init__(self, id: uuid.UUID | None = None, parent_id: uuid.UUID | None = None, name: str = None, target_name: str | None = None, releng_template_name: str | None = None, profile: PortageProfile | None = None, data: dict = {}):
+    def __init__(self, id: uuid.UUID | None = None, parent_id: uuid.UUID | None = None, name: str = None, target_name: str | None = None, releng_template_name: str | None = None, profile: PortageProfile | None = None, data: dict | None = None):
         self.event_bus = EventBus[ProjectStageEvent]()
         # Required variables in case not set in json:
         self.id = id or uuid.uuid4()
@@ -39,7 +37,7 @@ class ProjectStage(Serializable):
         self.releng_template = releng_template_name
         self.profile = profile
         # Load available values from data dictionary
-        for key, value in data.items():
+        for key, value in (data or {}).items():
             setattr(self, key, ProjectStageArgumentSerialization.deserialize(value))
 
     # Quick access properties:
@@ -47,16 +45,11 @@ class ProjectStage(Serializable):
     # --------------------------------------------------------------------------
 
     def serialize(self) -> dict:
-        attrs = self.__dict__.copy()
-        attrs.pop('event_bus', None)
-        new_attrs = attrs.copy()
-        # Map types to serialized format
-        for key, value in attrs.items():
-            if value is None:
-                new_attrs.pop(key, None)
-            else:
-                new_attrs[key] = ProjectStageArgumentSerialization.serialize(value)
-        return new_attrs
+        return {
+            key: ProjectStageArgumentSerialization.serialize(value)
+            for key, value in self.__dict__.items()
+            if key != "event_bus" and value is not None
+        }
 
     @classmethod
     def init_from(cls, data: dict) -> Self:
@@ -268,8 +261,7 @@ def target_argument_names(toolset: Toolset | None, target_name: str) -> frozense
 def parent_supports_argument(project_directory, stage, argument: StageArgumentDetails | None) -> bool:
     """Stage has parent whose target has the argument too, so its value can be inherited. Root overlay of parent is
     root overlay argument of its target (eg. stage4/root_overlay for livecd/root_overlay)."""
-    parent_id = getattr(stage, StageArgumentDetails.parent.name, None)
-    parent = next((item for item in project_directory.stages if item.id == parent_id), None) if parent_id else None
+    parent = parent_stage(project_directory, stage)
     if parent is None or argument is None:
         return False
     if argument in ROOT_OVERLAY_ARGUMENTS:
@@ -443,7 +435,7 @@ def apply_default_stage_arguments(project_directory, stage: ProjectStage) -> dic
             applied[name] = getattr(stage, argument.attribute_name)
             continue
         if argument.details in FILE_OVERLAY_ARGUMENTS:
-            setattr(stage, argument.attribute_name, default_root_overlay_sources(
+            setattr(stage, argument.attribute_name, default_portage_confdir_sources(
                 has_parent=has_parent and parent_supports_argument(project_directory, stage, argument.details)))
             applied[name] = getattr(stage, argument.attribute_name)
             continue
@@ -570,35 +562,12 @@ def load_releng_templates(releng_directory: RelengDirectory, stage_name: str, ar
     return templates
 
 def load_stage_possible_seeds(stage: ProjectStage, project_directory: ProjectDirectory):
-    def _get_descendant_ids(stage: ProjectStage, project_directory: ProjectDirectory) -> list[int]:
-        project_stages_tree = project_directory.stages_tree()
-        def find_node(nodes: list, target_id: int):
-            for node in nodes:
-                if node.value.id == target_id:
-                    return node
-                result = find_node(node.children, target_id)
-                if result:
-                    return result
-            return None
-        def collect_ids(node) -> list[int]:
-            ids = []
-            for child in node.children:
-                ids.append(child.value.id)
-                ids.extend(collect_ids(child))
-            return ids
-        root_node = find_node(project_stages_tree, stage.id)
-        if not root_node:
-            return []
-        return collect_ids(root_node)
-    child_ids = _get_descendant_ids(stage=stage, project_directory=project_directory)
-    available_stages = project_directory.stages[:]
-    values = [
-        s for s in available_stages
+    root_node = next((node for node, _ in walk_tree(project_directory.stages_tree())
+                      if node.value.id == stage.id), None)
+    child_ids = ({node.value.id for child in root_node.children for node, _ in walk_tree([child])}
+                 if root_node else set())
+    return [
+        s for s in project_directory.stages
         if s.id not in child_ids and s.id != stage.id
     ]
-    selected = next(
-        (stage for stage in available_stages if stage.id == stage.parent),
-        None
-    )
-    return values
 

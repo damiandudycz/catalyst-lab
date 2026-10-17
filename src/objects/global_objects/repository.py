@@ -1,15 +1,19 @@
 from __future__ import annotations
-from typing import Protocol, Self, TypeVar, Generic, Type, Callable
+from typing import Protocol, Self, TypeVar, Generic, Type, Callable, final
+from functools import wraps
 import json
 import os
 from .runtime_env import RuntimeEnv
 from .event_bus import EventBus
 from enum import Enum, auto
-from typing import final
 
 # Library: folder with all app data (toolsets, snapshots, projects, builds...) and repository metadata. User preferences
 # are stored in the system config directory, while the selected Library path is stored there as well.
 DEFAULT_LIBRARY_DIRECTORY = "~/CatalystLab"
+
+def resolve_path(path: str) -> str:
+    """Expand a configured path and resolve its symlinks."""
+    return os.path.realpath(os.path.expanduser(path))
 
 def _system_config_directory() -> str:
     if RuntimeEnv.current() == RuntimeEnv.FLATPAK:
@@ -57,10 +61,7 @@ def library_path(*names: str) -> str:
 
 def preferences_file() -> str:
     """Per-user preferences, independent of the selected Library."""
-    config = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    if RuntimeEnv.current() == RuntimeEnv.FLATPAK:
-        config = os.path.expanduser(f"~/.var/app/{os.environ.get('FLATPAK_ID')}/config")
-    return os.path.join(config, "catalystlab", "preferences.json")
+    return os.path.join(_system_config_directory(), "catalystlab", "preferences.json")
 
 class Serializable(Protocol):
     def serialize(self) -> dict: ...
@@ -68,6 +69,14 @@ class Serializable(Protocol):
     def init_from(cls, data: dict) -> Self: ...
 
 T = TypeVar("T", bound=Serializable)
+
+def _save_after(method):
+    @wraps(method)
+    def tracked(self, *args, **kwargs):
+        result = method(self, *args, **kwargs)
+        self._trigger_save()
+        return result
+    return tracked
 
 class TrackedList(list[T]):
     def __init__(self, initial: list[T], save_callback):
@@ -78,46 +87,18 @@ class TrackedList(list[T]):
         if callable(self._save_callback):
             self._save_callback()
 
-    def append(self, item: T):
-        super().append(item)
-        self._trigger_save()
-
-    def extend(self, iterable):
-        super().extend(iterable)
-        self._trigger_save()
-
-    def insert(self, index: int, item: T):
-        super().insert(index, item)
-        self._trigger_save()
-
-    def remove(self, item: T):
-        super().remove(item)
-        self._trigger_save()
-
-    def pop(self, index: int = -1):
-        item = super().pop(index)
-        self._trigger_save()
-        return item
-
-    def clear(self):
-        super().clear()
-        self._trigger_save()
-
-    def __setitem__(self, key, value):
-        super().__setitem__(key, value)
-        self._trigger_save()
-
-    def __delitem__(self, key):
-        super().__delitem__(key)
-        self._trigger_save()
-
-    def sort(self, *args, **kwargs):
-        super().sort(*args, **kwargs)
-        self._trigger_save()
-
-    def reverse(self):
-        super().reverse()
-        self._trigger_save()
+    append = _save_after(list.append)
+    extend = _save_after(list.extend)
+    insert = _save_after(list.insert)
+    remove = _save_after(list.remove)
+    pop = _save_after(list.pop)
+    clear = _save_after(list.clear)
+    __setitem__ = _save_after(list.__setitem__)
+    __delitem__ = _save_after(list.__delitem__)
+    __iadd__ = _save_after(list.__iadd__)
+    __imul__ = _save_after(list.__imul__)
+    sort = _save_after(list.sort)
+    reverse = _save_after(list.reverse)
 
 @final
 class RepositoryEvent(Enum):
@@ -127,7 +108,7 @@ class Repository(Generic[T]):
 
     registered_aliases: list[str] = []
 
-    def __init__(self, cls: Type[T], collection: bool = False, alias: str | None = None, default_factory: Callable[[None],T] | None = None):
+    def __init__(self, cls: Type[T], collection: bool = False, alias: str | None = None, default_factory: Callable[[], T] | None = None):
         self._cls = cls
         self._collection = collection
         self._alias = alias or (cls.__name__.lower() if not collection else f"{cls.__name__.lower()}_list")
@@ -148,8 +129,6 @@ class Repository(Generic[T]):
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 with open(path, "w", encoding="utf-8") as f:
                     json.dump(self._value.serialize(), f, indent=2)
-        except Exception as e:
-            raise e
         finally:
             self.event_bus.emit(RepositoryEvent.VALUE_CHANGED, self._value)
 
@@ -162,11 +141,8 @@ class Repository(Generic[T]):
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return self._cls.init_from(data)
-        except (FileNotFoundError, json.JSONDecodeError, ValueError, AttributeError):
+        except (FileNotFoundError, ValueError, AttributeError):
             return self._default_factory()
-
-    def reset(self):
-        self._delete()
 
     def reload(self):
         """Reload values after switching the active Library without saving stale values over it."""
@@ -179,6 +155,8 @@ class Repository(Generic[T]):
     @value.setter
     def value(self, new_value: T | list[T]):
         if self._collection:
+            if new_value is self._value:
+                return
             if isinstance(new_value, TrackedList):
                 self._value = new_value
                 self._value._save_callback = self.save  # update callback if needed

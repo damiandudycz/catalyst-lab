@@ -78,8 +78,13 @@ from catalyst.main import main
 main(sys.argv[1:])
 '''
 
+def catalyst_snapshot_command() -> str:
+    """Generate a Gentoo snapshot using Catalyst's normal command."""
+    return "catalyst -s stable"
+
 def stage_build_session_script(executor, toolset_path: str, bindings: list[tuple[str, str]], command: str,
-                               diagnostics_command: str | None = None, synced_caches: list[tuple[str, str]] | None = None) -> str:
+                               diagnostics_command: str | None = None, synced_caches: list[tuple[str, str]] | None = None,
+                               patch_catalyst_stage1: bool = False) -> str:
     """Script running command in toolset root (overlay over extracted toolset, changes are discarded), with host
     folders bound at given paths (host path, path in toolset). Diagnostics command runs after failure.
     Synced caches (saved path, path used by build) are mounted at used path as overlay over saved path, and changes
@@ -88,6 +93,28 @@ def stage_build_session_script(executor, toolset_path: str, bindings: list[tuple
     session = os.path.join(sessions_directory(executor), f"build-{uuid.uuid4().hex}")
     q = shlex.quote
     binds = "\n".join(f"bind {q(host)} {q(target)}" for host, target in bindings)
+    # Materialize bind mountpoints in the overlay upper layer before mounting the overlay. Creating a deeply nested
+    # mountpoint directly in the merged view can fail with EOVERFLOW on the machine's SquashFS lower layer (notably
+    # /var/tmp/catalyst/snapshots). Copy directory modes from existing lower-layer ancestors so this does not change
+    # permissions such as /var/tmp's sticky bit.
+    prepare_bind_targets = "\n".join(f"prepare_bind_target {q(target)} || exit 1" for _host, target in bindings)
+    stage1_patch = """python3 - "$TOOLSET" "$UPPER" <<'PATCH_TOOLSET_FILE'
+import os, shutil, sys
+toolset, upper = sys.argv[1:]
+relative = "/usr/share/catalyst/targets/stage1/build.py"
+old, new = 'sys.stdout.write(b + " ")', 'sys.stdout.write(str(b) + " ")'
+source = os.path.join(toolset, relative.lstrip("/"))
+target = os.path.join(upper, relative.lstrip("/"))
+if os.path.isfile(source):
+    with open(source, encoding="utf-8") as file:
+        contents = file.read()
+    if old in contents:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as file:
+            file.write(contents.replace(old, new))
+        shutil.copystat(source, target)
+        print(f"Patched toolset file in writable overlay: {relative}")
+PATCH_TOOLSET_FILE""" if patch_catalyst_stage1 else ""
     # Saved caches are lower layer of overlay (read from shared folder without copying), changes go to upper layer in
     # session and are copied back after build: new and changed files, and deletions (whiteouts, character devices).
     caches = list(enumerate(synced_caches or []))
@@ -104,6 +131,7 @@ def stage_build_session_script(executor, toolset_path: str, bindings: list[tuple
     return f"""set -u
 SESSION={q(session)}
 ROOT="$SESSION/root"; UPPER="$SESSION/upper"; WORK="$SESSION/work"
+TOOLSET={q(toolset_path)}
 cleanup() {{
     cd /
     umount -R -l "$ROOT" 2>/dev/null
@@ -120,11 +148,33 @@ save_cache() {{
     save_cache_changes "$1" "$3"
 }}
 mkdir -p "$ROOT" "$UPPER" "$WORK" || exit 1
+prepare_bind_target() {{
+    local current="" component mode
+    local -a components
+    IFS=/ read -r -a components <<< "${{1#/}}"
+    for component in "${{components[@]}}"; do
+        current="$current/$component"
+        mkdir -p "$UPPER$current" || return 1
+        if [ -d "$TOOLSET$current" ]; then
+            mode=$(stat -c %a "$TOOLSET$current") || return 1
+            chmod "$mode" "$UPPER$current" || return 1
+        fi
+    done
+}}
+{prepare_bind_targets}
+{stage1_patch}
+mkdir -p "$UPPER/etc" || exit 1
+if [ -d "$TOOLSET/etc" ]; then
+    mode=$(stat -c %a "$TOOLSET/etc") || exit 1
+    chmod "$mode" "$UPPER/etc" || exit 1
+fi
+# Put the VM's resolver file in the writable overlay so it overrides the toolset's possibly dangling systemd-resolved
+# symlink. Writing it into the merged root would try to follow that symlink and leave the chroot without DNS.
+cat /etc/resolv.conf > "$UPPER/etc/resolv.conf" || {{ echo "Failed to configure DNS in toolset"; exit 1; }}
 mount -t overlay overlay -o lowerdir={q(toolset_path)},upperdir="$UPPER",workdir="$WORK" "$ROOT" || exit 1
 mount --rbind /dev "$ROOT/dev" || exit 1
 mount -t proc proc "$ROOT/proc" || exit 1
 mount -t tmpfs tmpfs "$ROOT/tmp" && mount -t tmpfs tmpfs "$ROOT/run" || exit 1
-cp -L /etc/resolv.conf "$ROOT/etc/resolv.conf" 2>/dev/null
 bind() {{
     mkdir -p "$ROOT$2" && mount --rbind "$1" "$ROOT$2" || {{ echo "Failed to bind $1"; exit 1; }}
 }}

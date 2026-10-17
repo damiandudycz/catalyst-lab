@@ -1,9 +1,12 @@
 from __future__ import annotations
-import os, re
+import os
 from dataclasses import dataclass, field
 from enum import Enum
-from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessStageState, MultiStageProcessEvent
-from .ssh_connection import SSHConnection, quote
+from .multistage_process import MultiStageProcess, MultiStageProcessEvent
+from .emerge_progress import EmergeProgress
+from .deploy_step import DeployStep, check_tools_script
+from .ssh_connection import quote
+from .deploy_log import write_log_line
 from .deploy_target import TargetMachine, PartitionPlan, PartitionType
 from .deploy_boot import Bootloader, Kernel, FIRMWARE_PACKAGE, StageContents, packages_script, bootloader_script, grub_platform, CHROOT_SETUP
 from .deploy_system import (
@@ -22,38 +25,6 @@ def local_mount_point() -> str:
     """Root of system installed on disk of this computer, own for every installation."""
     import uuid
     return f"/mnt/catalystlab-deploy-{uuid.uuid4().hex[:8]}"
-
-_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-_EMERGE_PACKAGE = re.compile(r">>> (Emerging|Completed)(?: binary)? \((\d+) of (\d+)\)")
-_EMERGE_JOBS = re.compile(r"Jobs: (\d+) of (\d+) complete")
-
-class EmergeProgress:
-    """Progress of emerge from its output: "(N of M)" of packages, and "Jobs: N of M complete" status lines (both
-    are printed, status lines can lag behind). Progress doesn't go back, until total number of packages changes
-    (next emerge)."""
-
-    def __init__(self):
-        self.total = 0
-        self.completed = 0
-
-    def parse(self, line: str) -> float | None:
-        """Progress when line changes it, otherwise None."""
-        result = None
-        for part in _ANSI.sub("", line).split("\r"):
-            if match := _EMERGE_JOBS.search(part):
-                completed, total = int(match.group(1)), int(match.group(2))
-            elif match := _EMERGE_PACKAGE.search(part):
-                number, total = int(match.group(2)), int(match.group(3))
-                completed = number if match.group(1) == "Completed" else number - 1
-            else:
-                continue
-            if total != self.total: # Next emerge.
-                self.total, self.completed = total, completed
-                result = completed / total
-            elif completed > self.completed:
-                self.completed = completed
-                result = completed / total
-        return result
 
 class DeployRepository(Enum):
     """Gentoo repository installed in deployed system."""
@@ -309,14 +280,7 @@ class DeployInstallation(MultiStageProcess):
         return os.path.join(self.build.path, f"deploy-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{host}.log")
 
     def write_log(self, line: str):
-        if not self.log_path:
-            return
-        try:
-            if self._log_file is None:
-                self._log_file = open(self.log_path, "a", encoding="utf-8", buffering=1)
-            self._log_file.write(line + "\n")
-        except OSError as e:
-            print(f"Failed to write deploy log: {e}")
+        self._log_file = write_log_line(self.log_path, self._log_file, line)
 
     def complete_process(self, success: bool):
         # Partitions stay mounted after failure on LiveCD, so their files can be checked. Disk of this computer is
@@ -349,32 +313,6 @@ class DeployInstallation(MultiStageProcess):
         except Exception as e:
             print(f"Failed to close connection: {e}")
 
-class DeployStep(MultiStageProcessStage):
-    """Step running scripts on machine, canceled by stopping them."""
-    def log(self, line: str):
-        super().log(line)
-        self.multistage_process.write_log(line)
-    def start(self):
-        self.processes = []
-        super().start()
-        self.multistage_process.write_log(f"=== {self.name}")
-        try:
-            self.run()
-            self.complete(MultiStageProcessStageState.COMPLETED)
-        except Exception as e:
-            print(f"Error during '{self.name}': {e}")
-            self.complete(MultiStageProcessStageState.FAILED)
-    def run(self):
-        raise NotImplementedError
-    def remote(self, script: str, error: str):
-        if not self.multistage_process.connection.run(script, self.log, self.processes):
-            raise RuntimeError(error)
-    def cancel(self):
-        super().cancel()
-        for process in getattr(self, "processes", []):
-            if process.poll() is None:
-                process.terminate()
-
 class DeployStepCheck(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Check machine", description="Checks connection and tools needed for installation", multistage_process=multistage_process)
@@ -382,16 +320,11 @@ class DeployStepCheck(DeployStep):
         process = self.multistage_process
         if not process.connection.is_alive():
             raise RuntimeError("Root access ended, start again" if process.machine.local else f"Connection to {process.connection.host} was lost, connect again")
-        tools = " ".join(quote(tool) for tool in process.plan.required_tools())
         if process.machine.local:
             self._check_local_disk()
-        self.remote(f"""
-missing=""
-for tool in {tools}; do command -v "$tool" > /dev/null || missing="$missing $tool"; done
-[ -z "$missing" ] || {{ echo "Missing tools:$missing"; exit 1; }}
-echo "Machine: $(uname -n), $(uname -m), kernel $(uname -r)"
-lsblk {quote(process.plan.disk.path)}
-""", "Machine doesn't have tools needed for installation")
+        script = check_tools_script(process.plan.required_tools())
+        script += f'echo "Machine: $(uname -n), $(uname -m), kernel $(uname -r)"\nlsblk {quote(process.plan.disk.path)}\n'
+        self.remote(script, "Machine doesn't have tools needed for installation")
         if not process.machine.local:
             self._set_clock()
         if not os.path.isfile(process.build.artifact_path or ""):
@@ -541,9 +474,9 @@ class DeployStepPackages(DeployStep):
     def run(self):
         process = self.multistage_process
         platform = grub_platform(process.machine.architecture, process.machine.uefi) if "sys-boot/grub" in process.packages else None
-        script = f"ROOT={quote(process.root)}\n" + packages_script(process.packages, platform, process.contents.init,
-                                                                   generic_initramfs=process.machine.local,
-                                                                   bootloader=process.settings.bootloader)
+        script = f"ROOT={quote(process.root)}\n" + packages_script(
+            process.packages, platform, generic_initramfs=process.machine.local,
+            bootloader=process.settings.bootloader)
         self.remote(script, "Failed to install packages (see output above, machine needs internet connection to download them)")
 
 class DeployStepNetwork(DeployStep):
