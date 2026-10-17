@@ -1,5 +1,5 @@
 from .root_function import root_function
-from .formatters import format_size
+from catalystlab.formatters import format_size
 import os, re, shutil, signal, subprocess, tarfile, tempfile, threading
 from datetime import datetime
 from email.utils import parsedate_to_datetime

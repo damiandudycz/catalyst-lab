@@ -2,7 +2,7 @@ from __future__ import annotations
 import json, re
 from dataclasses import dataclass, field
 from enum import Enum
-from catalystlab.global_objects.formatters import format_size as _format_size
+from catalystlab.formatters import format_size as _format_size
 from .ssh_connection import SSHConnection, quote
 
 # ------------------------------------------------------------------------------

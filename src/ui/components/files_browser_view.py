@@ -1,7 +1,7 @@
 import os
 from gi.repository import Gtk, Adw, GLib
 from .multistage_process_execution_view import AnsiStyle, append_ansi_line
-from .global_objects.formatters import format_size
+from catalystlab.formatters import format_size
 from .scrolled_window import scrolled_window
 
 # ------------------------------------------------------------------------------
