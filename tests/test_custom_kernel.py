@@ -1,5 +1,6 @@
 """Custom VM kernel package selection and safely generated Portage command."""
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import types
@@ -12,11 +13,32 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab.custom_kernel import (copy_kernel_outputs, is_arm64_linux_image,
-                                       kernel_package_build_command, valid_kernel_package,
+                                       kernel_package_build_command, portage_config_setup_command,
+                                       valid_kernel_package,
                                        KERNEL_OUTPUTS_MANIFEST)
 
 
 class CustomKernelTests(unittest.TestCase):
+    def test_portage_config_is_merged_into_writable_run_mount(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base, stage, destination = (Path(temporary, name) for name in ("base", "stage", "portage"))
+            (base / "package.use").mkdir(parents=True)
+            (base / "package.use" / "base").write_text("base setting")
+            (base / "gnupg").mkdir()
+            (base / "gnupg" / "private-key").write_text("secret")
+            (stage / "package.use").mkdir(parents=True)
+            (stage / "package.use" / "stage").write_text("stage setting")
+            command = (portage_config_setup_command()
+                       .replace("/var/tmp/catalystlab-base-portage", str(base))
+                       .replace("/var/tmp/catalystlab-stage-portage", str(stage))
+                       .replace("/etc/portage", str(destination)))
+
+            subprocess.run(["bash", "-e", "-c", command], check=True)
+
+            self.assertEqual((destination / "package.use" / "base").read_text(), "base setting")
+            self.assertEqual((destination / "package.use" / "stage").read_text(), "stage setting")
+            self.assertFalse((destination / "gnupg").exists())
+
     def test_copy_kernel_outputs_preserves_dangling_module_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary, 'cache')
@@ -69,14 +91,14 @@ class CustomKernelTests(unittest.TestCase):
         self.assertIn('custom-kernel', command)
         self.assertIn('custom-initramfs', command)
         self.assertIn('custom-modules', command)
-        self.assertIn(f'rm -f /mnt/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}', command)
-        self.assertIn(f'> /mnt/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}', command)
-        self.assertIn('rm -rf /mnt/catalystlab-kernel-output/custom-modules', command)
+        self.assertIn(f'rm -f /var/tmp/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}', command)
+        self.assertIn(f'> /var/tmp/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}', command)
+        self.assertIn('rm -rf /var/tmp/catalystlab-kernel-output/custom-modules', command)
         self.assertIn('generating one with dracut', command)
         self.assertIn('dracut --force --no-hostonly --kver', command)
-        self.assertLess(command.index('rm -f /mnt/catalystlab-kernel-output/'),
+        self.assertLess(command.index('rm -f /var/tmp/catalystlab-kernel-output/'),
                         command.index('emerge --ask=n --oneshot'))
-        self.assertGreater(command.index('> /mnt/catalystlab-kernel-output/' + KERNEL_OUTPUTS_MANIFEST),
+        self.assertGreater(command.index('> /var/tmp/catalystlab-kernel-output/' + KERNEL_OUTPUTS_MANIFEST),
                            command.index('cp -a "$release"'))
 
     def test_apple_kernel_command_selects_raw_arm64_image_and_explains_bin_package_limit(self):

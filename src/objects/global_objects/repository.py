@@ -1,12 +1,11 @@
 from __future__ import annotations
-from typing import Protocol, Self, TypeVar, Generic, Type, Callable
+from typing import Protocol, Self, TypeVar, Generic, Type, Callable, final
 from functools import wraps
 import json
 import os
 from .runtime_env import RuntimeEnv
 from .event_bus import EventBus
 from enum import Enum, auto
-from typing import final
 
 # Library: folder with all app data (toolsets, snapshots, projects, builds...) and repository metadata. User preferences
 # are stored in the system config directory, while the selected Library path is stored there as well.
@@ -109,7 +108,7 @@ class Repository(Generic[T]):
 
     registered_aliases: list[str] = []
 
-    def __init__(self, cls: Type[T], collection: bool = False, alias: str | None = None, default_factory: Callable[[None],T] | None = None):
+    def __init__(self, cls: Type[T], collection: bool = False, alias: str | None = None, default_factory: Callable[[], T] | None = None):
         self._cls = cls
         self._collection = collection
         self._alias = alias or (cls.__name__.lower() if not collection else f"{cls.__name__.lower()}_list")

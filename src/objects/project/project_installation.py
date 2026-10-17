@@ -142,20 +142,20 @@ class ProjectInstallationStepApplyTemplate(MultiStageProcessStage):
             selection = self.multistage_process.configuration.data
             template = selection.template
             temporary_directory = None
-            # External repository templates are cloned as the project; in-app templates start a normal project Git
-            # repository and remember the source template's tree hash for narrow update checks.
-            is_repository_template = selection.repository_url is not None
-            template_commit = repository_commit(directory.directory_path()) if is_repository_template else None
-            if template.source_kind == "app" and not template.files_available:
-                template, temporary_directory = download_app_template(template.repository_path,
-                                                                      expected_tree=template.source_tree)
-            template_directory_tree = (template_tree(directory.directory_path(), selection.template.repository_path)
-                                       if is_repository_template else selection.template.source_tree)
-            if selection.repository_url:
-                # Options were read from template.toml downloaded alone, files come from cloned repository.
-                template, temporary_directory = load_cloned_template(directory.directory_path(), selection.repository_url,
-                                                                     template.repository_path)
             try:
+                # External repository templates are cloned as the project; in-app templates start a normal project Git
+                # repository and remember the source template's tree hash for narrow update checks.
+                is_repository_template = selection.repository_url is not None
+                template_commit = repository_commit(directory.directory_path()) if is_repository_template else None
+                if template.source_kind == "app" and not template.files_available:
+                    template, temporary_directory = download_app_template(template.repository_path,
+                                                                          expected_tree=template.source_tree)
+                template_directory_tree = (template_tree(directory.directory_path(), selection.template.repository_path)
+                                           if is_repository_template else selection.template.source_tree)
+                if selection.repository_url:
+                    # Options were read from template.toml downloaded alone, files come from cloned repository.
+                    template, temporary_directory = load_cloned_template(directory.directory_path(), selection.repository_url,
+                                                                         template.repository_path)
                 names = template.resolve(selection.selected, project_name=directory.name)
                 self.log(f"Template: {template.name}")
                 for variable in template.visible_variables(names):
@@ -167,18 +167,18 @@ class ProjectInstallationStepApplyTemplate(MultiStageProcessStage):
                 # Template and generated files are remembered, so project can be updated when template changes.
                 record_template_state(directory.directory_path(), template, dict(selection.selected), template_commit, stage_ids,
                                       template_directory_tree)
+                if selection.repository_url:
+                    path = directory.directory_path()
+                    # Remote is template repository: project is updated from template (not by pulling template commits),
+                    # and its changes aren't pushed to template repository.
+                    self._run(["git", "-C", path, "remote", "remove", "origin"])
+                    self._run(["git", "-C", path, "add", "--all"])
+                    if subprocess.run(["git", "-C", path, "diff", "--cached", "--quiet"]).returncode != 0:
+                        self._run(["git", "-C", path, "commit", "--quiet", "-m", f"Create project from template {template.name}"])
+                self.complete(MultiStageProcessStageState.COMPLETED)
             finally:
                 if temporary_directory:
                     shutil.rmtree(temporary_directory, ignore_errors=True)
-            if selection.repository_url:
-                path = directory.directory_path()
-                # Remote is template repository: project is updated from template (not by pulling template commits),
-                # and its changes aren't pushed to template repository.
-                self._run(["git", "-C", path, "remote", "remove", "origin"])
-                self._run(["git", "-C", path, "add", "--all"])
-                if subprocess.run(["git", "-C", path, "diff", "--cached", "--quiet"]).returncode != 0:
-                    self._run(["git", "-C", path, "commit", "--quiet", "-m", f"Create project from template {template.name}"])
-            self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
             self.log(f"Error: {e}")
             print(f"Error during '{self.name}': {e}")

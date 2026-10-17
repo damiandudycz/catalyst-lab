@@ -16,11 +16,18 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab import snapshot as snapshot_module
-from catalystlab.snapshot import Snapshot, PortageProfile, parse_profiles_desc
+from catalystlab.snapshot import Snapshot, PortageProfile, parse_profiles_desc, sorted_snapshots
 from catalystlab.architecture import Architecture
 
 
 class SnapshotMetadataTests(unittest.TestCase):
+    def test_sorted_snapshots_puts_unknown_dates_last(self):
+        older = Snapshot('older.sqfs', datetime(2026, 1, 1))
+        newer = Snapshot('newer.sqfs', datetime(2026, 1, 2))
+        unknown = Snapshot('unknown.sqfs', None)
+
+        self.assertEqual(sorted_snapshots([unknown, older, newer]), [newer, older, unknown])
+
     def test_load_all_sorts_snapshots_and_reads_import_markers(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -152,6 +159,50 @@ class LatestSnapshotTests(unittest.TestCase):
         with patch.object(snapshot_module, 'latest_gentoo_commit', return_value=None):
             self.assertIsNone(snapshot_module.existing_latest_snapshot(messages.append))
         self.assertIn('snapshot will be generated', messages[0])
+
+
+class SnapshotImportTests(unittest.TestCase):
+    def test_failed_copy_removes_partial_snapshot(self):
+        from catalystlab import snapshot_installation
+
+        class FailingSource:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+            def read(self, _size):
+                raise OSError('read failed')
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source_path = str(Path(temporary, 'input.sqfs'))
+            Path(source_path).write_bytes(b'snapshot')
+            snapshots = Path(temporary, 'snapshots')
+            snapshots.mkdir()
+            destination = snapshots / 'source.sqfs'
+            process = types.SimpleNamespace(snapshot=None)
+            stage = snapshot_installation.SnapshotInstallationStepCopyFile(
+                file=types.SimpleNamespace(get_basename=lambda: 'source.sqfs', get_path=lambda: source_path),
+                custom_filename=None,
+                multistage_process=process,
+            )
+            stage.complete = lambda *_: None
+            stage._update_progress = lambda *_: None
+            real_open = open
+
+            def open_source_or_destination(path, mode):
+                return FailingSource() if path == source_path else real_open(path, mode)
+
+            with patch.object(snapshot_installation, 'resolve_path', return_value=str(snapshots)), \
+                    patch.object(snapshot_installation.Repository, 'Settings', types.SimpleNamespace(
+                        value=types.SimpleNamespace(snapshots_location=str(snapshots))), create=True), \
+                    patch('builtins.open', side_effect=open_source_or_destination), \
+                    patch('builtins.print'):
+                stage.start()
+
+            self.assertFalse(destination.exists())
+            self.assertIsNone(process.snapshot)
 
 
 if __name__ == '__main__':

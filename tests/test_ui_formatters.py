@@ -9,7 +9,7 @@ if "catalystlab" not in sys.modules:
     package.__path__ = [str(ROOT / "src")] + [str(path) for path in (ROOT / "src").rglob("*") if path.is_dir()]
     sys.modules["catalystlab"] = package
 
-from catalystlab.formatters import format_size
+from catalystlab.global_objects.formatters import format_size
 
 
 class SizeFormattingTests(unittest.TestCase):

@@ -52,7 +52,7 @@ class ItemSelectionDataTests(unittest.TestCase):
     def test_static_items_reload_and_replace_repository(self):
         view = SelectionData()
         view.repository = type("Repository", (), {"value": ["repo"]})()
-        view.set_static_list(["static"])
+        view.set_static_list(items=["static"])
 
         self.assertEqual(view.items(), ["static"])
         self.assertEqual(view.reloads, 1)

@@ -125,7 +125,7 @@ def _automatic_value(project_directory, argument, context: StageSpecContext):
             return architecture.qemu_user_binary() if architecture and is_emulated_build(architecture) else None
     return None
 
-def _format_value(value, path_mapper=lambda path: path) -> str | None:
+def _format_value(value, path_mapper) -> str | None:
     if value is None or value is UNRESOLVED or isinstance(value, StageAutomaticOption) or value == "" or value == []:
         return None
     if isinstance(value, list):

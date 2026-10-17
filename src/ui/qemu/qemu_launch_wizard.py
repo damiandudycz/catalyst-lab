@@ -4,7 +4,7 @@ import threading
 from gi.repository import Gtk, Adw, GLib
 from dataclasses import replace
 from .wizard_view import WizardView
-from .qemu_run import QemuRun, QemuBuildKind, qemu_support, create_stage_image_directory
+from .qemu_run import QemuRun, QemuBuildKind, qemu_support, create_stage_image_directory, kernel_build_toolsets
 from .qemu_run_view import QemuImagePreparation, QemuRunView
 from .apple_virtualization import apple_support
 from .repository import Repository
@@ -18,6 +18,7 @@ class QemuLaunchWizard(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.project_directory = project_directory
         self.build = build
+        self._launch_started = False
         self.support = qemu_support(project_directory, build)
         self.apple = apple_support(project_directory, build)
         self.kernel_required = self.support.kind == QemuBuildKind.STAGE and self.support.kernel is None
@@ -39,6 +40,18 @@ class QemuLaunchWizard(Gtk.Box):
         page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
                           margin_start=24, margin_end=24, margin_top=24, margin_bottom=24)
+
+        warning_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        warning_list.add_css_class("boxed-list")
+        warning = Adw.ActionRow(title="Run in VM is in testing",
+                                subtitle="VM builds are still being tested and may fail or behave unexpectedly.")
+        warning.add_css_class("warning")
+        warning.set_activatable(False)
+        warning_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        warning_icon.add_css_class("warning")
+        warning.add_prefix(warning_icon)
+        warning_list.append(warning)
+        content.append(warning_list)
 
         stage_group = Adw.PreferencesGroup(title="Selected stage", description="Review the build to boot in a virtual machine.")
         architecture = project_directory.get_architecture()
@@ -65,9 +78,17 @@ class QemuLaunchWizard(Gtk.Box):
         advanced_row = Adw.ExpanderRow(title="Advanced", subtitle="Optional VM launch settings")
         self.custom_kernel_row = Adw.SwitchRow(
             title="Build a kernel package",
-            subtitle="Build it in the project toolset using the Gentoo snapshot and stage overlays. The stage does not need Portage.")
+            subtitle="Build it in a Gentoo toolset using the snapshot and stage overlays. The stage does not need Portage.")
         self.custom_kernel_row.set_visible(self.support.kind == QemuBuildKind.STAGE)
         advanced_row.add_row(self.custom_kernel_row)
+        self.kernel_build_toolsets = kernel_build_toolsets(project_directory)
+        self.kernel_toolset_row = Adw.ComboRow(
+            title="Toolset", subtitle="Choose a free toolset for this kernel build",
+            model=Gtk.StringList.new([toolset.name for toolset in self.kernel_build_toolsets]
+                                     or ["No free Gentoo toolsets"]))
+        self.kernel_toolset_row.set_visible(self.support.kind == QemuBuildKind.STAGE)
+        self.kernel_toolset_row.set_sensitive(bool(self.kernel_build_toolsets))
+        advanced_row.add_row(self.kernel_toolset_row)
         self.snapshots = [snapshot for snapshot in Repository.Snapshot.value
                           if os.path.isfile(snapshot.file_path())]
         self.kernel_snapshot_row = Adw.ComboRow(
@@ -142,6 +163,9 @@ class QemuLaunchWizard(Gtk.Box):
                 and (not self.kernel_required or self._custom_kernel_reason is None)
                 and (not self.kernel_required or self.custom_kernel_row.get_active())
                 and (not self.custom_kernel_row.get_active()
+                     or (self._selected_kernel_toolset() is not None
+                         and not self._selected_kernel_toolset().busy_reason))
+                and (not self.custom_kernel_row.get_active()
                      or (not self._kernel_packages_loading
                          and (not self._is_custom_kernel_selected() or self._valid_custom_kernel()))))
 
@@ -155,11 +179,15 @@ class QemuLaunchWizard(Gtk.Box):
         if not self.snapshots:
             return "Add or download a Gentoo snapshot before building a custom kernel."
         toolset = self.project_directory.get_toolset()
-        if toolset is None:
-            return "Select a project toolset to build a custom kernel."
-        if toolset.busy_reason:
+        if not self.kernel_build_toolsets and toolset and toolset.busy_reason:
             return toolset.busy_reason
+        if not self.kernel_build_toolsets:
+            return "Select or create a free Gentoo toolset to build a custom kernel."
         return None
+
+    def _selected_kernel_toolset(self):
+        selected = self.kernel_toolset_row.get_selected()
+        return self.kernel_build_toolsets[selected] if 0 <= selected < len(self.kernel_build_toolsets) else None
 
     def _valid_custom_kernel(self):
         from .custom_kernel import valid_kernel_package
@@ -258,6 +286,8 @@ class QemuLaunchWizard(Gtk.Box):
         self.wizard_view.content_navigation_view = getattr(self._window, "navigation_view", None)
 
     def _start(self, _wizard):
+        if getattr(self, "_launch_started", False):
+            return
         if any(run.is_running for run in QemuRun.running_runs):
             dialog = Adw.AlertDialog(heading="A virtual machine is already running",
                                      body="Stop the running machine before starting another one.")
@@ -270,6 +300,14 @@ class QemuLaunchWizard(Gtk.Box):
             return
         if self.kernel_required and (not self.custom_kernel_row.get_active() or self._custom_kernel_reason):
             return
+        if self.custom_kernel_row.get_active():
+            toolset = self._selected_kernel_toolset()
+            if toolset is None or toolset.busy_reason:
+                dialog = Adw.AlertDialog(heading="Toolset unavailable",
+                                         body=toolset.busy_reason if toolset else "Select a free Gentoo toolset.")
+                dialog.add_response("ok", "OK")
+                dialog.present(self.get_root())
+                return
         backend = self.backends[self.backend_row.get_selected()][1]
         # Do not launch a backend that disappeared after the wizard was opened.
         available = apple_support(self.project_directory, self.build) if backend == "apple" else qemu_support(self.project_directory, self.build)
@@ -278,12 +316,14 @@ class QemuLaunchWizard(Gtk.Box):
             dialog.add_response("ok", "OK")
             dialog.present(self.get_root())
             return
+        self._launch_started = True
         cpus = round(self.cpus_row.get_value())
         memory_gib = round(self.memory_row.get_value())
         kernel_package = self._selected_kernel_package() if self.custom_kernel_row.get_active() else None
         support = available.support if backend == "apple" else available
         support = replace(support, kernel_package=kernel_package,
-                          kernel_snapshot=self._selected_snapshot() if kernel_package else None)
+                          kernel_snapshot=self._selected_snapshot() if kernel_package else None,
+                          kernel_toolset=self._selected_kernel_toolset() if kernel_package else None)
         title = f"{self.build.stage_name} — {'Apple Virtualization' if backend == 'apple' else 'QEMU'}"
         window_handle = getattr(self, "_window", None)
         if window_handle is not None:
@@ -291,7 +331,7 @@ class QemuLaunchWizard(Gtk.Box):
         if support.kind == QemuBuildKind.STAGE:
             support = replace(support, image_directory=create_stage_image_directory())
             runtime = QemuRunView(self.project_directory, self.build, memory_mib=memory_gib * 1024,
-                                  cpus=cpus, support=support, start_immediately=True, backend=backend)
+                                  cpus=cpus, support=support, backend=backend)
             preparation = QemuImagePreparation(self.project_directory, self.build, support)
 
             def prepared(success):
@@ -304,6 +344,7 @@ class QemuLaunchWizard(Gtk.Box):
                     if process_window is not None:
                         process_window.close()
                     app_event_bus.emit(AppEvents.PRESENT_VIEW, runtime, title, 1024, 768)
+                    runtime.start()
                     return False
                 GLib.idle_add(show_vm)
 

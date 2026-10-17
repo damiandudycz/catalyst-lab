@@ -222,12 +222,10 @@ class MultiStageProcessStage(ABC):
         """Run a toolset command synchronously, forwarding output and progress."""
         try:
             succeeded = False
-            completed = threading.Event()
 
             def on_complete(response: ServerResponse):
                 nonlocal succeeded
                 succeeded = response.code == ServerResponseStatusCode.OK
-                completed.set()
 
             def on_output(line: str):
                 print(line)
@@ -240,7 +238,6 @@ class MultiStageProcessStage(ABC):
                 completion_handler=on_complete,
             )
             self.server_call.thread.join()
-            completed.wait()
             self.server_call = None
             return succeeded
         except Exception as error:

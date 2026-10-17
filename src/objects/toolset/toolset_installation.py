@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, uuid, shutil, threading, re, requests, time
+import os, uuid, shutil, re, requests, time
 from typing import final
 from gi.repository import Gio
 from .root_function import root_function, local_for_rootless_paths
@@ -142,11 +142,9 @@ class ToolsetInstallationStepExtract(ToolsetInstallationStep):
             else:
                 self.multistage_process.tmp_stage_extract_dir = create_work_directory(prefix=prefix, rootless=self.multistage_process.rootless)
             return_value = False
-            done_event = threading.Event()
             def completion_handler(response: ServerResponse):
                 nonlocal return_value
                 return_value = response.code == ServerResponseStatusCode.OK
-                done_event.set()
             def output_handler(output_line: str):
                 if output_line.startswith("PROGRESS: "):
                     try:
@@ -171,7 +169,6 @@ class ToolsetInstallationStepExtract(ToolsetInstallationStep):
                     directory=self.multistage_process.tmp_stage_extract_dir
                 )
                 self.server_call.thread.join()
-                done_event.wait()
             if not self._cancel_event.is_set():
                 self.server_call = None
                 self.complete(MultiStageProcessStageState.COMPLETED if return_value else MultiStageProcessStageState.FAILED)

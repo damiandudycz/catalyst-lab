@@ -251,7 +251,7 @@ class ProjectDirectory(GitDirectory):
         if self.metadata is None:
             return None
         if self.metadata.latest_snapshot:
-            from .snapshot_manager import sorted_snapshots
+            from .snapshot import sorted_snapshots
             return next(iter(sorted_snapshots(Repository.Snapshot.value)), None)
         return self._get_by_id(Repository.Snapshot.value, self.metadata.snapshot_id, 'filename')
 

@@ -33,17 +33,19 @@ class GitUpdateTests(unittest.TestCase):
         directory.update_status = Mock()
         directory.update_logs = Mock()
         results = [
-            types.SimpleNamespace(returncode=0, stdout='fetched', stderr=''),
-            types.SimpleNamespace(returncode=1, stdout='', stderr='conflict'),
-            types.SimpleNamespace(returncode=0, stdout='', stderr=''),
+            types.SimpleNamespace(returncode=0, stdout='fetched'),
+            types.SimpleNamespace(returncode=1, stdout='conflict'),
         ]
         with patch.object(git_update.os.path, 'isdir', return_value=True), \
-             patch.object(git_update.subprocess, 'run', side_effect=results) as run:
+             patch.object(directory, 'run_git_logged', side_effect=results) as logged, \
+             patch.object(git_update.subprocess, 'run') as run:
             with self.assertRaisesRegex(RuntimeError, 'git rebase failed'):
                 git_update.update_git_directory(directory, Mock())
 
-        self.assertEqual(run.call_count, 3)
-        self.assertEqual(run.call_args_list[2].args[0], ['git', 'rebase', '--abort'])
+        self.assertEqual([call.args[0] for call in logged.call_args_list], [
+            ('fetch', '--all', '--prune'), ('rebase', '--autostash', '--rebase-merges', 'origin/HEAD')
+        ])
+        run.assert_called_once_with(['git', 'rebase', '--abort'], cwd='/project', capture_output=True)
         directory.update_status.assert_called_once_with(wait=True)
         directory.update_logs.assert_called_once_with(wait=True)
 

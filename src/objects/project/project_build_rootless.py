@@ -84,7 +84,7 @@ def catalyst_snapshot_command() -> str:
 
 def stage_build_session_script(executor, toolset_path: str, bindings: list[tuple[str, str]], command: str,
                                diagnostics_command: str | None = None, synced_caches: list[tuple[str, str]] | None = None,
-                               overlay_file_replacements: list[tuple[str, str, str]] | None = None) -> str:
+                               patch_catalyst_stage1: bool = False) -> str:
     """Script running command in toolset root (overlay over extracted toolset, changes are discarded), with host
     folders bound at given paths (host path, path in toolset). Diagnostics command runs after failure.
     Synced caches (saved path, path used by build) are mounted at used path as overlay over saved path, and changes
@@ -98,13 +98,11 @@ def stage_build_session_script(executor, toolset_path: str, bindings: list[tuple
     # /var/tmp/catalyst/snapshots). Copy directory modes from existing lower-layer ancestors so this does not change
     # permissions such as /var/tmp's sticky bit.
     prepare_bind_targets = "\n".join(f"prepare_bind_target {q(target)} || exit 1" for _host, target in bindings)
-    overlay_patches = []
-    for path, old, new in overlay_file_replacements or []:
-        # Copy patched toolset files into the writable overlay before mounting it. Editing the merged view with
-        # sed -i fails for files in read-only SquashFS directories because sed needs to create a sibling temp file.
-        overlay_patches.append(f'''python3 - "$TOOLSET" "$UPPER" {q(path)} {q(old)} {q(new)} <<'PATCH_TOOLSET_FILE'
+    stage1_patch = """python3 - "$TOOLSET" "$UPPER" <<'PATCH_TOOLSET_FILE'
 import os, shutil, sys
-toolset, upper, relative, old, new = sys.argv[1:]
+toolset, upper = sys.argv[1:]
+relative = "/usr/share/catalyst/targets/stage1/build.py"
+old, new = 'sys.stdout.write(b + " ")', 'sys.stdout.write(str(b) + " ")'
 source = os.path.join(toolset, relative.lstrip("/"))
 target = os.path.join(upper, relative.lstrip("/"))
 if os.path.isfile(source):
@@ -115,9 +113,8 @@ if os.path.isfile(source):
         with open(target, "w", encoding="utf-8") as file:
             file.write(contents.replace(old, new))
         shutil.copystat(source, target)
-        print(f"Patched toolset file in writable overlay: {{relative}}")
-PATCH_TOOLSET_FILE''')
-    prepare_overlay_patches = "\n".join(overlay_patches)
+        print(f"Patched toolset file in writable overlay: {relative}")
+PATCH_TOOLSET_FILE""" if patch_catalyst_stage1 else ""
     # Saved caches are lower layer of overlay (read from shared folder without copying), changes go to upper layer in
     # session and are copied back after build: new and changed files, and deletions (whiteouts, character devices).
     caches = list(enumerate(synced_caches or []))
@@ -165,7 +162,7 @@ prepare_bind_target() {{
     done
 }}
 {prepare_bind_targets}
-{prepare_overlay_patches}
+{stage1_patch}
 mkdir -p "$UPPER/etc" || exit 1
 if [ -d "$TOOLSET/etc" ]; then
     mode=$(stat -c %a "$TOOLSET/etc") || exit 1

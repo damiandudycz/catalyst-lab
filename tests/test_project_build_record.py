@@ -46,6 +46,17 @@ class ProjectBuildRecordTests(unittest.TestCase):
             Path(temporary, 'broken.json').write_text('{')
             self.assertEqual(project_build_record.failed_steps(project, 'broken'), [])
 
+    def test_malformed_record_shapes_fall_back_to_unavailable_details(self):
+        project = types.SimpleNamespace(name='Test project')
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(project_build_record, 'build_records_directory', return_value=temporary):
+            for content in ('[]', '{"steps": "invalid"}', '{"steps": [null]}'):
+                with self.subTest(content=content):
+                    Path(temporary, 'broken.json').write_text(content)
+                    recorded = project_build_record.load_build_record(project, 'broken')
+                    self.assertEqual(recorded.stages[0].name, 'Run details unavailable')
+                    self.assertEqual(project_build_record.failed_steps(project, 'broken'), [])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -14,7 +14,7 @@ The Gentoo repository snapshot is also mounted read-only and bound into the tool
 
 Each command has its own OverlayFS session. The VM and its read-only mounts can serve successive commands during one operation, but the writable merged view is not reused between commands. When the operation releases its workspace, mounts are removed and the temporary ext4 image is deleted. If the app exits unexpectedly, the next workspace setup unmounts and replaces the old image.
 
-Toolset installation, updates, and interactive toolset use also run inside the VM, but use the toolset's normal spawn and bind-mount flow rather than the stage-build OverlayFS session. This keeps their writable environment isolated from the `.sqfs` image while preserving their own environment lifecycle.
+Toolset installation, updates, and interactive toolset use also run inside the VM, but use the toolset's normal spawn and bind-mount flow rather than the stage-build OverlayFS session. Since those flows need a writable root overlay, the application extracts the toolset once into a sparse ext4 image in `Library/Cache/Extracted/Toolsets`, mounts that image read-only for each operation, and puts writes in the disposable overlay. The ext4 image preserves Linux ownership and case-sensitive names while the cache remains reusable after the operation's workspace is removed. Deleting the source toolset also deletes its extracted cache image.
 
 ## Linux build path
 
@@ -23,6 +23,8 @@ On Linux, builds run on the host. When unprivileged user namespaces and the requ
 ## Other virtual machines
 
 QEMU and Apple Virtualization are for testing built systems. They are separate from the Lima build machine: they boot a stage image, while Lima runs Catalyst and the build toolset. Test-VM base images and per-run writable images are stored under `Library/Cache` and `Library/Temporary`, respectively.
+
+Stage startup is shown as separate preparation steps: create or reuse the cached base image, prepare the run's writable image, and build a custom kernel when requested. A custom kernel is emerged in a selected free Gentoo toolset using the chosen snapshot and stage overlays. Its read-only toolset image is mounted beneath one disposable writable root overlay; snapshot and configuration inputs are mounted read-only, while Portage state and outputs stay in temporary or cache folders. A write probe checks `/var/db/pkg`, `/var/lib/portage`, and `/var/log` before emerge starts. The toolset selection defaults to the project's toolset when it is free; other free external Gentoo toolsets can be selected. Stage Portage settings and the writable merged `/etc/portage` directory use separate mounts so the configuration copy cannot include its own destination. The build's binary-package cache is mounted read-only.
 
 ## Main implementation points
 

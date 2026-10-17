@@ -4,7 +4,6 @@ from .releng_installation import RelengInstallation
 from .repository import Repository
 from .status_indicator import items_status, processes_status
 from .releng_create_view import RelengCreateView
-from .releng_manager import RelengManager
 from .releng_update import RelengUpdate
 from .app_events import app_event_bus, AppEvents
 from .releng_details_view import RelengDetailsView

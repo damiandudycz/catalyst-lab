@@ -1,4 +1,5 @@
 from .root_function import root_function
+from .formatters import format_size
 import os, re, shutil, signal, subprocess, tarfile, tempfile, threading
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -7,10 +8,16 @@ from email.utils import parsedate_to_datetime
 # Global helper functions:
 # ------------------------------------------------------------------------------
 
+def path_is_within(path: str, directory: str) -> bool:
+    """Whether a path resolves to the directory or one of its children."""
+    path, directory = os.path.realpath(path), os.path.realpath(directory)
+    try:
+        return os.path.commonpath((path, directory)) == directory
+    except ValueError:  # Paths on different drives.
+        return False
+
 @root_function
 def create_temp_workdir(prefix: str) -> str:
-    import os
-    import tempfile
     """Creates temp directory in /var/tmp/catalystlab, owned by the user.
     Supports subdirectories inside prefix, e.g. 'toolset/tmp_'."""
     base_dir = "/var/tmp/catalystlab"
@@ -29,8 +36,6 @@ def create_temp_workdir(prefix: str) -> str:
 
 @root_function
 def delete_temp_workdir(path: str) -> bool:
-    import os
-    import shutil
     try:
         resolved_path = os.path.realpath(path)
         # Ensure we're operating strictly inside the expected directory
@@ -48,7 +53,6 @@ def delete_temp_workdir(path: str) -> bool:
 
 @root_function
 def mount_squashfs(squashfs_path: str, prefix: str) -> str:
-    import subprocess
     """Creates tmp directory and extracts squashfs file to it"""
     mount_point = create_temp_workdir(prefix=prefix)
     subprocess.run(['unsquashfs', '-f', '-d', mount_point, squashfs_path], check=True)
@@ -62,7 +66,6 @@ def umount_squashfs(mount_point: str):
 def loop_mount_squashfs(squashfs_path: str, prefix: str) -> str:
     """Mounts squashfs file read only in new tmp directory. Much faster than extracting it, files are decompressed
     only when read. Changes need to be stored using overlays on top of it."""
-    import subprocess
     mount_point = create_temp_workdir(prefix=prefix)
     try:
         subprocess.run(['mount', '-t', 'squashfs', '-o', 'ro,loop', squashfs_path, mount_point], check=True)
@@ -75,7 +78,6 @@ def loop_mount_squashfs(squashfs_path: str, prefix: str) -> str:
 def loop_umount_squashfs(mount_point: str):
     """Unmounts squashfs mounted with loop_mount_squashfs and removes its mount point. Mount point is never deleted
     recursively, so if unmounting fails, contents of squashfs are not touched."""
-    import subprocess
     resolved_path = os.path.realpath(mount_point)
     if not resolved_path.startswith("/var/tmp/catalystlab/"):
         raise ValueError(f"Refusing to unmount path outside /var/tmp/catalystlab: {resolved_path}")
@@ -85,16 +87,12 @@ def loop_umount_squashfs(mount_point: str):
 
 @root_function
 def extract(tarball: str, directory: str):
-    import os
-    import signal
-    import tarfile
-    import threading
+    """Extract an .xz tarball as root to preserve special files and ownership."""
     _cancel_event = threading.Event()
     def handle_sigterm(signum, frame):
         _cancel_event.set()
     signal.signal(signal.SIGTERM, handle_sigterm)
 
-    """Extracts an .xz tarball as root to preserve special files and ownership."""
     destination = os.path.abspath(directory)
     def stage_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo:
         # Stage tarballs contain device nodes, absolute symlinks (resolved later inside chroot),
@@ -153,11 +151,7 @@ def create_squashfs(source_directory: str, output_file: str) -> subprocess.Popen
 def get_file_size_string(path: str) -> str | None:
     try:
         size = os.path.getsize(path)
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} PB"
+        return f"{size:.1f} B" if size < 1024 else format_size(size)
     except Exception as e:
         print(e)
         return None

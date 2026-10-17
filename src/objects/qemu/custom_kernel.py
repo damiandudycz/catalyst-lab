@@ -42,6 +42,15 @@ def is_arm64_linux_image(path: str) -> bool:
         return False
 
 
+def portage_config_setup_command() -> str:
+    """Merge safe toolset and stage config into the writable run config mount."""
+    return ("mkdir -p /etc/portage; "
+            "if [ -d /var/tmp/catalystlab-base-portage ]; then "
+            "find /var/tmp/catalystlab-base-portage -mindepth 1 -maxdepth 1 ! -name gnupg "
+            "-exec cp -R {} /etc/portage/ \\;; fi; "
+            "cp -R /var/tmp/catalystlab-stage-portage/. /etc/portage/; ")
+
+
 def kernel_package_build_command(package: str, use_binary_packages: bool = False,
                                  require_arm64_image: bool = False) -> str:
     """Emerge a kernel in the disposable toolset and export boot files and modules."""
@@ -60,7 +69,7 @@ fi
     \\( -name 'vmlinuz*' -o -name 'vmlinux*' -o -name 'Image*' \\) -print | sort -V | tail -n 1)
 '''
     return f'''set -e
-rm -f /mnt/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}
+rm -f /var/tmp/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}
 command -v emerge >/dev/null || {{ echo "Portage is not installed in the project toolset"; exit 1; }}
 if [ -d /etc/portage/package.use ]; then
     printf '%s\\n' 'sys-kernel/installkernel dracut' \\
@@ -80,15 +89,15 @@ if [ -z "$initramfs" ]; then
     echo "Kernel package did not install an initramfs; generating one with dracut"
     command -v dracut >/dev/null || emerge --ask=n --oneshot --verbose{usepkg} sys-kernel/dracut
     dracut --force --no-hostonly --kver "$(basename "$release")" \\
-        /mnt/catalystlab-kernel-output/custom-initramfs
+        /var/tmp/catalystlab-kernel-output/custom-initramfs
 else
-    cp "$initramfs" /mnt/catalystlab-kernel-output/custom-initramfs
+    cp "$initramfs" /var/tmp/catalystlab-kernel-output/custom-initramfs
 fi
-cp "$kernel" /mnt/catalystlab-kernel-output/custom-kernel
-rm -rf /mnt/catalystlab-kernel-output/custom-modules
-mkdir -p /mnt/catalystlab-kernel-output/custom-modules
-cp -a "$release" /mnt/catalystlab-kernel-output/custom-modules/
-chmod a+r /mnt/catalystlab-kernel-output/custom-kernel /mnt/catalystlab-kernel-output/custom-initramfs
-printf '%s\\n' {package} "$(basename "$release")" > /mnt/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}
+cp "$kernel" /var/tmp/catalystlab-kernel-output/custom-kernel
+rm -rf /var/tmp/catalystlab-kernel-output/custom-modules
+mkdir -p /var/tmp/catalystlab-kernel-output/custom-modules
+cp -a "$release" /var/tmp/catalystlab-kernel-output/custom-modules/
+chmod a+r /var/tmp/catalystlab-kernel-output/custom-kernel /var/tmp/catalystlab-kernel-output/custom-initramfs
+printf '%s\\n' {package} "$(basename "$release")" > /var/tmp/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}
 echo "Prepared $(basename "$kernel") with initramfs and modules for $release"
 '''

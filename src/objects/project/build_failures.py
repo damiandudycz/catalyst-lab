@@ -8,6 +8,11 @@ from urllib.parse import quote
 # Packages that failed to build in stages of projects (Bugs section), from failure details of stage builds.
 
 _VERSION = re.compile(r"-\d[^-/]*(-r\d+)?$")
+_RESOLUTION_STATES = ("open", "solved", "potentially_solved", "potentially_resurfaced")
+
+def _resolution_status(item: dict) -> str:
+    status = item.get("resolution")
+    return status if status in _RESOLUTION_STATES else "solved" if item.get("fixed") else "open"
 
 def package_atom(package: str) -> str:
     """Category and name of package with version (sys-libs/readline-8.3_p6 -> sys-libs/readline)."""
@@ -36,11 +41,7 @@ class PackageFailure:
 
     @property
     def resolution_status(self) -> str:
-        item = self._item()
-        status = item.get("resolution")
-        if status in ("open", "solved", "potentially_solved", "potentially_resurfaced"):
-            return status
-        return "solved" if item.get("fixed") else "open"
+        return _resolution_status(self._item())
 
     def set_fixed(self, fixed: bool):
         """Marks failure as fixed (or not), saved in build."""
@@ -192,7 +193,7 @@ def _reconcile_resolution_states(project, builds: list):
                     if (history_stage, history_config) != (stage, config):
                         continue
                     for old_build, item in occurrences:
-                        status = item.get("resolution", "solved" if item.get("fixed") else "open")
+                        status = _resolution_status(item)
                         if status in ("open", "potentially_resurfaced"):
                             item["resolution"] = "potentially_solved"
                             changed[str(old_build.id)] = old_build
@@ -215,7 +216,7 @@ def _reconcile_resolution_states(project, builds: list):
             key = (stage, config, issue)
             if process_event:
                 for old_build, old_item in histories.get(key, []):
-                    status = old_item.get("resolution", "solved" if old_item.get("fixed") else "open")
+                    status = _resolution_status(old_item)
                     if status == "potentially_solved":
                         old_item["resolution"] = "open"
                         old_item["fixed"] = False

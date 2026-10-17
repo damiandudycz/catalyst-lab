@@ -16,12 +16,14 @@ from catalystlab.snapshot import PortageProfile
 from catalystlab.project_stage_compression_mode import StageCompressionMode
 from catalystlab.project_stage_automatic_option import StageAutomaticOption
 from catalystlab.project_stage_portage_confdir import StagePortageConfdirSource
+from catalystlab.project_stage import ProjectStage
 
 
 class StageArgumentSerializationTests(unittest.TestCase):
     def test_round_trips_supported_scalar_types(self):
         values = [
-            'text value', uuid.uuid4(), PortageProfile('default/linux/arm64', 'stable', 'gentoo'),
+            'text value', False, 0, None, uuid.uuid4(),
+            PortageProfile('default/linux/arm64', 'stable', 'gentoo'),
             StageCompressionMode.xz, StageAutomaticOption.INHERIT_FROM_PARENT,
             StagePortageConfdirSource.PARENT_OVERLAY,
         ]
@@ -47,6 +49,17 @@ class StageArgumentSerializationTests(unittest.TestCase):
             Serialization.deserialize({'type': 'str'})
         with self.assertRaises(KeyError):
             Serialization.deserialize({'value': 'missing type'})
+
+    def test_project_stage_round_trip_omits_runtime_and_empty_values(self):
+        stage = ProjectStage(name='stage4', target_name='stage4', profile=None)
+        stage.packages = ['app-admin/sudo']
+
+        saved = stage.serialize()
+        restored = ProjectStage.init_from(saved)
+
+        self.assertNotIn('event_bus', saved)
+        self.assertNotIn('profile', saved)
+        self.assertEqual(restored.serialize(), saved)
 
 
 if __name__ == '__main__':

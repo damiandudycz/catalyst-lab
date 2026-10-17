@@ -112,8 +112,11 @@ class StageBuild:
         """Removes build directory with its results. Directory of stage builds is removed too when it becomes empty."""
         if not self.path:
             return
+        if os.path.islink(self.path):
+            raise RuntimeError(f"Refusing to delete linked build directory: {self.path}")
+        root = os.path.realpath(builds_location())
         path = os.path.realpath(self.path)
-        if not path.startswith(builds_location() + os.sep):
+        if not _is_builds_descendant(path, root):
             raise RuntimeError(f"Build directory {path} is outside of builds location")
         shutil.rmtree(path)
         stage_directory = os.path.dirname(path)
@@ -123,15 +126,22 @@ class StageBuild:
 def builds_location() -> str:
     return resolve_path(Repository.Settings.value.builds_location)
 
+def _is_builds_descendant(path: str, root: str) -> bool:
+    """True only for a path strictly below the builds root, including across platform path boundaries."""
+    try:
+        return path != root and os.path.commonpath((root, path)) == root
+    except ValueError:
+        return False
+
 def project_builds_directory(project_directory) -> str:
     return os.path.join(builds_location(), project_directory.id.hex)
 
 def delete_project_builds(project_directory):
     """Removes all build output, logs, project caches and run records of a project."""
-    root = builds_location()
+    root = os.path.realpath(builds_location())
     path = project_builds_directory(project_directory)
     real_path = os.path.realpath(path)
-    if real_path != os.path.abspath(path) or os.path.commonpath((root, real_path)) != root or real_path == root:
+    if os.path.islink(path) or not _is_builds_descendant(real_path, root):
         raise RuntimeError(f"Project builds directory is outside the configured builds location: {real_path}")
     if os.path.isdir(real_path):
         shutil.rmtree(real_path)
@@ -153,7 +163,7 @@ def load_project_builds(project_directory) -> list[StageBuild]:
             try:
                 with open(metadata_path, encoding="utf-8") as file:
                     builds.append(StageBuild.init_from(json.load(file), path=build_directory.path))
-            except (OSError, ValueError, KeyError) as e:
+            except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
                 if os.path.exists(metadata_path):
                     print(f"Warning: Failed to read build {metadata_path}: {e}")
     return sorted(builds, key=lambda build: build.date, reverse=True)
@@ -171,17 +181,16 @@ def last_build_run(project_directory, running_timestamp: str | None = None) -> t
         return None, None
     # load_project_builds already sorts newest first, so the first record is enough.
     timestamp = builds[0].timestamp
-    return timestamp, _build_run_result(builds, timestamp, running_timestamp)
-
-def _build_run_result(builds: list, timestamp: str, running_timestamp: str | None) -> BuildRunResult:
     statuses = {build.status for build in builds if build.timestamp == timestamp}
     # Stages are skipped when stage or step they depend on failed (eg. seed download), run failed then too.
     if statuses & {StageBuildStatus.FAILED, StageBuildStatus.SKIPPED}:
-        return BuildRunResult.FAILED
-    if timestamp != running_timestamp and statuses & {StageBuildStatus.STOPPED, StageBuildStatus.CANCELED,
-                                                      StageBuildStatus.IN_PROGRESS, StageBuildStatus.SCHEDULED}:
-        return BuildRunResult.STOPPED
-    return BuildRunResult.COMPLETED
+        result = BuildRunResult.FAILED
+    elif timestamp != running_timestamp and statuses & {StageBuildStatus.STOPPED, StageBuildStatus.CANCELED,
+                                                        StageBuildStatus.IN_PROGRESS, StageBuildStatus.SCHEDULED}:
+        result = BuildRunResult.STOPPED
+    else:
+        result = BuildRunResult.COMPLETED
+    return timestamp, result
 
 # ------------------------------------------------------------------------------
 # Build plan:
@@ -253,13 +262,17 @@ class StageBuildPlan:
             stage = parent
 
     def build_order(self) -> list:
-        """Stages that are built, parents before their children."""
-        order, added = [], set()
+        """Stages built parent-first; raise ValueError for a malformed parent cycle."""
+        order, added, visiting = [], set(), set()
         def add(stage):
             if stage.id in added:
                 return
+            if stage.id in visiting:
+                raise ValueError(f"Stage parent cycle includes {stage.name}")
+            visiting.add(stage.id)
             if (parent := self.parent(stage)) is not None and self.entries[parent.id].is_built:
                 add(parent)
+            visiting.remove(stage.id)
             added.add(stage.id)
             order.append(stage)
         for entry in self.entries.values():

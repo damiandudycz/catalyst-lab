@@ -263,45 +263,23 @@ class GitInstallationStepSetupRepository(MultiStageProcessStage):
             description="Creates empty Git repository if not present",
             multistage_process=multistage_process
         )
-    def run_logged_command(self, cmd: list[str]):
-        """Runs command, adding its output to stage output."""
-        self.log("$ " + " ".join(cmd))
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True
-        )
-        for line in result.stdout.splitlines():
-            self.log(line)
-        if result.returncode != 0:
-            raise subprocess.CalledProcessError(result.returncode, result.args, output=result.stdout)
     def start(self):
         super().start()
         try:
-            path = self.multistage_process.directory.directory_path()
-            result = subprocess.run(
-                ["git", "-C", path, "rev-parse", "--show-toplevel"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
+            directory = self.multistage_process.directory
+            path = directory.directory_path()
+            result = directory._run_git("rev-parse", "--show-toplevel", stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, text=True)
             is_repository = result.returncode == 0 and os.path.realpath(result.stdout.strip()) == os.path.realpath(path)
             if not is_repository:
-                # Initialize repo:
-                commands = [
-                    ["git", "init", "--initial-branch=main", path],
-                    ["git", "-C", path, "add", "."]
-                ]
-                for cmd in commands:
-                    self.run_logged_command(cmd)
-                # Commit:
-                if subprocess.run(
-                    ["git", "-C", path, "status", "--porcelain"],
-                    stdout=subprocess.PIPE,
-                    text=True
-                ).stdout.strip():
-                    self.run_logged_command(["git", "-C", path, "commit", "-m", "Initial commit"])
+                def git(*arguments):
+                    result = directory.run_git_logged(arguments, self.log)
+                    if result.returncode != 0:
+                        raise subprocess.CalledProcessError(result.returncode, result.args, output=result.stdout)
+                git("init", "--initial-branch=main")
+                git("add", ".")
+                if directory._run_git("status", "--porcelain", stdout=subprocess.PIPE, text=True).stdout.strip():
+                    git("commit", "-m", "Initial commit")
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
             print(f"Error during local Git init: {e}")

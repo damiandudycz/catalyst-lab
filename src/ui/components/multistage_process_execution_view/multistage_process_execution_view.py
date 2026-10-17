@@ -102,7 +102,6 @@ class MultistageProcessExecutionView(Gtk.Box):
             for row in self._installation_rows:
                 self.process_steps_list.remove(row)
         self._installation_rows = []
-        tools_check_buttons_group = []
         running_stage_row = None
         for step in steps:
             row = MultiStageProcessStageRow(step=step, owner=self)
@@ -132,9 +131,12 @@ class MultistageProcessExecutionView(Gtk.Box):
     def _scroll_to_installation_steps_bottom(self):
         def _scroll():
             scrolled_window = self.process_steps_list.get_ancestor(Gtk.ScrolledWindow)
+            if scrolled_window is None:
+                return GLib.SOURCE_REMOVE
             vadjustment = scrolled_window.get_vadjustment()
             bottom = vadjustment.get_upper() - vadjustment.get_page_size()
             vadjustment.set_value(bottom)
+            return GLib.SOURCE_REMOVE
         GLib.timeout_add(100, _scroll)
 
     def _mark_result_seen(self):

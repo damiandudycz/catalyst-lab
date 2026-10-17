@@ -13,7 +13,7 @@ class BuildRunResultTests(unittest.TestCase):
         tree = ast.parse(path.read_text())
         nodes = [node for node in tree.body if
                  isinstance(node, ast.ClassDef) and node.name in {"BuildRunResult", "StageBuildStatus"} or
-                 isinstance(node, ast.FunctionDef) and node.name in {"last_build_run", "_build_run_result"}]
+                 isinstance(node, ast.FunctionDef) and node.name == "last_build_run"]
         namespace = {"Enum": Enum, "load_project_builds": lambda _project: []}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), namespace)
         cls.namespace = namespace
@@ -28,16 +28,18 @@ class BuildRunResultTests(unittest.TestCase):
 
     def test_failed_stage_takes_precedence_over_skipped_or_stopped_stages(self):
         status = self.namespace["StageBuildStatus"]
-        result = self.namespace["_build_run_result"](
-            [SimpleNamespace(timestamp="run", status=status.STOPPED),
-             SimpleNamespace(timestamp="run", status=status.SKIPPED)], "run", None)
-        self.assertEqual(result, self.namespace["BuildRunResult"].FAILED)
+        builds = [SimpleNamespace(timestamp="run", date=1, status=status.STOPPED),
+                  SimpleNamespace(timestamp="run", date=0, status=status.SKIPPED)]
+        self.namespace["load_project_builds"] = lambda _project: builds
+        self.assertEqual(self.namespace["last_build_run"](object()),
+                         ("run", self.namespace["BuildRunResult"].FAILED))
 
     def test_active_run_is_not_reported_as_stopped(self):
         status = self.namespace["StageBuildStatus"]
-        result = self.namespace["_build_run_result"](
-            [SimpleNamespace(timestamp="run", status=status.IN_PROGRESS)], "run", "run")
-        self.assertEqual(result, self.namespace["BuildRunResult"].COMPLETED)
+        builds = [SimpleNamespace(timestamp="run", date=1, status=status.IN_PROGRESS)]
+        self.namespace["load_project_builds"] = lambda _project: builds
+        self.assertEqual(self.namespace["last_build_run"](object(), running_timestamp="run"),
+                         ("run", self.namespace["BuildRunResult"].COMPLETED))
 
 
 if __name__ == "__main__":

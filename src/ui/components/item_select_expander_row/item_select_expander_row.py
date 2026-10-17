@@ -1,10 +1,11 @@
 from __future__ import annotations
-from gi.repository import Gtk, GLib, GObject, Adw
+from gi.repository import Gtk, GObject, Adw
 from .repository import Repository, RepositoryEvent
-from .repository_list_view import ItemRow
 from .event_bus import EventBus
 from .scroll_position import preserved_scroll_position
-from .item_select_view import ItemSelectionViewEvent, update_selection_messages
+from .item_select_view import (
+    ItemSelectionViewEvent, update_selection_messages, schedule_selection_change, _selection_item_row
+)
 from .item_select_state import ItemSelectionData
 
 class ItemSelectionExpanderRow(ItemSelectionData, Adw.ExpanderRow):
@@ -72,19 +73,13 @@ class ItemSelectionExpanderRow(ItemSelectionData, Adw.ExpanderRow):
         self.display_selected_item()
         self.determine_incorrect_selection()
 
-    def multiselect(self, items):
-        self.selected_items = items
-        update_selection_messages(self, allow_multiselect=True)
-        self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
-        self.display_selected_item()
-        self.determine_incorrect_selection()
-
-    def refresh_items_state(self, data):
+    def refresh_items_state(self, *_):
         """Call this from class using this view when monitoring_usable_changes triggers an update"""
         valid_items = [item for item in self.items() if self.emit("is-item-selectable", item)]
         for row in getattr(self, 'rows', []):
             row.set_sensitive(row.item in valid_items)
         update_selection_messages(self, valid_items, self.allow_multiselect)
+        self.determine_incorrect_selection()
         self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
 
     def _load_labels(self):
@@ -107,10 +102,7 @@ class ItemSelectionExpanderRow(ItemSelectionData, Adw.ExpanderRow):
             self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
             self.display_selected_item()
         # Create rows
-        items_check_buttons_group = []
-
-        hidden_check_box = Gtk.CheckButton()
-        items_check_buttons_group.append(hidden_check_box)
+        check_button_group = Gtk.CheckButton()
 
         if hasattr(self, 'rows'):
             for row in self.rows:
@@ -127,36 +119,14 @@ class ItemSelectionExpanderRow(ItemSelectionData, Adw.ExpanderRow):
             check_button = Gtk.CheckButton()
             check_button.set_active(self.selected_item == None)
             check_button.connect("toggled", self._on_item_selected, None)
-            if items_check_buttons_group and self.allow_multiselect == False:
-                check_button.set_group(items_check_buttons_group[0])
-            items_check_buttons_group.append(check_button)
+            check_button.set_group(check_button_group)
             self.none_row.add_prefix(check_button)
             self.none_row.set_activatable_widget(check_button)
             self.add_row(self.none_row)
 
         self.rows = []
         for item in self.items():
-            row = ItemRow(
-                item=item,
-                item_title_property_name=self.item_title_property_name,
-                item_subtitle_property_name=self.item_subtitle_property_name,
-                item_status_property_name=self.item_status_property_name,
-                item_unsupported_property_name=self.item_unsupported_property_name,
-                item_icon=self.item_icon,
-                item_icon_resolver=getattr(self, "item_icon_resolver", None)
-            )
-            check_button = Gtk.CheckButton()
-            if self.allow_multiselect:
-                check_button.set_active(item in self.selected_items if self.selected_items else False)
-            else:
-                check_button.set_active(item == self.selected_item)
-            if items_check_buttons_group and self.allow_multiselect == False:
-                check_button.set_group(items_check_buttons_group[0])
-            check_button.connect("toggled", self._on_item_selected, item)
-            items_check_buttons_group.append(check_button)
-            row.add_prefix(check_button)
-            row.set_activatable_widget(check_button)
-            row.set_sensitive(item in valid_items)
+            row = _selection_item_row(self, item, valid_items, check_button_group, self.allow_multiselect)
             self.add_row(row)
             self.rows.append(row)
         # Footer rows (eg. button creating new item) stay below items.
@@ -183,17 +153,8 @@ class ItemSelectionExpanderRow(ItemSelectionData, Adw.ExpanderRow):
             if len(self.rows) == 1 and not self.display_none or len(self.rows) == 0 and self.display_none:
                 button.set_active(True)
         self.display_selected_item()
-        # Schedule a single emission in the idle loop
-        if not hasattr(self, '_emit_idle_id'):
-            self._emit_idle_id = None
-        if self._emit_idle_id is None:
-            self._emit_idle_id = GLib.idle_add(self._emit_selection_change)
+        schedule_selection_change(self)
         self.determine_incorrect_selection()
-
-    def _emit_selection_change(self):
-        self._emit_idle_id = None
-        self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
-        return False
 
     def display_selected_item(self):
         if self.allow_multiselect:

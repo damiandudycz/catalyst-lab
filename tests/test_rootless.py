@@ -91,6 +91,22 @@ class FilesystemOperationTests(unittest.TestCase):
 
 
 class ExecutorTests(unittest.TestCase):
+    def test_path_containment_normalizes_parent_components_and_safely_rejects_other_roots(self):
+        self.assertTrue(rootless.path_is_within('/library/Cache/Extracted', '/library/Cache'))
+        self.assertTrue(rootless.path_is_within('/library/Cache', '/library/Cache'))
+        self.assertFalse(rootless.path_is_within('/library/Cache/../outside', '/library/Cache'))
+        with patch('catalystlab.rootless.os.path.commonpath', side_effect=ValueError):
+            self.assertFalse(rootless.path_is_within('/other-drive/file', '/library/Cache'))
+
+    def test_path_containment_resolves_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary, 'library')
+            outside = Path(temporary, 'outside')
+            root.mkdir()
+            outside.mkdir()
+            (root / 'link').symlink_to(outside, target_is_directory=True)
+            self.assertFalse(rootless.path_is_within(root / 'link' / 'file', root))
+
     def test_interrupted_build_cache_changes_are_saved_before_sessions_are_removed(self):
         executor = FakeExecutor()
         with patch.object(project_build_rootless, 'sessions_directory', return_value='/library/Temporary/Sessions'):
@@ -195,6 +211,7 @@ class ExecutorTests(unittest.TestCase):
         bind = script.index('bind /library/Snapshots /var/tmp/catalyst/snapshots')
         self.assertLess(prepare, overlay)
         self.assertLess(overlay, bind)
+        self.assertNotIn('PATCH_TOOLSET_FILE', script)
         self.assertIn('mode=$(stat -c %a "$TOOLSET$current")', script)
         self.assertIn('chmod "$mode" "$UPPER$current"', script)
 
@@ -216,11 +233,7 @@ class ExecutorTests(unittest.TestCase):
         with patch.object(project_build_rootless, 'sessions_directory', return_value='/workspace/Temporary/Sessions'):
             script = project_build_rootless.stage_build_session_script(
                 executor, '/workspace/Toolsets/mount', [], 'true',
-                overlay_file_replacements=[(
-                    '/usr/share/catalyst/targets/stage1/build.py',
-                    'sys.stdout.write(b + " ")',
-                    'sys.stdout.write(str(b) + " ")',
-                )])
+                patch_catalyst_stage1=True)
 
         patch_file = script.index('PATCH_TOOLSET_FILE')
         overlay_mount = script.index('mount -t overlay overlay -o lowerdir=/workspace/Toolsets/mount')
@@ -322,13 +335,60 @@ class ExecutorTests(unittest.TestCase):
             is_machine = True
 
         executor = MachineFakeExecutor()
-        rootless.unmount_squashfs('/library/Temporary/Work/toolsets/mount_abc',
-                                  lambda _line: None, executor=executor)
+        rootless.unmount_read_only_mount('/library/Temporary/Work/toolsets/mount_abc',
+                                         lambda _line: None, executor=executor)
 
         script, namespace = executor.started[0]
         self.assertFalse(namespace)
         self.assertIn('sudo umount -- /library/Temporary/Work/toolsets/mount_abc', script)
         self.assertIn('rmdir -- /library/Temporary/Work/toolsets/mount_abc', script)
+
+    def test_machine_toolset_extraction_is_cached_in_ext4_and_mounted_read_only(self):
+        class MachineFakeExecutor(FakeExecutor):
+            is_machine = True
+
+            def __init__(self, cache, temporary):
+                super().__init__()
+                self.cache = cache
+                self.temporary = temporary
+                self.machine = SimpleNamespace(instance_name='catalystlab-test')
+
+            def cache_directory(self):
+                return self.cache
+
+            def temporary_directory(self):
+                return self.temporary
+
+            def filesystem(self, request):
+                return rootless._filesystem_operations(request)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary, 'toolset.sqfs')
+            source.write_bytes(b'squashfs')
+            executor = MachineFakeExecutor(str(Path(temporary, 'Cache')), str(Path(temporary, 'Temporary')))
+
+            first_path = rootless.mount_cached_machine_toolset(str(source), lambda _line: None, executor=executor)
+            scripts = [script for script, _namespace in executor.started]
+
+            self.assertIn('/Cache/Extracted/Toolsets/catalystlab-test-', scripts[0])
+            self.assertIn('mkfs.ext4 -F -m 0', scripts[0])
+            self.assertIn('mount -o loop,rw', scripts[0])
+            self.assertIn('unsquashfs -n', scripts[1])
+            self.assertIn('mount -o remount,ro', scripts[2])
+            self.assertTrue(first_path.endswith('/toolset.sqfs.d'))
+
+            executor.started.clear()
+            second_path = rootless.mount_cached_machine_toolset(str(source), lambda _line: None, executor=executor)
+            scripts = [script for script, _namespace in executor.started]
+
+            self.assertEqual(second_path.rsplit('/', 1)[-1], first_path.rsplit('/', 1)[-1])
+            self.assertIn('Using cached extracted', scripts[1])
+            self.assertIn('cat ', scripts[1])
+            self.assertIn('mount -o remount,ro', scripts[2])
+
+            image = rootless.machine_toolset_cache_image(str(source), executor)
+            rootless.remove_extracted_squashfs(str(source), 'toolsets', executor)
+            self.assertFalse(os.path.exists(image))
 
     def test_owned_path_requires_directory_boundary(self):
         executor = FakeExecutor()

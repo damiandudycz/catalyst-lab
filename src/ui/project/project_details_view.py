@@ -1,7 +1,7 @@
 from gi.repository import Gtk, Adw, GLib, Pango
 from .git_directory import GitDirectoryEvent
 from .project_manager import ProjectManager
-from .project_directory import ProjectDirectory, ProjectConfiguration
+from .project_directory import ProjectDirectory
 from .toolset_application import ToolsetApplication
 from .toolset import ToolsetEvents
 from .event_bus import SharedEvent
@@ -9,7 +9,7 @@ from .repository import Repository
 from .item_select_view import ItemSelectionViewEvent
 from .project_stage_create_view import ProjectStageCreateView
 from .app_events import app_event_bus, AppEvents
-from .stages_tree_view import StagesTreeView, TreeNode, StageNodeStatus
+from .stages_tree_view import StagesTreeView, StageNodeStatus
 from .project_stage_details_view import ProjectStageDetailsView
 from .project_build_view import ProjectBuildView
 from .build_queue_view import build_button_state, present_queued_build

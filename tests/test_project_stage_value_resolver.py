@@ -120,6 +120,18 @@ class StageValueResolutionTests(unittest.TestCase):
         self.assertFalse(stage_argument_uses_option(project, child, Argument.interpreter.name,
                                                     {Automatic.GENERATE_AUTOMATICALLY}))
 
+    def test_automatic_option_detection_handles_options_joined_with_custom_values(self):
+        parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+        parent = types.SimpleNamespace(id=parent_id, cflags=Automatic.GENERATE_AUTOMATICALLY)
+        child = types.SimpleNamespace(id=child_id, parent=parent_id,
+                                      cflags=[Automatic.INHERIT_FROM_PARENT, '-O3'])
+        project = types.SimpleNamespace(stages=[parent, child])
+        self.assertTrue(stage_argument_uses_option(project, child, 'cflags',
+                                                   {Automatic.GENERATE_AUTOMATICALLY}))
+        child.cflags = [Automatic.INHERIT_FROM_RELENG_TEMPLATE, '-O3']
+        self.assertTrue(stage_argument_uses_option(project, child, 'cflags',
+                                                   {Automatic.INHERIT_FROM_RELENG_TEMPLATE}))
+
 
 if __name__ == '__main__':
     unittest.main()

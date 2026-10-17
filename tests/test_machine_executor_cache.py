@@ -12,7 +12,7 @@ if 'catalystlab' not in sys.modules:
     package.__path__ = [str(ROOT / 'src')] + [str(path) for path in (ROOT / 'src').rglob('*') if path.is_dir()]
     sys.modules['catalystlab'] = package
 
-from catalystlab.rootless import MachineExecutor, extracted_directory
+from catalystlab.rootless import LocalExecutor, MachineExecutor, extracted_directory
 from catalystlab.repository import Repository
 
 
@@ -23,6 +23,7 @@ class MachineExecutorCacheTests(unittest.TestCase):
         with patch.object(Repository, 'Settings', types.SimpleNamespace(value=settings), create=True):
             executor = MachineExecutor(types.SimpleNamespace())
             self.assertEqual(executor.cache_directory(), configured_cache)
+            self.assertEqual(LocalExecutor().cache_directory(), configured_cache)
             self.assertEqual(extracted_directory('toolsets', executor),
                              '/var/lib/catalystlab/Temporary/Work/Extracted/Toolsets')
 

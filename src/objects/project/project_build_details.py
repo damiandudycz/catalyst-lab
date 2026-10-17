@@ -192,12 +192,15 @@ chmod -R a+rwX "$FAILURE" 2>/dev/null
 def _project_commit(project_directory) -> dict | None:
     """Commit of project Git directory, and whether it had uncommitted changes."""
     try:
-        path = project_directory.directory_path()
-        commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, timeout=10)
-        if commit.returncode != 0:
+        result = subprocess.run(["git", "status", "--porcelain=v2", "--branch"],
+                                cwd=project_directory.directory_path(), capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
             return None
-        status = subprocess.run(["git", "status", "--porcelain"], cwd=path, capture_output=True, text=True, timeout=10)
-        return {"commit": commit.stdout.strip(), "modified": bool(status.stdout.strip())}
+        commit = next((line.removeprefix("# branch.oid ") for line in result.stdout.splitlines()
+                       if line.startswith("# branch.oid ")), None)
+        if not commit or commit == "(initial)":
+            return None
+        return {"commit": commit, "modified": any(not line.startswith("#") for line in result.stdout.splitlines())}
     except (OSError, subprocess.SubprocessError):
         return None
 

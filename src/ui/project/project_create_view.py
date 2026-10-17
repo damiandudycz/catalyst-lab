@@ -88,7 +88,7 @@ class ProjectCreateView(Gtk.Box):
         self._update_pages()
 
     def template_options_changed(self):
-        self.packages_selection_view.refresh_items_state(None) # Template can set architecture.
+        self.packages_selection_view.refresh_items_state() # Template can set architecture.
         self.wizard_view._refresh_buttons_state()
 
     @property
@@ -103,7 +103,7 @@ class ProjectCreateView(Gtk.Box):
         self.wizard_view.set_page_visible(self.arch_page, template is None or (template.architecture_variable is None and template.architecture is None))
 
     def toolset_changed(self, data):
-        self.snapshot_selection_view.refresh_items_state(None) # Latest snapshot is generated with toolset (it needs Catalyst).
+        self.snapshot_selection_view.refresh_items_state() # Latest snapshot is generated with toolset (it needs Catalyst).
         self.wizard_view._refresh_buttons_state()
 
     def releng_changed(self, data):
@@ -113,7 +113,7 @@ class ProjectCreateView(Gtk.Box):
         self.wizard_view._refresh_buttons_state()
 
     def arch_changed(self, data):
-        self.packages_selection_view.refresh_items_state(None) # Folders depend on architecture.
+        self.packages_selection_view.refresh_items_state() # Folders depend on architecture.
         self.wizard_view._refresh_buttons_state()
 
     def _selected_architecture(self):

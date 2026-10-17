@@ -1,6 +1,7 @@
 from __future__ import annotations
-import base64, functools, json, os, re, shlex, shutil, signal, subprocess, tempfile, threading, uuid
+import base64, functools, hashlib, json, os, re, shlex, shutil, signal, subprocess, tempfile, threading, uuid
 from .repository import Repository, resolve_path
+from .helper_functions import path_is_within
 
 # ------------------------------------------------------------------------------
 # Working without root privileges.
@@ -11,9 +12,8 @@ from .repository import Repository, resolve_path
 # namespace root are owned by user, other owners are mapped ids (100000+), so such files are created, packed and
 # removed inside namespace.
 # Commands run on this computer (LocalExecutor) or in virtual machine linked to toolset (MachineExecutor), where
-# folders of Catalyst Lab are shared at the same paths. Data owned by mapped ids is kept in cache and temporary
-# directories of executor: on this computer they are Cache and Temporary folders from settings, on machine they are on
-# its working space.
+# folders of Catalyst Lab are shared at the same paths. Mapped-id files use local Cache/Temporary folders or ext4
+# filesystems mounted from those folders inside a machine.
 
 MAPPED_IDS_COUNT = 65536
 MIN_BWRAP_VERSION = (0, 11, 0) # Toolset bindings use --overlay-src and --overlay.
@@ -132,7 +132,7 @@ class Executor:
 
     def cache_directory(self) -> str:
         """Reusable data, safe to delete (distfiles, extracted toolsets and snapshots)."""
-        raise NotImplementedError
+        return resolve_path(Repository.Settings.value.cache_location)
 
     def temporary_directory(self) -> str:
         """Data of running operations (sessions, work directories, downloads)."""
@@ -140,7 +140,7 @@ class Executor:
 
     def owns_path(self, path: str) -> bool:
         """Path is in cache or temporary directory of executor, its files can be owned by mapped ids."""
-        return any(path == directory or path.startswith(directory + os.sep)
+        return any(path_is_within(path, directory)
                    for directory in (self.cache_directory(), self.temporary_directory()))
 
     def unsupported_reason(self) -> str | None:
@@ -183,9 +183,6 @@ class Executor:
 class LocalExecutor(Executor):
     """Runs commands on this computer."""
 
-    def cache_directory(self) -> str:
-        return resolve_path(Repository.Settings.value.cache_location)
-
     def temporary_directory(self) -> str:
         return resolve_path(Repository.Settings.value.temporary_location)
 
@@ -216,9 +213,6 @@ class MachineExecutor(Executor):
 
     # Reusable files are stored in the configured Library cache, which Lima shares at the same host path. Temporary
     # operation data remains in the machine's disposable working space.
-    def cache_directory(self) -> str:
-        return resolve_path(Repository.Settings.value.cache_location)
-
     def temporary_directory(self) -> str:
         from .lima import MACHINE_DATA_DIRECTORY
         return os.path.join(MACHINE_DATA_DIRECTORY, "Temporary")
@@ -419,12 +413,87 @@ echo "$STAMP" > {q(path + '.stamp')}
         raise RuntimeError(f"Failed to extract {name}")
     return path
 
+def machine_toolset_cache_image(squashfs_path: str, executor: Executor) -> str:
+    machine_name = executor.machine.instance_name
+    identity = hashlib.sha256(os.path.realpath(squashfs_path).encode()).hexdigest()[:16]
+    return os.path.join(executor.cache_directory(), "Extracted", "Toolsets", f"{machine_name}-{identity}.ext4")
+
+def mount_cached_machine_toolset(squashfs_path: str, output_handler, process_holder: list | None = None,
+                                 executor: Executor | None = None) -> str:
+    """Mount a reusable ext4 extraction read-only; its ext4 image lives in the library cache."""
+    executor = executor or LOCAL_EXECUTOR
+    if not executor.is_machine:
+        raise RuntimeError("Persistent extracted toolset caches require a build machine")
+
+    image = machine_toolset_cache_image(squashfs_path, executor)
+    cache = os.path.dirname(image)
+    size = max(8 << 30, os.path.getsize(squashfs_path) * 8)
+    os.makedirs(cache, exist_ok=True)
+    if not os.path.exists(image):
+        descriptor = os.open(image, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            os.ftruncate(descriptor, size)
+        finally:
+            os.close(descriptor)
+        resize_image = False
+    else:
+        resize_image = os.path.getsize(image) < size
+        if resize_image:
+            os.truncate(image, size)
+
+    mount_point = create_work_directory("toolsets/cache_", executor)
+    q = shlex.quote
+    setup = f"""
+set -euo pipefail
+if ! sudo blkid -s TYPE -o value {q(image)} | grep -qx ext4; then
+    sudo mkfs.ext4 -F -m 0 {q(image)}
+elif {'true' if resize_image else 'false'}; then
+    sudo resize2fs {q(image)}
+fi
+sudo mount -o loop,rw {q(image)} {q(mount_point)}
+sudo chown "$(id -u):$(id -g)" {q(mount_point)}
+"""
+    name = os.path.basename(squashfs_path)
+    path = os.path.join(mount_point, name + ".d")
+    stamp_path = path + ".stamp"
+    temporary_path = path + ".tmp"
+    source_stat = os.stat(squashfs_path)
+    source_stamp = f"{source_stat.st_size}:{source_stat.st_mtime_ns}"
+    extract = f"""
+set -euo pipefail
+rm -rf -- {q(temporary_path)}
+if [ -d {q(path)} ] && [ "$(cat {q(stamp_path)} 2>/dev/null)" = {q(source_stamp)} ]; then
+    echo "Using cached extracted {q(name)}"
+else
+    rm -rf -- {q(path)} {q(stamp_path)} {q(temporary_path)}
+    trap 'rm -rf -- {q(temporary_path)}' EXIT
+    echo "Extracting {q(name)} into the reusable toolset cache..."
+    unsquashfs -n -d {q(temporary_path)} {q(squashfs_path)} 2>&1 | {{ grep -v -e "create_inode: failed to create character device" -e "^\\[" -e "^$" || [ "$?" -eq 1 ]; }} | tail -5
+    test -e {q(os.path.join(temporary_path, 'usr'))} || {{ echo "Extraction failed"; exit 1; }}
+    mv -T -- {q(temporary_path)} {q(path)}
+    echo {q(source_stamp)} > {q(stamp_path)}
+    trap - EXIT
+fi
+"""
+    try:
+        if not executor.run(setup, output_handler, process_holder):
+            raise RuntimeError("Failed to mount the extracted toolset cache")
+        if not executor.run_in_namespace(extract, output_handler, process_holder):
+            raise RuntimeError(f"Failed to prepare cached toolset {name}")
+        if not executor.run(f"sudo mount -o remount,ro {q(mount_point)}", output_handler, process_holder):
+            raise RuntimeError(f"Failed to protect cached toolset {name} from writes")
+    except Exception:
+        executor.run(f"sudo umount {q(mount_point)} 2>/dev/null || true; rmdir {q(mount_point)} 2>/dev/null || true",
+                     output_handler)
+        raise
+    return path
+
 def mount_squashfs_read_only(squashfs_path: str, output_handler, process_holder: list | None = None,
                              executor: Executor | None = None, kind: str = "toolsets") -> str:
     """Mounts a SquashFS image read-only in a Linux build machine, without extracting its files."""
     executor = executor or LOCAL_EXECUTOR
     if not executor.is_machine:
-        raise RuntimeError("Direct SquashFS mounts are only supported in build machines")
+        raise RuntimeError("Read-only image mounts are only supported in build machines")
     q = shlex.quote
     mount_point = create_work_directory(f"{kind}/mount_", executor)
     output_handler(f"Mounting {os.path.basename(squashfs_path)} read-only")
@@ -461,9 +530,9 @@ def prepare_snapshot_squashfs(squashfs_path: str, output_handler, process_holder
     """Prepare a Gentoo repository layer."""
     return prepare_squashfs(squashfs_path, "snapshots", "profiles", output_handler, process_holder, executor)
 
-def unmount_squashfs(mount_point: str, output_handler, process_holder: list | None = None,
-                     executor: Executor | None = None) -> None:
-    """Unmounts a read-only SquashFS mounted in a Linux build machine and removes its mountpoint."""
+def unmount_read_only_mount(mount_point: str, output_handler, process_holder: list | None = None,
+                            executor: Executor | None = None) -> None:
+    """Unmounts a read-only SquashFS or extracted cache mounted in a Linux build machine."""
     executor = executor or LOCAL_EXECUTOR
     if not executor.is_machine:
         raise RuntimeError("Direct SquashFS mounts are only supported in build machines")
@@ -476,13 +545,19 @@ fi
 rmdir -- {q(mount_point)}
 """
     if not executor.run(script, output_handler, process_holder):
-        raise RuntimeError(f"Failed to unmount SquashFS at {mount_point}")
+        raise RuntimeError(f"Failed to unmount read-only image at {mount_point}")
 
 def remove_extracted_squashfs(squashfs_path: str, kind: str, executor: Executor | None = None):
-    """Removes extracted copy of squashfs file (eg. when toolset or snapshot is deleted), in background."""
+    """Removes a cached extraction when its source toolset or snapshot is deleted."""
     executor = executor or LOCAL_EXECUTOR
     if executor.is_machine:
-        return # Machine extracted trees are inside the disposable ext4 workspace.
+        image = machine_toolset_cache_image(squashfs_path, executor) if kind == "toolsets" else None
+        if image:
+            try:
+                os.remove(image)
+            except FileNotFoundError:
+                pass
+        return
     if rootless_unsupported_reason() is not None:
         return
     path = os.path.join(extracted_directory(kind, executor), os.path.basename(squashfs_path) + ".d")
@@ -498,7 +573,8 @@ def remove_in_namespace(paths: list[str], output_handler, process_holder: list |
 # Folders of executor:
 # Cache/Distfiles             sources downloaded by portage
 # Cache/Extracted/<Kind>      extracted toolsets and snapshots on this computer
-# Machine Temporary/Work/Extracted/<Kind> extracted Linux trees on ext4
+# Cache/Extracted/Toolsets/*.ext4 persistent, case-sensitive machine toolset caches
+# Machine Temporary/Work/Extracted/<Kind> temporary Linux trees on ext4
 # Cache/ToolsetStages         downloaded Gentoo stages used to create toolsets
 # Temporary/Sessions          builds and toolset environments
 # Temporary/Work              writable toolset copies, work directories and unfinished extractions
@@ -506,9 +582,7 @@ def remove_in_namespace(paths: list[str], output_handler, process_holder: list |
 def extracted_directory(kind: str, executor: Executor | None = None) -> str:
     executor = executor or LOCAL_EXECUTOR
     if executor.is_machine:
-        # Linux trees can contain case-colliding paths (for example xt_CONNMARK.h and
-        # xt_connmark.h). A macOS library volume is often case-insensitive, so extracted
-        # trees must live on the machine's ext4 workspace instead of its shared Cache mount.
+        # Snapshot trees live only for the operation; toolsets use a persistent ext4 cache image instead.
         return os.path.join(work_directory(executor), "Extracted", kind.capitalize())
     return os.path.join(executor.cache_directory(), "Extracted", kind.capitalize())
 

@@ -151,7 +151,7 @@ class BootScriptTests(unittest.TestCase):
     def test_package_setup_adds_init_kernel_firmware_and_boot_files_configuration(self):
         script = packages_script(['sys-apps/systemd', 'sys-kernel/gentoo-kernel-bin',
                                   'sys-kernel/linux-firmware', 'sys-boot/raspberrypi-firmware'],
-                                 'efi-64', 'systemd', generic_initramfs=True,
+                                 'efi-64', generic_initramfs=True,
                                  bootloader=Bootloader.RASPBERRY_PI)
         self.assertIn('GRUB_PLATFORMS="efi-64"', script)
         self.assertIn('sys-apps/systemd boot kernel-install', script)
@@ -162,6 +162,12 @@ class BootScriptTests(unittest.TestCase):
         self.assertIn('for FILE in config.txt cmdline.txt', script)
         self.assertIn('restore_boot_files', script)
         self.assertIn('emerge --noreplace --quiet-build=y', script)
+
+    def test_package_setup_configures_the_systemd_package_actually_selected(self):
+        script = packages_script(['sys-apps/systemd-utils'], None)
+
+        self.assertIn('sys-apps/systemd-utils boot kernel-install', script)
+        self.assertNotIn('sys-apps/systemd boot kernel-install', script)
 
     def test_grub_install_script_adds_rootwait_and_removable_fallback(self):
         script = bootloader_script(Bootloader.GRUB, 'x86_64', True, '/dev/sda', '/dev/sda2',

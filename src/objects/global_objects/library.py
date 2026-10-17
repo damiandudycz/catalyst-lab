@@ -2,6 +2,8 @@ from __future__ import annotations
 import errno, json, os, shutil
 from dataclasses import dataclass
 from enum import Enum
+from .formatters import format_size
+from .helper_functions import path_is_within
 from .repository import library_directory, store_library_directory, collapse_home
 
 # ------------------------------------------------------------------------------
@@ -60,7 +62,7 @@ def library_target(chosen: str, allow_current: bool = False) -> LibraryTarget:
     else:
         raise ValueError(f"{collapse_home(chosen)} and its {LIBRARY_FOLDER_NAME} subfolder contain other files, "
                          "but no Catalyst Lab Library was found.")
-    if (_inside(target, current) or _inside(current, target)) and not (allow_current and _same_path(target, current)):
+    if (path_is_within(target, current) or path_is_within(current, target)) and not (allow_current and _same_path(target, current)):
         raise ValueError("Library can't be kept inside the current library, or contain it.")
     return LibraryTarget(target, existing=False)
 
@@ -85,7 +87,7 @@ def change_problem(target: LibraryTarget, change: LibraryChange) -> str | None:
         required = _library_size(old)
         free = shutil.disk_usage(ancestor).free
         if required > free:
-            return f"There is not enough space: {_format_size(required)} is needed, {_format_size(free)} is free."
+            return f"There is not enough space: {format_size(required)} is needed, {format_size(free)} is free."
     return None
 
 def change_library(target: LibraryTarget, change: LibraryChange, progress=lambda fraction, text: None) -> list[str]:
@@ -251,9 +253,6 @@ def _rewrite_object_paths(library: str, old: str):
 def _same_path(first: str, second: str) -> bool:
     return os.path.realpath(first) == os.path.realpath(second)
 
-def _inside(path: str, folder: str) -> bool:
-    return os.path.realpath(path).startswith(os.path.realpath(folder) + os.sep)
-
 def _existing_ancestor(path: str) -> str:
     while not os.path.exists(path):
         path = os.path.dirname(path)
@@ -273,10 +272,3 @@ def _remove_hidden_files(path: str):
     for name in os.listdir(path):
         item = os.path.join(path, name)
         shutil.rmtree(item) if os.path.isdir(item) and not os.path.islink(item) else os.remove(item)
-
-def _format_size(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.0f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"

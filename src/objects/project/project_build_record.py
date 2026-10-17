@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json, os
+import uuid
 from collections import deque
 from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessState, MultiStageProcessStageState
 from .project_build import project_builds_directory, stage_builds_directory
@@ -21,9 +22,10 @@ def _record_path(project_directory, timestamp: str) -> str:
 def _read_build_record(project_directory, timestamp: str) -> dict | None:
     try:
         with open(_record_path(project_directory, timestamp), encoding="utf-8") as file:
-            return json.load(file)
+            record = json.load(file)
     except (OSError, ValueError):
         return None
+    return record if isinstance(record, dict) and isinstance(record.get("steps"), list) else None
 
 def save_build_record(process):
     """Saves steps of build run (ProjectBuild). Saved while it runs too (when steps change), so runs interrupted by
@@ -61,8 +63,9 @@ def failed_steps(project_directory, timestamp: str) -> list[str]:
     record = _read_build_record(project_directory, timestamp)
     if record is None:
         return []
-    return [step["name"] for step in record.get("steps", [])
-            if "stage_name" not in step and step.get("state") == MultiStageProcessStageState.FAILED.name]
+    return [step["name"] for step in record["steps"]
+            if isinstance(step, dict) and isinstance(step.get("name"), str) and "stage_name" not in step
+            and step.get("state") == MultiStageProcessStageState.FAILED.name]
 
 def delete_build_record(project_directory, timestamp: str):
     try:
@@ -84,7 +87,7 @@ def load_build_record(project_directory, timestamp: str) -> RecordedBuild:
                 output = _stage_log(project_directory, stage_id, timestamp) if data.get("started") and stage_id else []
             steps.append((data["name"], data["description"], _step_state(data["state"]), output, data["progress"]))
         return RecordedBuild(project_directory, record["title"], record["status"], steps)
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
         return RecordedBuild(project_directory, f"Building {project_directory.name}", "failed",
                              [("Run details unavailable", "No saved details are available for this run.",
                                MultiStageProcessStageState.FAILED, [], None)])
@@ -97,7 +100,6 @@ def _step_state(name: str | None) -> MultiStageProcessStageState:
 def _stage_log(project_directory, stage_id: str | None, timestamp: str) -> list[str]:
     if not stage_id:
         return []
-    import uuid
     path = os.path.join(stage_builds_directory(project_directory, uuid.UUID(stage_id)), timestamp, "build.log")
     try:
         with open(path, encoding="utf-8", errors="replace") as file:

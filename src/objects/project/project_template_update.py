@@ -551,9 +551,7 @@ class _RenderTarget:
     @property
     def stages(self):
         # Created stages, cleared by apply_project_template.
-        if "_stages" not in self.__dict__:
-            self.__dict__["_stages"] = []
-        return self.__dict__["_stages"]
+        return self.__dict__.setdefault("_stages", [])
     def __getattr__(self, name):
         # Configuration of real project (toolset, releng...), its private state isn't shared.
         if name.startswith("_"):

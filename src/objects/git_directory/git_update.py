@@ -65,11 +65,7 @@ def update_git_directory(directory: GitDirectory, log):
     of process (eg. overlays updated with project). Raises when update fails, rebase is aborted then."""
     path = directory.directory_path()
     def git(*arguments):
-        log(f"$ git {' '.join(arguments)}")
-        result = subprocess.run(["git", *arguments], cwd=path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                universal_newlines=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
-        for line in result.stdout.splitlines():
-            log(line)
+        result = directory.run_git_logged(arguments, log, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
         if result.returncode != 0:
             raise RuntimeError(f"git {arguments[0]} failed in {directory.name}")
     with directory.operation():

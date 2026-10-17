@@ -287,7 +287,6 @@ class StagesTreeView(Gtk.Fixed):
         self.drawing_area.queue_draw()
 
     def draw_func(self, area, context, width, height):
-        # This drawing logic is robust enough to handle both layout styles
         context.set_line_width(2)
         context.set_line_cap(cairo.LINE_CAP_ROUND)
         context.set_line_join(cairo.LINE_JOIN_ROUND)
@@ -372,9 +371,7 @@ class StagesTreeView(Gtk.Fixed):
         total_max_x = 0
         separator_y_positions = []
 
-        # 2. CONDITIONAL LAYOUT LOGIC
         if self.centered:
-            # --- Centered Layout Logic ---
             def layout_node_centered(node, x, y, branch_positions):
                 node_width, node_height = self.node_sizes[node]
                 if not node.children:
@@ -407,7 +404,6 @@ class StagesTreeView(Gtk.Fixed):
                 current_y = max_y_in_branch + ROOT_BRANCH_MARGIN_Y
 
         else:
-            # --- Left-Aligned Layout Logic ---
             def layout_node_left(node, x, y):
                 node_width, node_height = self.node_sizes[node]
                 all_positions[node] = (x, y)

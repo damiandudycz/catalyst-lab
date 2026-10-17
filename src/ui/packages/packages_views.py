@@ -5,7 +5,7 @@ from .combo_row_popup import fit_popup_to_items
 from .repository import Repository, RepositoryEvent
 from .architecture import Architecture
 from .status_indicator import StatusIndicatorState
-from .formatters import format_size
+from .global_objects.formatters import format_size
 from .packages_directory import (
     PackagesDirectory, create_packages_directory, delete_packages_directory, is_packages_name_available, unique_packages_name
 )

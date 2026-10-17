@@ -22,6 +22,10 @@ class AppVersionTests(unittest.TestCase):
     def test_stops_at_first_non_numeric_component(self):
         self.assertEqual(version_tuple("2.preview.1"), (2,))
 
+    def test_stops_at_non_numeric_suffix_within_component(self):
+        self.assertEqual(version_tuple("2.1rc1.4"), (2, 1))
+        self.assertEqual(version_tuple("release-2.1"), ())
+
 
 if __name__ == "__main__":
     unittest.main()

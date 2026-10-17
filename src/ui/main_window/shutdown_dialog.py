@@ -84,7 +84,7 @@ class ShutdownDialog(Adw.Dialog):
     """Visible, sequential cleanup of running operations before app exit."""
 
     def __init__(self, window, processes, qemu_runs, build_queue):
-        super().__init__(title="Closing Catalyst Lab", can_close=False, content_width=520, content_height=500,
+        super().__init__(title="Closing Catalyst Lab", can_close=False, content_width=520,
                          presentation_mode=Adw.DialogPresentationMode.FLOATING)
         self.window = window
         self.app = window.get_application()
@@ -136,7 +136,8 @@ class ShutdownDialog(Adw.Dialog):
             self.rows_scroller = Gtk.ScrolledWindow(
                 hscrollbar_policy=Gtk.PolicyType.NEVER,
                 vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
-                propagate_natural_height=False,
+                propagate_natural_height=True,
+                min_content_height=56,
             )
             self.rows_scroller.set_max_content_height(260)
             self.rows_scroller.set_child(self.rows_box)
@@ -145,8 +146,9 @@ class ShutdownDialog(Adw.Dialog):
         self.status_label = Gtk.Label(label="The app will close after cleanup finishes.", xalign=0, wrap=True)
         self.status_label.add_css_class("dimmed")
         box.append(self.status_label)
-        self.close_button = Gtk.Button(label="Close anyway", halign=Gtk.Align.END, visible=False)
+        self.close_button = Gtk.Button(label="Force quit", halign=Gtk.Align.END)
         self.close_button.add_css_class("destructive-action")
+        self.close_button.set_tooltip_text("Exit immediately without waiting for cleanup to finish")
         self.close_button.connect("clicked", lambda *_: self._finish_close(fallback=True))
         box.append(self.close_button)
         self.set_child(box)
@@ -249,8 +251,7 @@ class ShutdownDialog(Adw.Dialog):
 
     def _all_steps_finished(self):
         if self._errors:
-            self.status_label.set_label("Some items could not be stopped. Review the details, then close the app.")
-            self.close_button.set_visible(True)
+            self.status_label.set_label("Some items could not be stopped. Review the details or force quit.")
         else:
             self._finish_close()
         return GLib.SOURCE_REMOVE

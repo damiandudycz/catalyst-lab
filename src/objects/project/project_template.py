@@ -573,6 +573,8 @@ def _overlay_references(value) -> list[TemplateOverlayReference]:
 def _replace_overlay_references(value, overlay_ids: dict[str, Any]):
     if isinstance(value, TemplateOverlayReference):
         return overlay_ids[value.id]
+    if isinstance(value, dict):
+        return {key: _replace_overlay_references(item, overlay_ids) for key, item in value.items()}
     if isinstance(value, list):
         return [_replace_overlay_references(item, overlay_ids) for item in value]
     return value
@@ -916,8 +918,8 @@ def load_cloned_template(path: str, repository_url: str, repository_path: str) -
     os.makedirs(temporary, exist_ok=True)
     temporary_directory = tempfile.mkdtemp(prefix="project-template-", dir=temporary)
     copy_path = os.path.join(temporary_directory, "repository")
-    shutil.copytree(path, copy_path, symlinks=True, ignore=shutil.ignore_patterns(".git"))
     try:
+        shutil.copytree(path, copy_path, symlinks=True, ignore=shutil.ignore_patterns(".git"))
         template = ProjectTemplate.load(os.path.join(copy_path, repository_path), repository_url=repository_url,
                                         repository_path=repository_path)
     except Exception:

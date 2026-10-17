@@ -1,7 +1,7 @@
 import os
 from gi.repository import Gtk, Adw, GLib
 from .multistage_process_execution_view import AnsiStyle, append_ansi_line
-from .formatters import format_size
+from .global_objects.formatters import format_size
 from .scrolled_window import scrolled_window
 
 # ------------------------------------------------------------------------------
@@ -37,7 +37,8 @@ class FilesBrowserView(Gtk.Box):
         self.group = Adw.PreferencesGroup(title=GLib.markup_escape_text(title))
         self.append(self.group)
         try:
-            entries = [entry for entry in os.scandir(self.path) if entry.name not in _HIDDEN_NAMES]
+            with os.scandir(self.path) as directory:
+                entries = [entry for entry in directory if entry.name not in _HIDDEN_NAMES]
         except OSError as e:
             self.group.add(Adw.StatusPage(icon_name="dialog-error-symbolic", title="Folder can't be read",
                                           description=GLib.markup_escape_text(str(e))))

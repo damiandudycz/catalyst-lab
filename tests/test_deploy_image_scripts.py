@@ -100,11 +100,20 @@ class MachineRootConnectionTests(unittest.TestCase):
         connection = deploy_image.MachineRootConnection(machine)
         self.assertIsNone(connection.connect())
         machine.begin_use.assert_called_once_with('Deploy image')
-        machine.ensure_running.assert_called_once_with()
+        machine.ensure_running.assert_called_once_with(print, None)
         self.assertTrue(connection.is_alive())
         connection.close()
         machine.end_use.assert_called_once_with('Deploy image')
         self.assertFalse(connection.connected)
+
+    def test_connect_forwards_output_and_process_tracking(self):
+        machine = Mock(name='builder')
+        connection = deploy_image.MachineRootConnection(machine)
+        output, processes = Mock(), []
+
+        self.assertIsNone(connection.connect(output_handler=output, process_holder=processes))
+
+        machine.ensure_running.assert_called_once_with(output, processes)
 
     def test_failed_machine_start_releases_use_and_returns_context(self):
         machine = Mock(name='builder')

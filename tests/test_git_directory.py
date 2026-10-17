@@ -30,6 +30,20 @@ class TestDirectory(GitDirectory):
 
 
 class GitDirectoryTests(unittest.TestCase):
+    def test_logged_git_command_shares_command_and_output_logging(self):
+        directory = TestDirectory('/tmp/repository')
+        result = types.SimpleNamespace(returncode=1, stdout='remote unavailable\n')
+        log = []
+        environment = {'GIT_TERMINAL_PROMPT': '0'}
+
+        with patch.object(directory, '_run_git', return_value=result) as run:
+            returned = directory.run_git_logged(['fetch', '--all'], log.append, env=environment)
+
+        self.assertIs(returned, result)
+        self.assertEqual(log, ['$ git fetch --all', 'remote unavailable'])
+        run.assert_called_once_with('fetch', '--all', stdout=module.subprocess.PIPE,
+                                    stderr=module.subprocess.STDOUT, text=True, env=environment)
+
     def test_worktree_git_file_resolves_metadata_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -100,6 +114,36 @@ class GitDirectoryTests(unittest.TestCase):
             self.assertTrue(directory.has_remote_changes)
             self.assertEqual(run.call_count, 6)
             self.assertTrue(all(call.kwargs['cwd'] == temporary for call in run.call_args_list))
+
+    def test_commit_with_no_staged_changes_still_refreshes_directory(self):
+        directory = TestDirectory('/tmp/repository')
+        run_change_inline = lambda worker, wait: worker()
+        with patch.object(module, '_run_worker', side_effect=run_change_inline), \
+             patch.object(directory, '_run_git', side_effect=[None, types.SimpleNamespace(returncode=0)]) as run, \
+             patch.object(directory, 'update_status') as update_status, \
+             patch.object(directory, 'update_logs') as update_logs:
+            directory.commit_changes(wait=True)
+
+        self.assertEqual([call.args for call in run.call_args_list], [
+            ('add', '-A'), ('diff', '--cached', '--quiet')
+        ])
+        update_status.assert_called_once_with(wait=True)
+        update_logs.assert_called_once_with(wait=True)
+        self.assertFalse(directory.is_busy)
+
+    def test_discard_failure_still_clears_busy_state_and_refreshes(self):
+        directory = TestDirectory('/tmp/repository')
+        run_change_inline = lambda worker, wait: worker()
+        with patch.object(module, '_run_worker', side_effect=run_change_inline), \
+             patch.object(directory, '_run_git', side_effect=RuntimeError('reset failed')) as run, \
+             patch.object(directory, 'update_status') as update_status, \
+             patch.object(directory, 'update_logs') as update_logs:
+            directory.discard_changes(wait=True)
+
+        run.assert_called_once_with('reset', '--hard', check=True)
+        update_status.assert_called_once_with(wait=True)
+        update_logs.assert_called_once_with(wait=True)
+        self.assertFalse(directory.is_busy)
 
 
 if __name__ == '__main__':

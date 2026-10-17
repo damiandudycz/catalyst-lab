@@ -73,10 +73,7 @@ class MachineRootConnection:
         self.machine.begin_use(self._USER)
         self.connected = True
         try:
-            if output_handler is print and process_holder is None:
-                self.machine.ensure_running()
-            else:
-                self.machine.ensure_running(output_handler, process_holder)
+            self.machine.ensure_running(output_handler, process_holder)
             if cancel_event is not None and cancel_event.is_set():
                 self.close()
                 return "Canceled"

@@ -441,15 +441,17 @@ class BuildMachine:
         image = self.workspace_image_path
         os.makedirs(os.path.dirname(image), exist_ok=True)
         output_handler(f"Preparing working space of {self.name}")
+        image_argument = shlex.quote(image)
+        directory_argument = shlex.quote(os.path.dirname(image))
         # Left by previous session of app (eg. after crash) is replaced.
         script = f"""
 set -e
 sudo umount -R -l {MACHINE_DATA_DIRECTORY} 2>/dev/null || true
-mkdir -p {shlex.quote(os.path.dirname(image))}
-rm -f "{image}"
-truncate -s {self.workspace_gib}G "{image}"
-mkfs.ext4 -q -F -m 0 "{image}"
-sudo mount -o loop "{image}" {MACHINE_DATA_DIRECTORY}
+mkdir -p {directory_argument}
+rm -f {image_argument}
+truncate -s {self.workspace_gib}G {image_argument}
+mkfs.ext4 -q -F -m 0 {image_argument}
+sudo mount -o loop {image_argument} {MACHINE_DATA_DIRECTORY}
 sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
 """
         if not MachineExecutor(self).run(script, output_handler, process_holder):
@@ -467,7 +469,7 @@ sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
                 # Toolset SquashFS mounts live inside this workspace. Recursively unmount them too if the app exited
                 # before normal toolset cleanup, so the workspace image can be detached safely.
                 cleanup = (f'if mountpoint -q {MACHINE_DATA_DIRECTORY}; then sudo umount -R -l {MACHINE_DATA_DIRECTORY}; fi; '
-                           f'rm -f "{image}"')
+                           f'rm -f {shlex.quote(image)}')
                 if not MachineExecutor(self).run(cleanup, output_handler):
                     output_handler(f"Failed to remove working space of {self.name}: guest unmount failed")
                     return

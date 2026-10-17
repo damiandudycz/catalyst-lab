@@ -6,7 +6,7 @@ from datetime import datetime
 from .multistage_process import MultiStageProcess, MultiStageProcessEvent
 from .ssh_connection import quote
 from .deploy_log import write_log_line
-from .deploy_step import DeployStep
+from .deploy_step import DeployStep, check_tools_script
 
 # ------------------------------------------------------------------------------
 # Deploying live CD builds (ISO images): written to disk of this computer (USB drive, SD card), or saved as new ISO
@@ -288,11 +288,8 @@ class _StepPrepare(DeployStep):
             raise RuntimeError(error)
         tools = ["xorriso"] + (["mkfs.vfat", "mcopy"] if process.raspberry_pi is not None else []) \
             + (["unsquashfs", "mksquashfs", "chroot"] if process.system is not None else [])
-        self.remote(f"""
-missing=""
-for tool in {" ".join(tools)}; do command -v "$tool" > /dev/null || missing="$missing $tool"; done
-[ -z "$missing" ] || {{ echo "Missing tools:$missing (packages xorriso, dosfstools, mtools and squashfs-tools)"; exit 1; }}
-""", "Tools needed to create ISO are missing")
+        self.remote(check_tools_script(tools, "packages xorriso, dosfstools, mtools and squashfs-tools"),
+                    "Tools needed to create ISO are missing")
         shutil.rmtree(process.work_directory, ignore_errors=True)
         os.makedirs(process.work_directory)
         if process.system is not None:
@@ -537,14 +534,16 @@ class _StepBootPartition(DeployStep):
                 shutil.copy2(source, boot)
         kernel = os.path.basename(process.kernel_name)
         initramfs = os.path.basename(process.initramfs_name) if process.initramfs_name else None
+        config = raspberry_pi_config(kernel, initramfs, process.raspberry_pi)
+        cmdline = raspberry_pi_cmdline(process.kernel_arguments, process.raspberry_pi)
         with open(os.path.join(boot, "config.txt"), "w", encoding="utf-8") as file:
-            file.write(raspberry_pi_config(kernel, initramfs, process.raspberry_pi))
+            file.write(config)
         with open(os.path.join(boot, "cmdline.txt"), "w", encoding="utf-8") as file:
-            file.write(raspberry_pi_cmdline(process.kernel_arguments, process.raspberry_pi))
+            file.write(cmdline)
         self.log("config.txt:")
-        for line in raspberry_pi_config(kernel, initramfs, process.raspberry_pi).splitlines():
+        for line in config.splitlines():
             self.log(f"  {line}")
-        self.log(f"cmdline.txt: {raspberry_pi_cmdline(process.kernel_arguments, process.raspberry_pi).strip()}")
+        self.log(f"cmdline.txt: {cmdline.strip()}")
         size = sum(os.path.getsize(os.path.join(root, name)) for root, _, names in os.walk(boot) for name in names)
         # FAT32 with 512 byte clusters: files fit with little waste, enough clusters for FAT32 from 64 MiB.
         kib = max(64 * 1024, (size * 12 // 10) // 1024 + 16 * 1024)
@@ -628,19 +627,10 @@ class _StepSaveIso(DeployStep):
         source, destination = process.prepared_iso, process.output_path
         if not destination:
             raise RuntimeError("Location of ISO is not selected")
-        partial = destination + ".part"
         size = os.path.getsize(source)
         if source != process.iso_path and os.stat(source).st_dev == os.stat(os.path.dirname(destination) or ".").st_dev:
             os.replace(source, destination) # Prepared ISO on the same disk is moved.
         else:
             # Copied with progress (ISO of build is kept, other disk).
-            copied = 0
-            with open(source, "rb") as input_file, open(partial, "wb") as output_file:
-                while chunk := input_file.read(8 * 1024 * 1024):
-                    if self._cancel_event.is_set():
-                        raise RuntimeError("Canceled")
-                    output_file.write(chunk)
-                    copied += len(chunk)
-                    self._update_progress(copied / size * 0.99)
-            os.replace(partial, destination)
+            self.copy_file(source, destination)
         self.log(f"Saved {destination} ({size // (1024 * 1024)} MiB)")

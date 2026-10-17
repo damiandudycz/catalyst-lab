@@ -116,6 +116,8 @@ Builds with a generic kernel run in a virtual machine from their row in Builds:
 - **Live CD ISO images** boot with EFI firmware.
 - **stage3 and stage4 with kernel** boot their own kernel and initramfs, with system in disk image made from the stage
   (once, kept with the build). Changes are discarded when the machine stops, root logs in without password.
+- Stages without a boot kernel can build one at VM startup. In **Advanced**, choose a free Gentoo toolset, snapshot,
+  and kernel package; preparation progress shows image and kernel steps separately.
 - Kernels of devices QEMU doesn't emulate (Raspberry Pi, PS3) can't run, their builds show why.
 - Test VM CPU and memory defaults are under **Settings → Test built images**. Toolset VMs have separate resource settings.
 

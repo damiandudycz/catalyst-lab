@@ -1,4 +1,5 @@
 """QEMU command construction and host measurements without launching a VM."""
+import ast
 from pathlib import Path
 import shutil
 import sys
@@ -19,6 +20,84 @@ from catalystlab import repository
 
 
 class QemuRunTests(unittest.TestCase):
+    def test_vm_image_preparation_exposes_separate_workflow_steps(self):
+        source = (ROOT / 'src/objects/qemu/qemu_run.py').read_text()
+        tree = ast.parse(source)
+        process = next(node for node in tree.body
+                       if isinstance(node, ast.ClassDef) and node.name == 'QemuImagePreparation')
+        setup = next(node for node in process.body
+                     if isinstance(node, ast.FunctionDef) and node.name == 'setup_stages')
+        namespace = {'_StepImage': lambda name, owner, operation: (name, operation)}
+        exec(compile(ast.Module(body=[setup], type_ignores=[]), 'qemu_run.py', 'exec'), namespace)
+
+        for kernel_package, expected in ((None, [('Prepare cached stage image', 'cache'),
+                                                  ('Prepare writable VM image', 'image')]),
+                                         ('sys-kernel/gentoo-kernel', [('Prepare cached stage image', 'cache'),
+                                                                       ('Prepare writable VM image', 'image'),
+                                                                       ('Build custom kernel', 'kernel')])):
+            with self.subTest(kernel_package=kernel_package):
+                view = types.SimpleNamespace(support=types.SimpleNamespace(kernel_package=kernel_package), stages=[])
+                namespace['setup_stages'](view)
+                self.assertEqual(view.stages, expected)
+
+    def test_kernel_stage_config_mount_does_not_include_merged_portage_mount(self):
+        source = (ROOT / 'src/objects/qemu/qemu_run.py').read_text()
+        tree = ast.parse(source)
+        process = next(node for node in tree.body
+                       if isinstance(node, ast.ClassDef) and node.name == '_StepImage')
+        method = next(node for node in process.body
+                      if isinstance(node, ast.FunctionDef) and node.name == '_emerge_kernel_package')
+        mounts = [node for node in ast.walk(method) if isinstance(node, ast.Call)
+                  and isinstance(node.func, ast.Name) and node.func.id == 'BindMount']
+        stage_mount = next(node for node in mounts if any(
+            keyword.arg == 'mount_path' and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value == '/var/tmp/catalystlab-stage-portage'
+            for keyword in node.keywords))
+        host_path = next(keyword.value for keyword in stage_mount.keywords if keyword.arg == 'host_path')
+
+        self.assertIsInstance(host_path, ast.Call)
+        self.assertEqual(ast.unparse(host_path), 'str(stage_config_directory)')
+
+    def test_custom_kernel_uses_writable_root_overlay(self):
+        source = (ROOT / 'src/objects/qemu/qemu_run.py').read_text()
+        tree = ast.parse(source)
+        process = next(node for node in tree.body
+                       if isinstance(node, ast.ClassDef) and node.name == '_StepImage')
+        method = next(node for node in process.body
+                      if isinstance(node, ast.FunctionDef) and node.name == '_emerge_kernel_package')
+        spawn = next(node for node in ast.walk(method) if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Attribute) and node.func.attr == 'spawn')
+
+        self.assertTrue(next(keyword.value.value for keyword in spawn.keywords
+                             if keyword.arg == 'writable_root_overlay'))
+
+    def test_guest_image_cleanup_is_safe_when_mount_is_already_gone(self):
+        script = qemu.stage_image_unmount_script('/temporary/image')
+
+        self.assertIn('if mountpoint -q', script)
+        self.assertIn('then umount', script)
+
+    def test_kernel_build_lists_free_external_toolsets_after_project_toolset(self):
+        from catalystlab.toolset import ToolsetEnv
+        project_toolset = types.SimpleNamespace(busy_reason=None)
+        alternative = types.SimpleNamespace(busy_reason=None, env=ToolsetEnv.EXTERNAL)
+        project = types.SimpleNamespace(get_toolset=lambda: project_toolset)
+        toolsets = types.SimpleNamespace(value=[project_toolset, alternative])
+
+        with patch.object(repository.Repository, "Toolset", toolsets, create=True):
+            self.assertEqual(qemu.kernel_build_toolsets(project), [project_toolset, alternative])
+
+    def test_kernel_build_offers_free_external_toolsets_when_project_toolset_is_busy(self):
+        from catalystlab.toolset import ToolsetEnv
+        busy = types.SimpleNamespace(busy_reason="in use")
+        alternative = types.SimpleNamespace(busy_reason=None, env=ToolsetEnv.EXTERNAL)
+        unavailable = types.SimpleNamespace(busy_reason="in use", env=ToolsetEnv.EXTERNAL)
+        project = types.SimpleNamespace(get_toolset=lambda: busy)
+        toolsets = types.SimpleNamespace(value=[busy, alternative, unavailable])
+
+        with patch.object(repository.Repository, "Toolset", toolsets, create=True):
+            self.assertEqual(qemu.kernel_build_toolsets(project), [alternative])
+
     def test_custom_kernel_cache_resolves_tilde_in_library_location(self):
         settings = types.SimpleNamespace(cache_location='~/CatalystLab/Cache')
         build = types.SimpleNamespace(id='build-one', artifact_path='/missing/stage.tar.xz')
@@ -28,6 +107,22 @@ class QemuRunTests(unittest.TestCase):
 
         self.assertTrue(Path(cache).is_absolute())
         self.assertEqual(Path(cache).parts[-2], 'TestVMKernels')
+
+    def test_custom_kernel_cache_is_separate_for_each_toolset(self):
+        build = types.SimpleNamespace(id='build-one', artifact_path='/missing/stage.tar.xz')
+        snapshot = types.SimpleNamespace(filename='gentoo.sqfs', file_path=lambda: '/missing/gentoo.sqfs')
+        first = types.SimpleNamespace(uuid='first')
+        second = types.SimpleNamespace(uuid='second')
+
+        with patch.object(repository.Repository, 'Settings',
+                          types.SimpleNamespace(value=types.SimpleNamespace(cache_location='~/CatalystLab/Cache')),
+                          create=True):
+            first_cache = qemu._kernel_output_cache_directory(
+                build, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [], first)
+            second_cache = qemu._kernel_output_cache_directory(
+                build, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [], second)
+
+        self.assertNotEqual(first_cache, second_cache)
 
     def test_stage_image_workspace_is_created_and_cleaned_in_library_temporary(self):
         with tempfile.TemporaryDirectory() as temporary:

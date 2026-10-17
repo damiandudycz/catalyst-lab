@@ -119,6 +119,7 @@ class QemuSupport:
     backend: str = "qemu"
     kernel_package: str | None = None # Emerged into the temporary guest image before boot.
     kernel_snapshot: object | None = None # Gentoo repository snapshot used to emerge the selected package.
+    kernel_toolset: object | None = None # Toolset used for this run when the project's toolset is busy.
     image_directory: str | None = None # Per-run Library/Temporary workspace, removed when the VM stops.
     base_image_path: str | None = None # Immutable cached raw disk used as a QEMU qcow2 backing image.
     base_kernel_path: str | None = None # Cached boot kernel used directly by QEMU.
@@ -135,6 +136,17 @@ class QemuSupport:
     @property
     def available(self) -> bool:
         return self.reason is None
+
+def kernel_build_toolsets(project_directory) -> list:
+    """Free kernel-build toolsets, with the project's configured toolset first when available."""
+    project_toolset = project_directory.get_toolset()
+    from .repository import Repository
+    from .toolset import ToolsetEnv
+    toolsets = ([project_toolset] if project_toolset and not project_toolset.busy_reason else [])
+    toolsets.extend(toolset for toolset in Repository.Toolset.value
+                    if toolset is not project_toolset and toolset.env == ToolsetEnv.EXTERNAL
+                    and not toolset.busy_reason)
+    return toolsets
 
 _KERNEL = re.compile(r"\./boot/((vmlinuz|vmlinux|Image)-?[^/]*)$")
 _INITRAMFS = re.compile(r"\./boot/((initramfs|initrd)-?[^/]*)$")
@@ -252,8 +264,6 @@ def qemu_support(project_directory, build, *, check_runtime: bool = True) -> Qem
         initramfs = next((image for image in images if version and version in image), images[0] if images else None)
     else:
         return QemuSupport(None, machine, reason="Only stage3, stage4 and live CD builds can run")
-    if machine is None:
-        return QemuSupport(kind, None, reason=f"Running {architecture.value if architecture else 'this architecture'} in QEMU isn't supported yet")
     if not check_runtime:
         return QemuSupport(kind, machine, kernel=kernel, initramfs=initramfs)
     if qemu_binary(machine.binary) is None:
@@ -495,7 +505,7 @@ def stage_image_mount_script(directory: str) -> str:
 def stage_image_unmount_script(directory: str) -> str:
     from .ssh_connection import quote
     mount = quote(os.path.join(directory, "rootfs"))
-    return f"umount {mount} && rmdir {mount} || true\n"
+    return f"set -e\nif mountpoint -q {mount}; then umount {mount}; fi\nrmdir {mount} 2>/dev/null || true\n"
 
 def stage_image_add_modules_script(directory: str) -> str:
     """Install modules built with a custom kernel into the temporary VM root filesystem."""
@@ -821,12 +831,13 @@ def _connect_unix(path: str, alive, attempts: int = 100) -> socket.socket | None
 
 # VM image and optional custom-kernel preparation.
 
-def _kernel_output_cache_directory(build, architecture: str, package: str, snapshot, overlays) -> str:
+def _kernel_output_cache_directory(build, architecture: str, package: str, snapshot, overlays, toolset=None) -> str:
     from .repository import Repository, resolve_path
     # Portage configuration and the resulting stage can differ between builds even when
     # they select the same kernel atom. Keep compiled outputs isolated by build identity.
     signature = [str(build.id), os.path.realpath(build.artifact_path or build.path),
-                 architecture, package, snapshot.filename]
+                 architecture, package, snapshot.filename,
+                 str(getattr(toolset, "uuid", None) or getattr(toolset, "name", ""))]
     for path in (build.artifact_path or build.path, snapshot.file_path()):
         try:
             stat = os.stat(path)
@@ -887,7 +898,10 @@ class QemuImagePreparation(MultiStageProcess):
         super().__init__(title="Start virtual machine")
 
     def setup_stages(self):
-        self.stages.append(_StepImage(multistage_process=self))
+        self.stages.append(_StepImage("Prepare cached stage image", self, "cache"))
+        self.stages.append(_StepImage("Prepare writable VM image", self, "image"))
+        if self.support.kernel_package:
+            self.stages.append(_StepImage("Build custom kernel", self, "kernel"))
 
     def name(self) -> str:
         return self.build.stage_name
@@ -935,9 +949,14 @@ class QemuImagePreparation(MultiStageProcess):
         return False
 
 class _StepImage(MultiStageProcessStage):
-    def __init__(self, multistage_process):
-        super().__init__(name="Prepare VM image and kernel", description="Creates the writable VM image and builds the selected kernel",
-                         multistage_process=multistage_process)
+    def __init__(self, name, multistage_process, operation):
+        descriptions = {
+            "cache": "Extracts the stage into a reusable base image when needed",
+            "image": "Creates this run's writable VM image",
+            "kernel": "Builds and installs the selected kernel package",
+        }
+        super().__init__(name=name, description=descriptions[operation], multistage_process=multistage_process)
+        self.operation = operation
 
     def log(self, line: str):
         if line.startswith("@@extract-progress "):
@@ -962,9 +981,6 @@ class _StepImage(MultiStageProcessStage):
         connection = None
         try:
             from .deploy_image import image_connection
-            build = process.build
-            if not process.support.boot_kernel:
-                raise RuntimeError("Stage has no boot kernel; select a custom kernel package to run it")
             directory = process.support.image_directory
             if not directory:
                 raise RuntimeError("Temporary VM image directory has not been allocated")
@@ -974,48 +990,12 @@ class _StepImage(MultiStageProcessStage):
                                            cancel_event=self._cancel_event):
                 raise RuntimeError(error)
             self._check_canceled()
-            # Size: stage unpacked (about 4 times its archive) and free space, sparse file takes only used space.
-            size = max(8 << 30, (os.path.getsize(build.artifact_path) * 5 // (1 << 30) + 4) << 30)
-            cache_directory = stage_image_cache_directory(build, process.support, size)
-            if not stage_base_image_ready(cache_directory, process.support.kernel, process.support.initramfs):
-                # Incomplete cache entries are discarded so a failed extraction cannot be reused.
-                shutil.rmtree(cache_directory, ignore_errors=True)
-                os.makedirs(cache_directory, exist_ok=True)
-                self.log("Extracting stage into reusable cache image")
-                script = stage_image_script(build.artifact_path, cache_directory, size, process.support.kernel,
-                                            process.support.initramfs)
-                if not connection.run(script, self.log, self.processes):
-                    shutil.rmtree(cache_directory, ignore_errors=True)
-                    raise RuntimeError("Failed to create cached base disk image")
-                Path(cache_directory, ".ready").write_text("ready\n", encoding="utf-8")
-            self._check_canceled()
-            if process.support.backend == "qemu" and not process.support.kernel_package:
-                # QEMU's writable qcow2 overlay can use the cached raw disk directly as its backing.
-                # This avoids copying a multi-GiB image even when Cache and Temporary are on
-                # different filesystems or the library volume does not support reflinks.
-                process.support.base_image_path = os.path.join(cache_directory, "root.img")
-                process.support.base_kernel_path = os.path.join(cache_directory, process.support.kernel)
-                process.support.base_initramfs_path = (os.path.join(cache_directory, process.support.initramfs)
-                                                       if process.support.initramfs else None)
-                self.log("Using cached base image directly with a disposable QEMU overlay")
+            if self.operation == "cache":
+                self._prepare_cached_image(connection)
+            elif self.operation == "image":
+                self._prepare_writable_image()
             else:
-                cloned = copy_stage_base_image(cache_directory, directory, process.support.kernel,
-                                               process.support.initramfs, self.processes, self._cancel_event)
-                self.log("Created copy-on-write clone of cached base image" if cloned else
-                         "Copied cached base image; this filesystem does not support instant clones")
-            self._check_canceled()
-            if process.support.kernel_package:
-                if not connection.run(stage_image_mount_script(directory), self.log, self.processes):
-                    raise RuntimeError("Failed to mount the temporary VM image for kernel preparation")
-                self._check_canceled()
-                try:
-                    self._emerge_kernel_package(directory)
-                    self._check_canceled()
-                    if not connection.run(stage_image_add_modules_script(directory), self.log, self.processes):
-                        raise RuntimeError("Failed to add custom kernel modules to the temporary VM image")
-                finally:
-                    if not connection.run(stage_image_unmount_script(directory), self.log, self.processes):
-                        raise RuntimeError("Failed to unmount the temporary VM image")
+                self._prepare_custom_kernel(connection)
             self._check_canceled()
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
@@ -1031,6 +1011,59 @@ class _StepImage(MultiStageProcessStage):
                     connection.close()
                 except Exception:
                     pass
+
+    def _cache_directory(self):
+        build = self.multistage_process.build
+        size = max(8 << 30, (os.path.getsize(build.artifact_path) * 5 // (1 << 30) + 4) << 30)
+        return stage_image_cache_directory(build, self.multistage_process.support, size), size
+
+    def _prepare_cached_image(self, connection):
+        process = self.multistage_process
+        build, support = process.build, process.support
+        if not support.boot_kernel:
+            raise RuntimeError("Stage has no boot kernel; select a custom kernel package to run it")
+        cache_directory, size = self._cache_directory()
+        if stage_base_image_ready(cache_directory, support.kernel, support.initramfs):
+            self.log("Using cached base image")
+            return
+        shutil.rmtree(cache_directory, ignore_errors=True)
+        os.makedirs(cache_directory, exist_ok=True)
+        self.log("Extracting stage into reusable cache image")
+        script = stage_image_script(build.artifact_path, cache_directory, size, support.kernel, support.initramfs)
+        if not connection.run(script, self.log, self.processes):
+            shutil.rmtree(cache_directory, ignore_errors=True)
+            raise RuntimeError("Failed to create cached base disk image")
+        Path(cache_directory, ".ready").write_text("ready\n", encoding="utf-8")
+
+    def _prepare_writable_image(self):
+        support = self.multistage_process.support
+        cache_directory, _ = self._cache_directory()
+        directory = support.image_directory
+        if support.backend == "qemu" and not support.kernel_package:
+            support.base_image_path = os.path.join(cache_directory, "root.img")
+            support.base_kernel_path = os.path.join(cache_directory, support.kernel)
+            support.base_initramfs_path = (os.path.join(cache_directory, support.initramfs)
+                                           if support.initramfs else None)
+            self.log("Using cached base image directly with a disposable QEMU overlay")
+            return
+        cloned = copy_stage_base_image(cache_directory, directory, support.kernel, support.initramfs,
+                                       self.processes, self._cancel_event)
+        self.log("Created copy-on-write clone of cached base image" if cloned else
+                 "Copied cached base image; this filesystem does not support instant clones")
+
+    def _prepare_custom_kernel(self, connection):
+        directory = self.multistage_process.support.image_directory
+        if not connection.run(stage_image_mount_script(directory), self.log, self.processes):
+            raise RuntimeError("Failed to mount the temporary VM image for kernel preparation")
+        self._check_canceled()
+        try:
+            self._emerge_kernel_package(directory)
+            self._check_canceled()
+            if not connection.run(stage_image_add_modules_script(directory), self.log, self.processes):
+                raise RuntimeError("Failed to add custom kernel modules to the temporary VM image")
+        finally:
+            if not connection.run(stage_image_unmount_script(directory), self.log, self.processes):
+                raise RuntimeError("Failed to unmount the temporary VM image")
 
     def _check_canceled(self):
         if self._cancel_event.is_set():
@@ -1063,12 +1096,12 @@ class _StepImage(MultiStageProcessStage):
 
     def _emerge_kernel_package(self, directory: str):
         """Build a kernel in a disposable project-toolset overlay and export its boot files."""
-        from .custom_kernel import kernel_package_build_command
+        from .custom_kernel import kernel_package_build_command, portage_config_setup_command
         from .repository import Repository, resolve_path
         from .root_helper_server import ServerResponseStatusCode
         from .toolset import BindMount
         from .project_build_spec import generate_portage_confdir
-        from .rootless import prepare_snapshot_squashfs, unmount_squashfs, distfiles_directory
+        from .rootless import prepare_snapshot_squashfs, unmount_read_only_mount, distfiles_directory
         from .project_kernel_packages import _stage_overlays
         from .project_stage_arguments import StageArgumentDetails
         from .project_stage_value_resolver import resolve_stage_argument
@@ -1079,6 +1112,9 @@ class _StepImage(MultiStageProcessStage):
         if snapshot is None:
             raise RuntimeError("Select a Gentoo snapshot to emerge a custom kernel")
         stage = next((item for item in project.stages if item.id == process.build.stage_id), None)
+        toolset = process.support.kernel_toolset or project.get_toolset()
+        if toolset is None:
+            raise RuntimeError("A Gentoo toolset is required to build a custom kernel")
         overlays = _stage_overlays(project, stage) if stage is not None else []
         package_cache = None
         if stage is not None:
@@ -1090,16 +1126,13 @@ class _StepImage(MultiStageProcessStage):
         architecture = project.get_architecture()
         cache_directory = _kernel_output_cache_directory(
             process.build, architecture.value if architecture else "unknown",
-            process.support.kernel_package, snapshot, overlays)
+            process.support.kernel_package, snapshot, overlays, toolset)
         require_arm64_image = (process.support.backend == "apple"
                                and process.support.machine.binary == "qemu-system-aarch64")
         if _kernel_outputs_ready(cache_directory, process.support.kernel_package, require_arm64_image):
             copy_kernel_outputs(cache_directory, directory)
             return
 
-        toolset = project.get_toolset()
-        if toolset is None:
-            raise RuntimeError("A project toolset is required to build a custom kernel")
         if not toolset.reserve():
             raise RuntimeError(toolset.busy_reason or f"Toolset {toolset.name} is in use")
 
@@ -1111,6 +1144,10 @@ class _StepImage(MultiStageProcessStage):
         temporary = resolve_path(Repository.Settings.value.temporary_location)
         os.makedirs(temporary, exist_ok=True)
         config_directory = tempfile.mkdtemp(prefix="test-vm-kernel-", dir=temporary)
+        stage_config_directory = Path(config_directory, "stage-portage")
+        stage_config_directory.mkdir()
+        portage_directory = Path(config_directory, "merged-portage")
+        portage_directory.mkdir()
         spawned = False
         snapshot_root = None
         snapshot_mounted = False
@@ -1124,15 +1161,21 @@ class _StepImage(MultiStageProcessStage):
                 snapshot.file_path(), self.log, executor=executor)
 
             if stage is not None:
-                generate_portage_confdir(project, stage, config_directory)
-            repos_directory = Path(config_directory, "repos.conf")
+                generate_portage_confdir(project, stage, str(stage_config_directory))
+            repos_directory = stage_config_directory / "repos.conf"
             repos_directory.mkdir(parents=True, exist_ok=True)
 
             bindings = [
-                BindMount(mount_path="/var/db/repos/gentoo", host_path=snapshot_root),
-                BindMount(mount_path="/mnt/catalystlab-kernel-output", host_path=cache_directory,
+                BindMount(mount_path="/var/db/repos/gentoo", host_path=snapshot_root, read_only=True),
+                BindMount(mount_path="/var/tmp/catalystlab-kernel-output", host_path=cache_directory,
                           store_changes=True, create_if_missing=True),
-                BindMount(mount_path="/mnt/catalystlab-stage-portage", host_path=config_directory),
+                BindMount(mount_path="/var/tmp/catalystlab-stage-portage", host_path=str(stage_config_directory),
+                          read_only=True),
+                BindMount(mount_path="/var/tmp/catalystlab-base-portage", toolset_path="/etc/portage",
+                          read_only=True),
+                # Keep the merged build configuration writable without relying on the
+                # toolset's read-only /etc overlay to copy up all Portage config files.
+                BindMount(mount_path="/etc/portage", host_path=str(portage_directory), store_changes=True),
                 BindMount(mount_path="/var/cache/distfiles", host_path=distfiles_directory(executor),
                           store_changes=True, create_if_missing=True),
             ]
@@ -1157,24 +1200,23 @@ class _StepImage(MultiStageProcessStage):
                 repo_lines.extend([f"[{repo_name}]", f"location = /var/db/repos/{repo_name}",
                                    "masters = gentoo", "auto-sync = no", ""])
                 bindings.append(BindMount(mount_path=f"/var/db/repos/{repo_name}",
-                                          host_path=overlay_path))
+                                          host_path=overlay_path, read_only=True))
             repo_config = repos_directory / "99-catalystlab-test-vm.conf"
             repo_config.write_text("\n".join(repo_lines), encoding="utf-8")
 
-            toolset.spawn(store_changes=False, additional_bindings=bindings)
+            toolset.spawn(store_changes=False, additional_bindings=bindings, writable_root_overlay=True)
+            if not toolset.spawned:
+                raise RuntimeError("Failed to prepare a writable toolset root for the custom kernel")
             spawned = True
             pkgdir_config = ('printf \'%s\\n\' \'PKGDIR="/var/cache/binpkgs"\' >> /etc/portage/make.conf; '
                              if use_binary_packages else "")
-            command = ("set -e; mkdir -p /etc/portage; "
-                       "cp -a /mnt/catalystlab-stage-portage/. /etc/portage/; "
-                       + pkgdir_config
+            command = ("set -e; " + portage_config_setup_command() + pkgdir_config
                        + kernel_package_build_command(process.support.kernel_package, use_binary_packages,
                                                       require_arm64_image))
-            completed = threading.Event()
             response = []
             self._kernel_cancel_sent = False
             call = toolset.run_command(command=command, handler=self.log,
-                                       completion_handler=lambda result: (response.append(result), completed.set()))
+                                       completion_handler=response.append)
             self._kernel_call = call
             while call.thread and call.thread.is_alive():
                 call.thread.join(timeout=0.1)
@@ -1182,7 +1224,6 @@ class _StepImage(MultiStageProcessStage):
                     self._kernel_cancel_sent = True
                     call.cancel()
             self._kernel_call = None
-            completed.wait()
             if not response or response[-1].code != ServerResponseStatusCode.OK:
                 output = call.get_output() if hasattr(call, "get_output") else getattr(call, "output", [])
                 details = "\n".join(output[-30:])
@@ -1195,7 +1236,7 @@ class _StepImage(MultiStageProcessStage):
             finally:
                 try:
                     if snapshot_mounted and snapshot_root:
-                        unmount_squashfs(snapshot_root, self.log, executor=toolset.executor)
+                        unmount_read_only_mount(snapshot_root, self.log, executor=toolset.executor)
                 finally:
                     try:
                         if workspace_acquired:

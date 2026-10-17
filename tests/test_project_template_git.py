@@ -13,11 +13,38 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab import project_template
-from catalystlab.project_template import TemplateError, _run_git
+from catalystlab.project_template import (
+    TemplateError, TemplateOverlayReference, _replace_overlay_references, _run_git, load_cloned_template,
+)
 from catalystlab import project_template_update
 
 
 class ProjectTemplateGitTests(unittest.TestCase):
+    def test_overlay_references_are_replaced_recursively(self):
+        overlay_id = object()
+        value = {"repos": [{"overlay": TemplateOverlayReference("gentoo-overlay")},
+                           [TemplateOverlayReference("gentoo-overlay")]]}
+
+        replaced = _replace_overlay_references(value, {"gentoo-overlay": overlay_id})
+
+        self.assertEqual(replaced, {"repos": [{"overlay": overlay_id}, [overlay_id]]})
+
+    def test_failed_repository_copy_removes_partial_temporary_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = types.SimpleNamespace(value=types.SimpleNamespace(temporary_location=temporary))
+
+            def partial_copy(source, destination, **kwargs):
+                Path(destination).mkdir()
+                raise OSError("copy failed")
+
+            with patch("catalystlab.repository.Repository.Settings", settings, create=True), \
+                 patch.object(project_template, "validate_template_repository", return_value=[""]), \
+                 patch.object(project_template.shutil, "copytree", side_effect=partial_copy):
+                with self.assertRaisesRegex(OSError, "copy failed"):
+                    load_cloned_template("/project", "https://example.test/template.git", "")
+
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+
     @patch('catalystlab.project_template.subprocess.run')
     def test_returns_bytes_and_disables_credential_prompts(self, run):
         run.return_value = types.SimpleNamespace(returncode=0, stdout=b'template')

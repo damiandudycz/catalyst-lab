@@ -4,9 +4,10 @@ import subprocess
 import sys
 import types
 import os
+import shlex
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, PropertyMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if 'catalystlab' not in sys.modules:
@@ -15,6 +16,7 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab import lima
+from catalystlab.build_machine import BuildMachine
 
 
 class BuildMachineWorkspaceTests(unittest.TestCase):
@@ -76,6 +78,74 @@ class BuildMachineWorkspaceTests(unittest.TestCase):
 
             self.assertFalse(os.path.lexists(managed))
             self.assertFalse(os.path.lexists(temporary))
+
+    def test_workspace_shell_commands_quote_library_paths(self):
+        from catalystlab import rootless
+
+        with tempfile.TemporaryDirectory() as temporary:
+            image = os.path.join(temporary, "Library's $temporary", 'workspace.img')
+            machine = BuildMachine(name='test', workspace_gib=4, lima_home=temporary)
+            commands = []
+
+            class Executor:
+                def __init__(self, *_):
+                    pass
+
+                def run(self, script, *_):
+                    commands.append(script)
+                    return True
+
+            with patch.object(BuildMachine, 'workspace_image_path', new=property(lambda _: image)), \
+                    patch.object(rootless, 'MachineExecutor', Executor), \
+                    patch('catalystlab.build_machine.remove_empty_build_machine_temporary_directory'):
+                machine._create_workspace(lambda *_: None, None)
+                Path(image).touch()
+                with patch.object(BuildMachine, 'is_running', new_callable=PropertyMock, return_value=True):
+                    machine._delete_workspace(lambda *_: None)
+
+            quoted_image = shlex.quote(image)
+            self.assertIn(f'truncate -s 4G {quoted_image}', commands[0])
+            self.assertIn(shlex.quote(os.path.dirname(image)), commands[0])
+            self.assertIn(f'rm -f {quoted_image}', commands[1])
+            self.assertFalse(os.path.exists(image))
+
+    def test_new_use_cancels_idle_stop_and_last_release_schedules_it_again(self):
+        machine = BuildMachine(name='test', lima_home='/tmp')
+        machine._started_automatically = True
+
+        class Timer:
+            instances = []
+
+            def __init__(self, interval, callback):
+                self.interval = interval
+                self.callback = callback
+                self.cancelled = False
+                self.started = False
+                self.instances.append(self)
+
+            def start(self):
+                self.started = True
+
+            def cancel(self):
+                self.cancelled = True
+
+        with patch('catalystlab.build_machine.threading.Timer', Timer):
+            machine.begin_use('first operation')
+            machine.end_use('first operation')
+            first_timer = machine._stop_timer
+            machine.begin_use('second operation')
+            self.assertTrue(first_timer.cancelled)
+            self.assertIsNone(machine._stop_timer)
+
+            machine.end_use('second operation')
+            final_timer = machine._stop_timer
+            self.assertTrue(final_timer.started)
+            self.assertEqual(final_timer.interval, machine.IDLE_STOP_SECONDS)
+            machine.stop = Mock()
+            machine._stop_if_idle()
+
+        machine.stop.assert_called_once_with()
+        self.assertIsNone(machine._stop_timer)
 
 
 if __name__ == '__main__':

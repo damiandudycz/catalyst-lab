@@ -2,18 +2,15 @@ from __future__ import annotations
 import os, re, uuid
 from functools import lru_cache
 from typing import Any
-from .project_stage_arguments import StageArgumentDetails, StageArgumentType
+from .project_stage_arguments import StageArgumentDetails, StageArgumentType, parent_stage
 from .project_stage_automatic_option import StageAutomaticOption
 from .project_stage_compression_mode import StageCompressionMode
 from .project_stage_portage_confdir import StagePortageConfdirSource, PORTAGE_CONFDIR_SOURCES_ORDER
 from .snapshot import PortageProfile
 from .repository import Repository
 
-class _Unresolved:
-    """Value of automatic option that can't be determined before building (missing parent or template, no generator)."""
-    def __repr__(self):
-        return "UNRESOLVED"
-UNRESOLVED = _Unresolved()
+# Distinguishes an unknown preview value from None, which means the value is empty.
+UNRESOLVED = object()
 
 # ------------------------------------------------------------------------------
 # Resolving values of automatic options (inherit from parent, releng template...).
@@ -74,24 +71,19 @@ def split_additions(value) -> tuple[list[StageAutomaticOption], list] | None:
         return None
     return list(dict.fromkeys(options)), own
 
-def parent_stage(project_directory, stage):
-    parent_id = getattr(stage, StageArgumentDetails.parent.name, None)
-    if not parent_id:
-        return None
-    return next((item for item in project_directory.stages if item.id == parent_id), None)
-
 def stage_argument_uses_option(project_directory, stage, argument_name: str,
                                options: set[StageAutomaticOption], visited: frozenset = frozenset()) -> bool:
     """Whether a stage argument uses one of the options, directly or through its parent stages."""
     if stage is None or stage.id in visited:
         return False
     value = getattr(stage, argument_name, None)
-    if isinstance(value, list) and len(value) == 1:
-        value = value[0]
-    if value == StageAutomaticOption.INHERIT_FROM_PARENT:
-        return stage_argument_uses_option(
-            project_directory, parent_stage(project_directory, stage), argument_name, options, visited | {stage.id})
-    return value in options
+    values = value if isinstance(value, list) else [value]
+    return any(
+        stage_argument_uses_option(project_directory, parent_stage(project_directory, stage), argument_name,
+                                   options, visited | {stage.id})
+        if value == StageAutomaticOption.INHERIT_FROM_PARENT else value in options
+        for value in values
+    )
 
 def _generate_source_subpath(project_directory, stage, visited: frozenset) -> str | None:
     """Output path of parent stage, as catalyst names it: rel_type/target-subarch-version_stamp."""

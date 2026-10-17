@@ -26,6 +26,45 @@ def update_selection_messages(view, valid_items=None, allow_multiselect=False):
     unusable = not allow_multiselect and selected is not None and not view.emit("is-item-usable", selected)
     view.is_not_usable_label.set_visible(bool(unusable))
 
+
+def schedule_selection_change(view):
+    if getattr(view, "_emit_idle_id", None) is None:
+        view._emit_idle_id = GLib.idle_add(_emit_selection_change, view)
+
+
+def _emit_selection_change(view):
+    view._emit_idle_id = None
+    view.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, view)
+    return False
+
+
+def _selection_message(text: str) -> Gtk.Label:
+    return Gtk.Label(label=text, wrap=True, halign=Gtk.Align.CENTER, margin_top=12, margin_bottom=12,
+                     margin_start=24, margin_end=24, css_classes=["dimmed"])
+
+
+def _selection_item_row(view, item, valid_items, button_group, allow_multiselect=False):
+    row = ItemRow(
+        item=item,
+        item_title_property_name=view.item_title_property_name,
+        item_subtitle_property_name=view.item_subtitle_property_name,
+        item_status_property_name=view.item_status_property_name,
+        item_unsupported_property_name=view.item_unsupported_property_name,
+        item_icon=view.item_icon,
+        item_icon_resolver=getattr(view, "item_icon_resolver", None),
+    )
+    button = Gtk.CheckButton()
+    selected = item in (view.selected_items or []) if allow_multiselect else item == view.selected_item
+    button.set_active(selected)
+    if not allow_multiselect:
+        button.set_group(button_group)
+    button.connect("toggled", view._on_item_selected, item)
+    row.add_prefix(button)
+    row.set_activatable_widget(button)
+    row.set_sensitive(item in valid_items)
+    return row
+
+
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/components/item_select/item_select_view.ui')
 class ItemSelectionView(ItemSelectionData, Gtk.Box):
     __gtype_name__ = "ItemSelectionView"
@@ -87,34 +126,19 @@ class ItemSelectionView(ItemSelectionData, Gtk.Box):
         self.emit("selection-changed", self)
         self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
 
-    def refresh_items_state(self, data):
+    def refresh_items_state(self, *_):
         """Call this from class using this view when monitoring_usable_changes triggers an update"""
         valid_items = [item for item in self.items() if self.emit("is-item-selectable", item)]
         for row in self.rows:
             row.set_sensitive(row.item in valid_items)
         update_selection_messages(self, valid_items)
+        self.emit("selection-changed", self)
         self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
 
     def _load_labels(self):
-        # No items label
-        self.no_valid_entries_label = Gtk.Label(label=f"No valid items available")
-        self.no_valid_entries_label.set_wrap(True)
-        self.no_valid_entries_label.set_halign(Gtk.Align.CENTER)
-        self.no_valid_entries_label.set_margin_top(12)
-        self.no_valid_entries_label.set_margin_bottom(12)
-        self.no_valid_entries_label.set_margin_start(24)
-        self.no_valid_entries_label.set_margin_end(24)
-        self.no_valid_entries_label.add_css_class("dimmed")
+        self.no_valid_entries_label = _selection_message("No valid items available")
         self.items_list.add(self.no_valid_entries_label)
-        # Is not usable label
-        self.is_not_usable_label = Gtk.Label(label="This item is currently in use.")
-        self.is_not_usable_label.set_wrap(True)
-        self.is_not_usable_label.set_halign(Gtk.Align.CENTER)
-        self.is_not_usable_label.set_margin_top(12)
-        self.is_not_usable_label.set_margin_bottom(12)
-        self.is_not_usable_label.set_margin_start(24)
-        self.is_not_usable_label.set_margin_end(24)
-        self.is_not_usable_label.add_css_class("dimmed")
+        self.is_not_usable_label = _selection_message("This item is currently in use.")
         self.items_list.add(self.is_not_usable_label)
 
     def _load_items(self):
@@ -130,10 +154,7 @@ class ItemSelectionView(ItemSelectionData, Gtk.Box):
             self.emit("selection-changed", self)
             self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
         # Create rows
-        items_check_buttons_group = []
-
-        hidden_check_box = Gtk.CheckButton()
-        items_check_buttons_group.append(hidden_check_box)
+        check_button_group = Gtk.CheckButton()
 
         if hasattr(self, 'rows'):
             for row in self.rows:
@@ -147,33 +168,14 @@ class ItemSelectionView(ItemSelectionData, Gtk.Box):
             check_button = Gtk.CheckButton()
             check_button.set_active(self.selected_item == None)
             check_button.connect("toggled", self._on_item_selected, None)
-            if items_check_buttons_group:
-                check_button.set_group(items_check_buttons_group[0])
-            items_check_buttons_group.append(check_button)
+            check_button.set_group(check_button_group)
             self.none_row.add_prefix(check_button)
             self.none_row.set_activatable_widget(check_button)
             self.items_list.add(self.none_row)
 
         self.rows = []
         for item in self.items():
-            row = ItemRow(
-                item=item,
-                item_title_property_name=self.item_title_property_name,
-                item_subtitle_property_name=self.item_subtitle_property_name,
-                item_status_property_name=self.item_status_property_name,
-                item_unsupported_property_name=self.item_unsupported_property_name,
-                item_icon=self.item_icon,
-                item_icon_resolver=getattr(self, "item_icon_resolver", None)
-            )
-            check_button = Gtk.CheckButton()
-            check_button.set_active(item == self.selected_item)
-            if items_check_buttons_group:
-                check_button.set_group(items_check_buttons_group[0])
-            check_button.connect("toggled", self._on_item_selected, item)
-            items_check_buttons_group.append(check_button)
-            row.add_prefix(check_button)
-            row.set_activatable_widget(check_button)
-            row.set_sensitive(item in valid_items)
+            row = _selection_item_row(self, item, valid_items, check_button_group)
             self.items_list.add(row)
             self.rows.append(row)
         update_selection_messages(self, valid_items)
@@ -187,14 +189,5 @@ class ItemSelectionView(ItemSelectionData, Gtk.Box):
         else:
             if len(self.rows) == 1 and not self.display_none or len(self.rows) == 0 and self.display_none:
                 button.set_active(True)
-        # Schedule a single emission in the idle loop
-        if not hasattr(self, '_emit_idle_id'):
-            self._emit_idle_id = None
-        if self._emit_idle_id is None:
-            self._emit_idle_id = GLib.idle_add(self._emit_selection_change)
-
-    def _emit_selection_change(self):
-        self._emit_idle_id = None
-        self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
-        return False
+        schedule_selection_change(self)
 

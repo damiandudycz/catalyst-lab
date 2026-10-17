@@ -47,7 +47,7 @@ class WizardView(Adw.Bin, Gtk.Buildable):
         # State:
         self.current_page = 0
         self.pages: list[Gtk.Widget] = []
-        self._all_pages: [Gtk.Widget] = [] # Also hidden pages, in order of adding (keeps them alive while hidden).
+        self._all_pages: list[Gtk.Widget] = [] # Also hidden pages, in order of adding (keeps them alive while hidden).
         # Signals:
         self.carousel.connect('page-changed', self.on_page_changed)
         self.connect("notify::parent", lambda *args: self._update_can_go_back())
@@ -119,7 +119,7 @@ class WizardView(Adw.Bin, Gtk.Buildable):
         self._all_pages.insert(0, scrolled_window) # Counted in positions of pages shown with set_page_visible.
         self.carousel.scroll_to(scrolled_window, False)
 
-    def _setup_bottom_bar(self) -> Gtk.Widget:
+    def _setup_bottom_bar(self) -> None:
         # --- Outer container for the buttons and indicator ---
         self.bottom_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, homogeneous=True)
         self.bottom_bar.set_hexpand(True)
@@ -218,10 +218,15 @@ class WizardView(Adw.Bin, Gtk.Buildable):
             self.can_go_back = can_go_back
 
     def on_start_row_activated(self, _):
-        self.carousel.scroll_to(self.pages[1], True)
+        if len(self.pages) > 1:
+            self.carousel.scroll_to(self.pages[1], True)
 
     def _refresh_buttons_state(self):
         """Should be called manually when state of displayed page changes in subclass."""
+        # Subclasses may change a control while constructing their first page,
+        # before adding that page to the carousel.
+        if not self.pages or not 0 <= self.current_page < len(self.pages):
+            return
         displayed_page = self.pages[self.current_page]
         displayed_pages = self.pages[0:self.current_page + 1]
         displayed_pages_ready = all(self.emit("is-page-ready-to-continue", page) for page in displayed_pages)

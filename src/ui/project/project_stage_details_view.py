@@ -8,7 +8,8 @@ from .project_stage import (
 )
 from .project_stage_arguments import (
     StageArgumentTargetDetails, StageArgumentOption,
-    StageArgumentType, StageArgumentDetails, StageArgumentLevel, stage_argument_level
+    StageArgumentType, StageArgumentDetails, StageArgumentLevel, stage_argument_level,
+    visible_stage_argument_options,
 )
 from .cl_toggle_group import CLToggle, CLToggleGroup
 from .combo_row_popup import fit_popup_to_items
@@ -624,15 +625,13 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
         self.load_state()
 
     def load_state(self):
-        if self.argument.details and self.argument.details.type == StageArgumentType.select:
-            current_value = getattr(self.stage, self.argument.details.name, None) # Mapped to object
-            automatic_options = load_catalyst_stage_automatic_arguments_options(stage=self.stage, arg_details=self.argument, project_directory=self.project_directory)
-            options = automatic_options + (load_catalyst_stage_arguments_options(project_directory=self.project_directory, stage=self.stage, arg_details=self.argument) or [])
-            options = include_unsupported_options(options, [current_value], self.argument.details)
-            self.selected_item = next((item for item in options if item.value == current_value), None)
-            self.set_static_list(list=options)
-        if self.argument.details and self.argument.details.type == StageArgumentType.multiselect:
-            current_values = getattr(self.stage, self.argument.details.name, None) # Mapped to object
+        details = self.argument.details
+        if not details:
+            return
+        current_value = getattr(self.stage, details.name, None) # Mapped to object
+        if details.type == StageArgumentType.multiselect:
+            options = self._options()
+            current_values = current_value
             # Stage can store None (all items deselected) or single value, show it as list.
             if current_values is None:
                 current_values = []
@@ -641,28 +640,37 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
             if self.argument.details in FILE_OVERLAY_ARGUMENTS:
                 # Values stored by older versions (inherit options, path of stage folder) are shown as sources.
                 current_values = root_overlay_values(self.project_directory, self.stage, self.argument.details)
-            automatic_options = load_catalyst_stage_automatic_arguments_options(stage=self.stage, arg_details=self.argument, project_directory=self.project_directory)
-            options = automatic_options + (load_catalyst_stage_arguments_options(project_directory=self.project_directory, stage=self.stage, arg_details=self.argument) or [])
+            options = visible_stage_argument_options(options, current_values)
             options = include_unsupported_options(options, current_values, self.argument.details)
             self.selected_items = [option for option in options if option.value in current_values] if current_values else []
-            self.set_static_list(list=options)
-        if self.argument.details and self.argument.details.type == StageArgumentType.boolean:
-            current_value = getattr(self.stage, self.argument.details.name, None) # Mapped to object
-            automatic_options = load_catalyst_stage_automatic_arguments_options(stage=self.stage, arg_details=self.argument, project_directory=self.project_directory)
-            options = automatic_options + load_catalyst_stage_arguments_options_for_boolean(arg_details=self.argument)
+        elif details.type in (StageArgumentType.select, StageArgumentType.boolean):
+            options = self._options(boolean=details.type == StageArgumentType.boolean)
+            options = visible_stage_argument_options(options, [current_value])
             options = include_unsupported_options(options, [current_value], self.argument.details)
             self.selected_item = next((item for item in options if item.value == current_value), None)
-            self.set_static_list(list=options)
+        else:
+            return
+        self.set_static_list(options)
 
-    def set_static_list(self, list: list):
+    def _options(self, boolean: bool = False) -> list[StageArgumentOption]:
+        automatic = load_catalyst_stage_automatic_arguments_options(
+            stage=self.stage, arg_details=self.argument, project_directory=self.project_directory
+        )
+        available = (load_catalyst_stage_arguments_options_for_boolean(arg_details=self.argument) if boolean else
+                     load_catalyst_stage_arguments_options(
+                         project_directory=self.project_directory, stage=self.stage, arg_details=self.argument
+                     ) or [])
+        return automatic + available
+
+    def set_static_list(self, items: list):
         # Show values automatic options resolve to (inherit from parent, releng template...) when they can be determined.
         self.resolved_values: dict[StageAutomaticOption, str] = {}
-        for option in list:
+        for option in items:
             if isinstance(option.value, StageAutomaticOption) and not option.unsupported:
                 if resolved := resolved_stage_argument_display(self.project_directory, self.stage, self.argument.name, option.value):
                     self.resolved_values[option.value] = resolved
                     option.subtitle = GLib.markup_escape_text(resolved)
-        super().set_static_list(list=list)
+        super().set_static_list(items)
         if self.uses_stage_overlay_folder:
             self._add_open_stage_overlay_button()
 
@@ -837,6 +845,13 @@ class StageTextSourceRow(Adw.ExpanderRow):
             else:
                 row.remove_css_class('warning')
 
+    def _update_source_visibility(self):
+        selected = set(self.inherit_options())
+        options = self.unsupported_options + self.automatic_options
+        visible = {option.value for option in visible_stage_argument_options(options, selected)}
+        for value, row in self.source_rows.items():
+            row.set_visible(value is None or value in visible)
+
     def _on_source_toggled(self, button: Gtk.CheckButton, source: StageAutomaticOption | None):
         if self._loading:
             return
@@ -951,6 +966,7 @@ class StageTextSourceRow(Adw.ExpanderRow):
         self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
 
     def update_display(self):
+        self._update_source_visibility()
         self.editor_row.set_visible(self.is_custom())
         options = self.inherit_options()
         known = {option.value: option for option in self.unsupported_options + self.automatic_options}
@@ -1194,49 +1210,35 @@ class StageTextListRow(StageTextSourceRow):
             self.package_action_row.add_suffix(arrow)
             self.package_action_row.connect("activated", self._open_package_picker)
             return self.package_action_row
-        self.text_view = Gtk.TextView()
-        self.text_view.set_monospace(True)
-        self.text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self.text_view.set_accepts_tab(False)
-        self.text_view.set_top_margin(8)
-        self.text_view.set_bottom_margin(8)
-        self.text_view.set_left_margin(8)
-        self.text_view.set_right_margin(8)
+        self.text_view = Gtk.TextView(
+            monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR, accepts_tab=False,
+            top_margin=8, bottom_margin=8, left_margin=8, right_margin=8
+        )
         self.text_view.set_size_request(-1, 96)
         self.text_view.get_buffer().connect("changed", self.on_buffer_changed)
         key_controller = Gtk.EventControllerKey()
         key_controller.connect("key-pressed", self.on_key_pressed)
         self.text_view.add_controller(key_controller)
-        frame = Gtk.Frame()
-        frame.set_child(self.text_view)
+        frame = Gtk.Frame(child=self.text_view)
 
-        self.hint_label = hint_label = Gtk.Label(label="One entry per line. Ctrl+Enter to apply.", wrap=True, xalign=0)
-        hint_label.set_halign(Gtk.Align.START)
-        hint_label.set_hexpand(True)
-        hint_label.add_css_class("dimmed")
-        hint_label.add_css_class("caption")
+        self.hint_label = Gtk.Label(
+            label="One entry per line. Ctrl+Enter to apply.", wrap=True, xalign=0,
+            halign=Gtk.Align.START, hexpand=True, css_classes=["dimmed", "caption"]
+        )
         self.revert_button = Gtk.Button(label="Revert", valign=Gtk.Align.CENTER)
         self.revert_button.connect("clicked", lambda button: self.set_editor_value(self.own_value()))
         self.apply_button = Gtk.Button(label="Apply", valign=Gtk.Align.CENTER)
         self.apply_button.add_css_class("suggested-action")
         self.apply_button.connect("clicked", lambda button: self.apply_custom_value())
         buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        buttons_box.append(hint_label)
-        buttons_box.append(self.revert_button)
-        buttons_box.append(self.apply_button)
+        for widget in (self.hint_label, self.revert_button, self.apply_button):
+            buttons_box.append(widget)
 
-        editor_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        editor_box.set_margin_top(12)
-        editor_box.set_margin_bottom(12)
-        editor_box.set_margin_start(12)
-        editor_box.set_margin_end(12)
+        editor_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                             margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         editor_box.append(frame)
         editor_box.append(buttons_box)
-        editor_row = Gtk.ListBoxRow()
-        editor_row.set_activatable(False)
-        editor_row.set_selectable(False)
-        editor_row.set_child(editor_box)
-        return editor_row
+        return Gtk.ListBoxRow(activatable=False, selectable=False, child=editor_box)
 
     def _open_package_picker(self, *_):
         if not self.content_navigation_view:

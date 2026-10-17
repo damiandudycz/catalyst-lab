@@ -11,7 +11,7 @@ if 'catalystlab' not in sys.modules:
     package.__path__ = [str(ROOT / 'src')] + [str(path) for path in (ROOT / 'src').rglob('*') if path.is_dir()]
     sys.modules['catalystlab'] = package
 
-from catalystlab.project_build_spec import _copy_folders, _format_spec_line
+from catalystlab.project_build_spec import _copy_folders, _format_spec_line, select_seed_url
 
 
 class StageSpecFormattingTests(unittest.TestCase):
@@ -38,6 +38,16 @@ class StageSpecFormattingTests(unittest.TestCase):
 
             self.assertEqual((destination / 'setting').read_text(), 'second')
             self.assertTrue((destination / 'link').is_symlink())
+
+    def test_seed_selection_requires_exact_stage3_timestamped_archive(self):
+        urls = [
+            types.SimpleNamespace(path="stage3-arm64-openrc-20261017T100000Z.tar.xz"),
+            types.SimpleNamespace(path="stage3-arm64-openrc-desktop-20261017T100000Z.tar.xz"),
+            types.SimpleNamespace(path="stage3-arm64-openrc-latest.tar.xz"),
+        ]
+
+        self.assertIs(urls[0], select_seed_url(urls, "stage3-arm64-openrc"))
+        self.assertIsNone(select_seed_url(urls[1:], "stage3-arm64-openrc"))
 
 
 if __name__ == '__main__':

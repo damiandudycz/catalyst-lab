@@ -1,4 +1,3 @@
-import gi
 from gi.repository import Gtk, GObject, GLib
 from gi.repository import Adw
 

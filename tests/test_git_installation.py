@@ -5,7 +5,7 @@ import tempfile
 import types
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from gi.repository import Gio
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,7 +15,8 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab.git_installation import (
-    GitDirectorySource, GitInstallation, GitInstallationStepInitLocal, _GitInstallationDirectoryStep,
+    GitDirectorySource, GitInstallation, GitInstallationStepInitLocal,
+    GitInstallationStepSetupRepository, _GitInstallationDirectoryStep,
     _copy_local_directory, _remove_partial_directory,
 )
 from catalystlab.git_update import GitUpdate
@@ -45,6 +46,27 @@ class GitInstallationTests(unittest.TestCase):
 
         self.assertEqual(source.name, 'GIT_REPOSITORY')
         self.assertEqual(source.display_name(), 'Git repository')
+
+    def test_repository_setup_uses_directory_runner_for_initial_commit(self):
+        directory = SimpleNamespace(
+            directory_path=lambda: '/project',
+        )
+        directory._run_git = Mock(side_effect=[
+            SimpleNamespace(returncode=128, stdout=''),
+            SimpleNamespace(returncode=0, stdout='?? README.md\n'),
+        ])
+        directory.run_git_logged = Mock(return_value=SimpleNamespace(
+            returncode=0, args=['git'], stdout=''
+        ))
+        step = GitInstallationStepSetupRepository(SimpleNamespace(directory=directory))
+
+        with patch.object(step, 'complete') as complete:
+            step.start()
+
+        self.assertEqual([call.args[0] for call in directory.run_git_logged.call_args_list], [
+            ('init', '--initial-branch=main'), ('add', '.'), ('commit', '-m', 'Initial commit')
+        ])
+        self.assertEqual(complete.call_args.args[0], MultiStageProcessStageState.COMPLETED)
 
     def test_directory_creation_shared_lifecycle_sets_process_directory(self):
         with tempfile.TemporaryDirectory() as temporary:

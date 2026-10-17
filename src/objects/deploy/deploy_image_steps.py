@@ -1,6 +1,8 @@
 from __future__ import annotations
-from .deploy_step import DeployStep
+import os
+from .deploy_step import DeployStep, check_tools_script
 from .deploy_target import PartitionTable
+from .ssh_connection import quote
 from .deploy_image import (
     create_image_script, shrink_image_script, compress_image_script, grow_root_script
 )
@@ -13,8 +15,6 @@ class DeployStepCreateImage(DeployStep):
         super().__init__(name="Create image", description="Connects to the image builder, checks tools and creates a temporary image",
                          multistage_process=multistage_process)
     def run(self):
-        import os
-        from .ssh_connection import quote
         process = self.multistage_process
         plan = process.plan
         if not process.connection.is_alive():
@@ -24,12 +24,7 @@ class DeployStepCreateImage(DeployStep):
                 raise RuntimeError(error)
         if not os.path.isfile(process.build.artifact_path or ""):
             raise RuntimeError("Build archive doesn't exist anymore")
-        tools = " ".join(quote(tool) for tool in plan.required_tools())
-        self.remote(f"""
-missing=""
-for tool in {tools}; do command -v "$tool" > /dev/null || missing="$missing $tool"; done
-[ -z "$missing" ] || {{ echo "Missing tools:$missing"; exit 1; }}
-""", "Tools needed to create image are missing")
+        self.remote(check_tools_script(plan.required_tools()), "Tools needed to create image are missing")
         lines = []
         def handle(line: str):
             lines.append(line)
@@ -48,7 +43,6 @@ class DeployStepGrowRoot(DeployStep):
         super().__init__(name="Grow at first start", description="Installs service growing root partition to fill disk",
                          multistage_process=multistage_process)
     def run(self):
-        from .ssh_connection import quote
         self.remote(f"ROOT={quote(self.multistage_process.root)}\n" + grow_root_script(), "Failed to install root growing service")
 
 class DeployStepShrinkImage(DeployStep):
@@ -71,7 +65,6 @@ class DeployStepSaveImage(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Save image", description="Moves image to selected location", multistage_process=multistage_process)
     def run(self):
-        import os
         process = self.multistage_process
         source, destination = process.created_image_path, process.output_path
         if not destination or destination == source:
@@ -83,13 +76,6 @@ class DeployStepSaveImage(DeployStep):
         try:
             os.replace(source, destination)
         except OSError:
-            size = os.path.getsize(source) or 1
-            copied = 0
-            with open(source, "rb") as input_file, open(destination + ".part", "wb") as output_file:
-                while chunk := input_file.read(8 * 1024 * 1024):
-                    output_file.write(chunk)
-                    copied += len(chunk)
-                    self._update_progress(copied / size * 0.99)
-            os.replace(destination + ".part", destination)
+            self.copy_file(source, destination)
             os.remove(source)
         self.log(f"Image: {destination}")

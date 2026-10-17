@@ -150,31 +150,28 @@ class AppleVirtualizationRun(QemuRun):
         return 'Apple Virtualization'
 
     def _start_locked(self):
-        current = apple_support(self.project_directory, self.build)
-        if not current.available:
-            shutil.rmtree(self.directory, ignore_errors=True)
-            raise RuntimeError(current.reason)
-        limits = current.limits
-        memory = self.memory_mib * 1024 * 1024
-        if not limits['min_cpus'] <= self.cpus <= limits['max_cpus'] or not limits['min_memory'] <= memory <= limits['max_memory']:
-            shutil.rmtree(self.directory, ignore_errors=True)
-            raise RuntimeError('CPU or memory allocation is outside the limits supported by this Mac')
-        options = dict(name=self.name, cpus=self.cpus, memory=memory, directory=self.directory)
-        if self.support.kind == QemuBuildKind.ISO:
-            options['iso'] = self.build.artifact_path
-        else:
-            directory = self.support.image_directory
-            if not directory:
-                raise RuntimeError('Temporary VM image directory has not been allocated')
-            kernel_path = os.path.join(directory, self.support.boot_kernel)
-            if (self.support.kernel_package and self.support.machine.binary == 'qemu-system-aarch64'
-                    and not is_arm64_linux_image(kernel_path)):
-                shutil.rmtree(self.directory, ignore_errors=True)
-                raise RuntimeError('Apple Virtualization needs a raw ARM64 Image kernel. Choose a source kernel package, such as sys-kernel/gentoo-kernel, instead of a -bin EFI kernel package.')
-            options.update(disk=os.path.join(directory, 'root.img'), kernel=kernel_path)
-            if self.support.boot_initramfs:
-                options['initramfs'] = os.path.join(directory, self.support.boot_initramfs)
         try:
+            current = apple_support(self.project_directory, self.build)
+            if not current.available:
+                raise RuntimeError(current.reason)
+            limits = current.limits
+            memory = self.memory_mib * 1024 * 1024
+            if not limits['min_cpus'] <= self.cpus <= limits['max_cpus'] or not limits['min_memory'] <= memory <= limits['max_memory']:
+                raise RuntimeError('CPU or memory allocation is outside the limits supported by this Mac')
+            options = dict(name=self.name, cpus=self.cpus, memory=memory, directory=self.directory)
+            if self.support.kind == QemuBuildKind.ISO:
+                options['iso'] = self.build.artifact_path
+            else:
+                directory = self.support.image_directory
+                if not directory:
+                    raise RuntimeError('Temporary VM image directory has not been allocated')
+                kernel_path = os.path.join(directory, self.support.boot_kernel)
+                if (self.support.kernel_package and self.support.machine.binary == 'qemu-system-aarch64'
+                        and not is_arm64_linux_image(kernel_path)):
+                    raise RuntimeError('Apple Virtualization needs a raw ARM64 Image kernel. Choose a source kernel package, such as sys-kernel/gentoo-kernel, instead of a -bin EFI kernel package.')
+                options.update(disk=os.path.join(directory, 'root.img'), kernel=kernel_path)
+                if self.support.boot_initramfs:
+                    options['initramfs'] = os.path.join(directory, self.support.boot_initramfs)
             self._bridge = _load_bridge(current.library, os.stat(current.library).st_mtime_ns)
             self._callback = AppleVMBridge.Callback(self._native_event)
             self._handle = self._bridge.api.cl_vm_create(json.dumps(options).encode(), self._callback, None)

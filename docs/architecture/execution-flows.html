@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catalyst Lab execution flows</title>
+<style>
+:root{color-scheme:dark;--bg:#17181b;--panel:#222429;--card:#2c2e34;--line:#5a606b;--text:#f2f3f5;--muted:#a9adb6;--blue:#64a8ff;--green:#79d6a2;--amber:#f0c46a;--red:#ff8585}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,sans-serif}.page{max-width:1250px;margin:auto;padding:30px 24px 60px}h1{font-size:28px;margin:0 0 8px}h2{font-size:18px;margin:28px 0 12px}.intro{color:var(--muted);max-width:900px;margin:0 0 24px}.controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap;background:var(--panel);padding:16px;border-radius:14px;border:1px solid #393b42}.control{display:grid;gap:5px}.control label{font-size:12px;color:var(--muted)}select{background:var(--card);color:var(--text);border:1px solid #484b54;border-radius:8px;padding:9px 32px 9px 10px;font:inherit}.tabs{display:flex;gap:8px;margin:18px 0}.tabs button{border:0;border-radius:9px;background:var(--card);color:var(--text);padding:10px 16px;font:inherit;cursor:pointer}.tabs button.active{background:#315f94}.toggle{display:flex;align-items:center;gap:8px;color:var(--muted);padding:8px 4px}.notice{margin:16px 0;padding:11px 14px;background:#2e2a20;border:1px solid #54482b;border-radius:9px;color:#f0d59a}.flow{background:var(--panel);border:1px solid #393b42;border-radius:16px;padding:20px;overflow:auto}.flow-title{display:flex;justify-content:space-between;gap:12px;align-items:start;margin-bottom:18px}.flow-title h2{margin:0}.badge{font-size:12px;padding:3px 9px;border:1px solid #555a64;border-radius:99px;color:var(--muted);white-space:nowrap}.diagram{display:flex;align-items:stretch;gap:12px;min-width:900px}.column{flex:1;min-width:150px;display:flex;flex-direction:column;gap:10px}.column h3{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 3px}.block{position:relative;border:1px solid #4b4e57;background:var(--card);border-radius:11px;padding:11px 12px;min-height:70px}.block strong{display:block;font-size:14px}.block small{display:block;color:var(--muted);margin-top:3px;line-height:1.35}.block.host{border-color:#60738d}.block.linux{border-color:#4d8d67}.block.artifact{border-color:#7d6a3c}.block.emu{border-color:#8b68a9}.block.active{box-shadow:inset 3px 0 var(--blue)}.arrow{align-self:center;color:var(--blue);font-size:22px;flex:0 0 16px}.explain{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:16px}.note{border-radius:10px;background:#292b31;padding:12px 14px;color:var(--muted);font-size:13px}.note strong{color:var(--text)}.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;color:var(--muted);font-size:12px}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;background:var(--blue)}.dot.linux{background:var(--green)}.dot.artifact{background:var(--amber)}.dot.emu{background:#ba8ade}.sources{margin-top:22px;color:var(--muted);font-size:13px}.sources a{color:var(--blue);margin-right:10px}.hidden{display:none!important}@media(max-width:700px){.page{padding:20px 14px}.flow{padding:14px}.diagram{min-width:850px}}
+</style>
+</head>
+<body><main class="page">
+<h1>How Catalyst Lab runs builds, VMs, and deploys</h1>
+<p class="intro">Follow the selected workflow from the computer running Catalyst Lab to the stage or disk it produces. The controls change the host, target architecture, and VM backend so you can see which work happens locally, inside Alpine, inside a guest VM, or on a deployment target.</p>
+<section class="controls" aria-label="Scenario options">
+ <div class="control"><label for="host">Host operating system</label><select id="host"><option value="mac">macOS</option><option value="linux">Linux</option></select></div>
+ <div class="control"><label for="cpu">Host CPU</label><select id="cpu"><option value="arm64">ARM64 / Apple Silicon</option><option value="x64">x86_64</option></select></div>
+ <div class="control"><label for="target">Stage architecture</label><select id="target"><option value="same">Same as host</option><option value="arm64">ARM64</option><option value="x64">x86_64</option><option value="other">Other (RISC-V, PowerPC, etc.)</option></select></div>
+ <div class="control" id="backendControl"><label for="backend">Stage VM backend</label><select id="backend"><option value="auto">Automatic</option><option value="qemu">QEMU</option><option value="apple">Apple Virtualization</option></select></div>
+ <label class="toggle" id="kernelControl"><input id="kernel" type="checkbox"> Build custom kernel before stage VM run</label>
+</section>
+<nav class="tabs" aria-label="Execution workflow"><button data-flow="build" class="active">Build a stage</button><button data-flow="run">Run stage in a VM</button><button data-flow="deploy">Deploy a stage</button></nav>
+<div id="notice" class="notice hidden" role="status"></div>
+<section class="flow" aria-live="polite">
+ <div class="flow-title"><h2 id="flowTitle"></h2><span id="modeBadge" class="badge"></span></div>
+ <div class="diagram" id="diagram"></div>
+ <div class="legend"><span><i class="dot"></i>Host/app-managed work</span><span><i class="dot linux"></i>Linux environment</span><span><i class="dot artifact"></i>Reusable or produced files</span><span><i class="dot emu"></i>Emulation</span></div>
+ <div class="explain" id="explain"></div>
+</section>
+<section class="sources"><strong>Implementation and further reading:</strong>
+ <a href="build-execution.md">Build execution guide</a>
+ <a href="../../src/objects/build_machine/lima.py">Lima / Alpine machine</a>
+ <a href="../../src/objects/project/project_build_rootless.py">Stage build workspace</a>
+ <a href="../../src/objects/qemu/qemu_run.py">QEMU stage VM</a>
+ <a href="../../src/objects/qemu/apple_virtualization.py">Apple Virtualization</a>
+ <a href="../../src/objects/qemu/custom_kernel.py">Custom kernel</a>
+ <a href="../../src/objects/deploy/deploy_installation.py">Stage deployment</a>
+ <a href="../../src/objects/deploy/deploy_image.py">Disk image creation</a>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let flow="build";
+const block=(title,detail,kind="",active=false)=>`<div class="block ${kind} ${active?"active":""}"><strong>${title}</strong><small>${detail}</small></div>`;
+const col=(title,items)=>`<div class="column"><h3>${title}</h3>${items.join("")}</div>`;
+const arrow=`<div class="arrow" aria-hidden="true">→</div>`;
+function render(){
+ const host=$("host").value,cpu=$("cpu").value,targetChoice=$("target").value, target=targetChoice==="same"?cpu:targetChoice;
+ const backendChoice=$("backend").value,kernel=$("kernel").checked, cross=target!==cpu, mac=host==="mac";
+ $("backendControl").classList.toggle("hidden",flow!=="run");$("kernelControl").classList.toggle("hidden",flow!=="run");
+ let title="",badge="",cols=[],notes=[],notice="";
+ if(flow==="build"){
+  title="Build a stage";badge=mac?"Lima VM · Alpine Linux":"Linux host · no app-managed VM";
+  const machine=mac?block("Build machine VM","Lima boots Alpine Linux; full-system virtualization on the Mac.","linux"):block("Linux host","Catalyst runs build commands on the host, isolated in namespaces when available.","host");
+  cols=[col("Your computer",[block("Catalyst Lab","Selects stage settings, snapshot, toolset, and output paths.","host")]),arrow,col(mac?"Linux build machine":"Build environment",[machine,block("Toolset","Gentoo tools and Portage; stage-build flow mounts .sqfs read-only + temporary OverlayFS.","linux")]),arrow,col("Build inputs",[block("Gentoo snapshot","Read-only repository metadata used by Catalyst and Portage.","artifact"),block("Stage spec + caches","Project settings, package cache, distfiles, and temporary writable state.","artifact")]),arrow,col("Output",[block("Stage artifact","Compressed root filesystem archive saved in the Library.","artifact")])];
+  if(cross){const exec=mac&&cpu==="arm64"&&target==="x64"?"Rosetta may run x86_64 Linux user programs; QEMU-user handles other targets.":"QEMU-user via Linux binfmt runs target-architecture programs inside the build environment.";cols[3]=col("Target execution",[block("Cross-architecture user emulation",exec,"emu")]);notes.push(`<div class="note"><strong>Cross-architecture stage build.</strong> Catalyst selects the target profile and compiler settings. QEMU-user or Rosetta translates individual Linux programs; the target does not boot as a full VM.</div>`)}
+  notes.unshift(`<div class="note"><strong>Toolset and Alpine have different jobs.</strong> Alpine provides the Linux kernel and mount/namespace features on macOS. The Gentoo toolset provides Catalyst, Portage, and build utilities.</div>`);
+  if(mac)notes.push(`<div class="note"><strong>Writable state.</strong> The stage-build flow mounts the toolset SquashFS directly read-only and creates a disposable OverlayFS upper/work area for each command under Library/Temporary.</div>`);
+  else notes.push(`<div class="note"><strong>Linux path.</strong> Builds run directly on Linux. SquashFS trees are reused from Library/Cache/Extracted for rootless execution, with a privileged helper fallback when needed.</div>`);
+ } else if(flow==="run"){
+  title="Run a built stage in a VM";
+  const chosen=backendChoice==="auto"?(mac&&target===cpu?"apple":"qemu"):backendChoice;
+  const avf=chosen==="apple",hostLabel=mac?"macOS host":"Linux host",backendLabel=avf?"Apple Virtualization guest":"QEMU system guest";
+  badge=avf?"Full VM · matching CPU only":`Full VM · ${cross?"architecture emulated":"same-architecture acceleration if available"}`;
+  const image=block("Stage artifact","Built root filesystem archive.","artifact");
+  const prep=[block("Cached base image","Extracted stage, reused as an immutable base in Library/Cache.","artifact"),block("Per-run writable image","Copy-on-write clone or sparse copy in Library/Temporary.","artifact")];
+  if(kernel){prep.unshift(block("Custom kernel build","Selected Gentoo toolset + snapshot + stage Portage settings; Portage emerges the package, then artifacts are installed into the disposable VM image.","linux",true));}
+  const accel=avf?"Apple Virtualization framework (requires target architecture to match Mac CPU).":"QEMU: HVF on macOS or KVM on Linux for matching CPU when available; TCG software emulation for different architectures.";
+  cols=[col(hostLabel,[block("Catalyst Lab","Prepares image, kernel (optional), VM settings, and UI.","host"),block("Build machine if kernel requested","On macOS, an Alpine Lima VM runs the Gentoo toolset operation.","linux",kernel)]),arrow,col("Image preparation",[image,...prep]),arrow,col("VM backend",[block(backendLabel,accel,avf?"host":"emu")]),arrow,col("Guest system",[block("Stage boots","Guest Linux kernel and initramfs start the stage root filesystem.","linux"),block("Virtual devices","CPU, memory, disk, display, and console are provided by the VM backend.","host")])];
+  if(avf&&cross)notice="Apple Virtualization cannot virtualize a different CPU architecture. Choose QEMU to try software emulation, or use a stage matching this Mac.";
+  else if(avf&&cpu==="x64")notice="Apple Virtualization is supported on macOS when the built stage architecture matches the Mac CPU. The current app bridge is designed for native-architecture guests.";
+  if(cross&&!avf)notes.push(`<div class="note"><strong>Different architecture.</strong> This is full-system CPU emulation (QEMU TCG), so boot and runtime may be very slow and the guest kernel/device combination must be supported.</div>`);
+  else if(!avf)notes.push(`<div class="note"><strong>Same architecture.</strong> QEMU uses hardware acceleration when the host exposes HVF/KVM and the required device support is available; otherwise it can fall back to software emulation.</div>`);
+  else notes.push(`<div class="note"><strong>Apple Virtualization.</strong> This is a native full-system VM. It requires matching host and guest architecture; ARM64 stage runs need a raw ARM64 Linux kernel when using a custom kernel.</div>`);
+  notes.push(`<div class="note"><strong>The two VM layers are separate.</strong> The Alpine Lima build machine is only needed to run build tools on macOS. QEMU/Apple Virtualization boots the finished stage as a guest.</div>`);
+  if(kernel)notes.push(`<div class="note"><strong>Custom-kernel work happens before guest boot.</strong> A free Gentoo toolset and selected snapshot compile the kernel. The built stage itself does not need Portage installed.</div>`);
+  notes.push(`<div class="note"><strong>Image safety.</strong> The cached base remains reusable. The running guest writes to its per-run temporary image, which is cleaned up after the run.</div>`);
+ } else {
+  title="Deploy a stage";badge=host==="linux"?"Direct Linux disk operations":"Target-dependent deploy path";
+  const targetBlock=block("Deployment target","Local disk, remote machine over SSH, or a disk-image file.","artifact");
+  if(targetChoice==="other"||targetChoice==="arm64"||targetChoice==="x64"){} // Architecture control describes the stage being deployed.
+  const worker=mac?block("Alpine Lima image worker","Used for creating disk-image files on macOS; root disk work runs in the Linux VM.","linux"):block("Linux root helper","Performs local disk and image operations with required privileges.","host");
+  cols=[col(host==="linux"?"Linux computer":"macOS computer",[block("Catalyst Lab","Reads the completed stage and deployment settings.","host"),block("Stage artifact","Compressed root filesystem archive.","artifact")]),arrow,col("Deployment operation",[block("Partition + format","Prepare selected disk or image partitions.","host"),block("Extract + configure","Install stage files, repository, boot settings, and optional packages.","host")]),arrow,col("Where work runs",[worker,block("Remote target option","SSH sends commands and streams the stage archive to a remote Linux host.","host")]),arrow,col("Result",[targetBlock,block("Installed system / image","A deployable installation or compressed disk-image artifact.","artifact")])];
+  notes.push(`<div class="note"><strong>Physical disk deployment.</strong> On Linux, the local root helper operates on the selected disk. On macOS, direct local disk installation is unavailable; use a remote SSH target or create an image.</div>`);
+  notes.push(`<div class="note"><strong>Disk-image creation.</strong> Linux uses the root helper. macOS uses an Alpine Lima machine to partition, format, extract, and shrink the image. This worker VM creates an artifact; it does not boot the installed guest.</div>`);
+  notes.push(`<div class="note"><strong>No Gentoo toolset is needed for ordinary deployment.</strong> The stage artifact contains the built system. Deployment installs and configures that artifact; a Gentoo toolset is used only by separate build or custom-kernel operations.</div>`);
+ }
+ $("flowTitle").textContent=title;$("modeBadge").textContent=badge;$("diagram").innerHTML=cols.join("");$("explain").innerHTML=notes.join("");
+ $("notice").textContent=notice;$("notice").classList.toggle("hidden",!notice);
+}
+document.querySelectorAll("[data-flow]").forEach(button=>button.addEventListener("click",()=>{flow=button.dataset.flow;document.querySelectorAll("[data-flow]").forEach(item=>item.classList.toggle("active",item===button));render()}));
+["host","cpu","target","backend","kernel"].forEach(id=>$(id).addEventListener("change",render));render();
+</script>
+</body></html>

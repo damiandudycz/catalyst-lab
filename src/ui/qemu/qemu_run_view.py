@@ -10,6 +10,7 @@ from .cl_toggle_group import CLToggle, CLToggleGroup
 from .usage_graph import USAGE_INTERVAL_SECONDS, usage_row, format_gib
 from .app_events import AppEvents, app_event_bus
 from .qemu_run import QemuImagePreparation
+from .multistage_process import MultiStageProcessEvent, MultiStageProcessStageEvent, MultiStageProcessState
 
 # ------------------------------------------------------------------------------
 # Build running in QEMU: screen of machine (VNC), its serial console and QEMU log, with power controls. A pristine stage
@@ -601,7 +602,6 @@ class QemuRunView(Gtk.Box):
         self._set_status("Preparing disk image…")
         self._show_progress("Preparing disk image · Creating a writable VM image.")
         self.preparation = QemuImagePreparation(self.project_directory, self.build, self.support)
-        from .multistage_process import MultiStageProcessStageEvent
         # Kept: event bus refers to handlers weakly.
         self._preparation_log = lambda line: GLib.idle_add(lambda: (self._on_preparation_output(line), False)[1])
         for stage in self.preparation.stages:

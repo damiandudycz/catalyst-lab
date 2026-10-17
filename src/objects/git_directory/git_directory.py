@@ -26,6 +26,12 @@ class GitDirectoryStatus(Enum):
 # Status codes of unmerged files in git status --porcelain.
 _CONFLICT_STATUS_CODES = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
 
+def _run_worker(worker, wait: bool):
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    if wait:
+        thread.join()
+
 class GitDirectory(Serializable, ABC):
 
     APP_METADATA_FILE = "catalystlab.json"
@@ -197,6 +203,14 @@ class GitDirectory(Serializable, ABC):
     def _run_git(self, *args, **kwargs):
         return subprocess.run(["git", *args], cwd=self.directory_path(), **kwargs)
 
+    def run_git_logged(self, arguments: list[str], log, env=None):
+        """Run a Git command and send its command line and output to a log callback."""
+        log("$ git " + " ".join(arguments))
+        result = self._run_git(*arguments, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+        for line in result.stdout.splitlines():
+            log(line)
+        return result
+
     def update_status(self, wait: bool = False):
         def worker():
             directory = self.directory_path()
@@ -255,10 +269,7 @@ class GitDirectory(Serializable, ABC):
                 self.last_commit_date = None
                 self.branch_name = None
             self.event_bus.emit(SharedEvent.STATE_UPDATED, self)
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-        if wait:
-            thread.join()
+        _run_worker(worker, wait)
 
     def update_logs(self, wait: bool = False):
         def worker():
@@ -292,51 +303,37 @@ class GitDirectory(Serializable, ABC):
                 self.logs = []
             self.logs = logs
             self.event_bus.emit(GitDirectoryEvent.LOGS_CHANGED, self.logs)
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-        if wait:
-            thread.join()
+        _run_worker(worker, wait)
 
-    def discard_changes(self, wait: bool = False):
+    def _run_change(self, name, action, wait: bool):
         def worker():
             with self.operation():
                 try:
-                    self._run_git("reset", "--hard", check=True)
-                    self._run_git("clean", "-fdx", check=True)
-                except Exception as e:
-                    print(f"DISCARD EXCEPTION: {e}")
+                    action()
+                except Exception as error:
+                    print(f"{name} EXCEPTION: {error}")
                 finally:
-                    # Status is read again also after failure, it could be outdated. Operation ends with new status.
                     self.update_status(wait=True)
                     self.update_logs(wait=True)
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-        if wait:
-            thread.join()
+        _run_worker(worker, wait)
+
+    def discard_changes(self, wait: bool = False):
+        def discard():
+            self._run_git("reset", "--hard", check=True)
+            self._run_git("clean", "-fdx", check=True)
+        self._run_change("DISCARD", discard, wait)
 
     DEFAULT_COMMIT_MESSAGE = "Save changes"
 
     def commit_changes(self, message: str | None = None, wait: bool = False):
         """Commits all changes of directory, with given message (default one when empty)."""
         message = (message or "").strip() or self.DEFAULT_COMMIT_MESSAGE
-        def worker():
-            with self.operation():
-                try:
-                    self._run_git("add", "-A", check=True)
-                    # Nothing to commit when changes were reverted outside of app (status shown was outdated).
-                    staged = self._run_git("diff", "--cached", "--quiet")
-                    if staged.returncode != 0:
-                        self._run_git("commit", "-m", message, check=True)
-                except Exception as e:
-                    print(f"COMMIT EXCEPTION: {e}")
-                finally:
-                    # Status is read again also after failure, it could be outdated. Operation ends with new status.
-                    self.update_status(wait=True)
-                    self.update_logs(wait=True)
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-        if wait:
-            thread.join()
+        def commit():
+            self._run_git("add", "-A", check=True)
+            # Nothing to commit when changes were reverted outside of app (status shown was outdated).
+            if self._run_git("diff", "--cached", "--quiet").returncode != 0:
+                self._run_git("commit", "-m", message, check=True)
+        self._run_change("COMMIT", commit, wait)
 
     @classmethod
     def directory_path_for_name(cls, name: str) -> str:

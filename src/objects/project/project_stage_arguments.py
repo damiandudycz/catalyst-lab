@@ -42,6 +42,11 @@ class StageArgumentOption:
     unsupported: bool = False
     icon_name: str | None = None # Shown instead of icon of list, eg. target icon of parent stage.
 
+def visible_stage_argument_options(options: list[StageArgumentOption], selected_values) -> list[StageArgumentOption]:
+    """Hide unsupported choices unless they are already selected, so saved values remain editable."""
+    selected = set(selected_values)
+    return [option for option in options if not option.unsupported or option.value in selected]
+
 class StageArgumentType(Enum):
     raw = auto() # Raw text data
     raw_single_line = auto() # Raw with only one line of text
@@ -280,6 +285,11 @@ class StageArgumentDetails(Enum):
             ): return StageArgumentType.string_list
             case _: return StageArgumentType.raw_single_line
 
+
+def parent_stage(project_directory, stage):
+    """Find the project stage referenced by a stage's parent argument."""
+    parent_id = getattr(stage, StageArgumentDetails.parent.name, None)
+    return next((item for item in project_directory.stages if item.id == parent_id), None) if parent_id else None
 
 # Automatic options allowed for arguments. Arguments not listed here can only be set directly.
 # Releng templates are spec files, which can define any argument, so inheriting from template is allowed wherever it

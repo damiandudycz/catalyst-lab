@@ -38,5 +38,9 @@ def stage_cache_path(project_directory, stage, argument: StageArgumentDetails) -
         root = packages_directory.directory_path()
     else:
         root = os.path.join(project_builds_directory(project_directory), _automatic_cache_folders[argument])
-    path = os.path.normpath(os.path.join(root, rel_type.strip("/")))
-    return path if path.startswith(root + os.sep) else None
+    root = os.path.abspath(root)
+    path = os.path.abspath(os.path.join(root, rel_type.strip("/ ")))
+    try:
+        return path if os.path.commonpath((root, path)) == root else None
+    except ValueError:  # Paths on different drives (possible on Windows).
+        return None

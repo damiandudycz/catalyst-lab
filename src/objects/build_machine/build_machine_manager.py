@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os, threading
 from .repository import Repository, library_path, resolve_path
+from .helper_functions import path_is_within
 from .build_machine import BuildMachine
 from .lima import run_limactl, remove_empty_build_machine_temporary_directory
 
@@ -57,7 +58,7 @@ def shared_paths() -> list[str]:
     ]
     paths = []
     for location in sorted({resolve_path(location) for location in locations}, key=len):
-        if not any(location == path or location.startswith(path + os.sep) for path in paths):
+        if not any(path_is_within(location, path) for path in paths):
             paths.append(location)
     for path in paths:
         os.makedirs(path, exist_ok=True)

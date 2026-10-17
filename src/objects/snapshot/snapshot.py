@@ -17,6 +17,10 @@ class LatestSnapshotOption:
 
 LATEST_SNAPSHOT = LatestSnapshotOption()
 
+def sorted_snapshots(snapshots: list[Snapshot]) -> list[Snapshot]:
+    """Newest snapshots first, snapshots without date last."""
+    return sorted(snapshots, key=lambda snapshot: snapshot.date.timestamp() if snapshot.date else 0, reverse=True)
+
 # Repository from which Catalyst generates snapshots (catalyst -s stable), they are named gentoo-<commit>.sqfs.
 GENTOO_REPOSITORY_URL = "https://anongit.gentoo.org/git/repo/sync/gentoo.git"
 GENTOO_REPOSITORY_BRANCH = "stable"
@@ -29,7 +33,7 @@ def latest_gentoo_commit(timeout: float = 30) -> str | None:
     except Exception as e:
         print(f"Failed to check latest Gentoo repository commit: {e}")
         return None
-    commit = output.split()[0] if output.split() else ""
+    commit = output.split(maxsplit=1)[0] if output else ""
     return commit if re.fullmatch(r"[0-9a-f]{40}", commit) else None
 
 def existing_latest_snapshot(log=print) -> Snapshot | None:
@@ -72,7 +76,7 @@ class Snapshot(Serializable):
             except (OSError, ValueError, AttributeError) as error:
                 print(f"Failed to read snapshot marker {marker}: {error}")
             items.append(cls(entry.name, datetime.fromtimestamp(entry.stat().st_mtime), from_file))
-        return sorted(items, key=lambda item: item.date.timestamp() if item.date else 0, reverse=True)
+        return sorted_snapshots(items)
 
     @classmethod
     def save_all(cls, items):

@@ -127,6 +127,8 @@ class SnapshotInstallationStepCopyFile(MultiStageProcessStage):
         self.custom_filename = custom_filename
     def start(self):
         super().start()
+        snapshot_copy_path = None
+        copy_created = False
         try:
             def sanitize_filename_linux(name: str) -> str:
                 return name.replace('/', '_').replace('\0', '_')
@@ -141,7 +143,8 @@ class SnapshotInstallationStepCopyFile(MultiStageProcessStage):
             total_size = os.path.getsize(source_path)
             copied_size = 0
             buffer_size = 1024 * 1024  # 1 MB
-            with open(source_path, 'rb') as src, open(snapshot_copy_path, 'wb') as dst:
+            with open(source_path, 'rb') as src, open(snapshot_copy_path, 'xb') as dst:
+                copy_created = True
                 while True:
                     buf = src.read(buffer_size)
                     if not buf:
@@ -152,7 +155,12 @@ class SnapshotInstallationStepCopyFile(MultiStageProcessStage):
             self.multistage_process.snapshot = Snapshot(filename=filename, date=creation_date, from_file=True)
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
-            print(f"Error during toolset copying: {e}")
+            if copy_created and snapshot_copy_path and os.path.exists(snapshot_copy_path):
+                try:
+                    os.remove(snapshot_copy_path)
+                except OSError as cleanup_error:
+                    print(f"Failed to remove partial snapshot {snapshot_copy_path}: {cleanup_error}")
+            print(f"Error while copying snapshot file: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 
 @final

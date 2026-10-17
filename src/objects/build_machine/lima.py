@@ -22,9 +22,8 @@ _LIMACTL_LOCATIONS = ["/opt/homebrew/bin/limactl", "/usr/local/bin/limactl"]
 # overlayfs, squashfs), and its packages provide bubblewrap and newuidmap.
 LIMA_TEMPLATE = "template:_images/alpine-3.23"
 
-# Data that needs Linux file ownership (extracted toolsets, sessions, caches in use) can't be in shared folders (they
-# can't store owners and are case insensitive on macOS). It's kept in a dedicated shared workspace folder as an ext4
-# image, mounted here while an operation needs it and deleted when no operation uses it.
+# Temporary data that needs Linux ownership lives in a dedicated ext4 workspace image. Persistent extracted toolsets
+# use ext4 images stored in Library/Cache; the shared folders themselves cannot preserve Linux owners or case.
 MACHINE_DATA_DIRECTORY = "/var/lib/catalystlab"
 
 # Machine disk contains only Alpine with tools, data of Catalyst Lab is in working space and shared folders.
@@ -85,12 +84,11 @@ def move_lima_disk_to_temporary(disk_name: str, lima_home: str) -> str:
 def remove_temporary_lima_disk_data(disk_name: str, lima_home: str) -> None:
     """Remove a redirected disk's Temporary data and any leftover Lima symlink."""
     managed = os.path.join(lima_home, "_disks", disk_name)
-    temporary_paths = (temporary_swap_disk_path(disk_name),)
-    if os.path.islink(managed) and os.path.realpath(managed) in temporary_paths:
+    temporary = temporary_swap_disk_path(disk_name)
+    if os.path.islink(managed) and os.path.realpath(managed) == os.path.realpath(temporary):
         os.unlink(managed)
-    for temporary in temporary_paths:
-        if os.path.lexists(temporary):
-            shutil.rmtree(temporary) if os.path.isdir(temporary) and not os.path.islink(temporary) else os.unlink(temporary)
+    if os.path.lexists(temporary):
+        shutil.rmtree(temporary) if os.path.isdir(temporary) and not os.path.islink(temporary) else os.unlink(temporary)
     remove_empty_build_machine_temporary_directory(disk_name.removesuffix("-swap"))
 
 def default_lima_home() -> str:
