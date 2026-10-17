@@ -228,7 +228,7 @@ class ProjectUpdateView(Gtk.Box):
             widgets.append(group)
         if not update.changes and update.fast_forward:
             widgets.append(self._label(f"Files of project don't change, only version of {self.source_name} is recorded."))
-        self._set_content([widget for widget in widgets if widget is not None])
+        self._set_content(widgets)
         if conflicts_group is not None:
             conflicts_group.set_sensitive(not update.drop_project_changes)
         self._set_action("Apply update", self._on_apply)

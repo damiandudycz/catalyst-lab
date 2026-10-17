@@ -78,25 +78,20 @@ class CatalystlabWindowSideMenu(Gtk.Box):
 
     def opened_app_section(self, section: AppSection):
         # States shown in side menu are seen when their section is opened.
+        selected_row = None
         row = self.section_list.get_first_child()
         while row:
             if isinstance(row, MainWindowSideMenuButton):
                 row.set_section_open(row.section == section)
+                if row.section == section:
+                    selected_row = row
             row = row.get_next_sibling()
         if self.selected_section == section:
             return
         self.selected_section = section
-        # Highlight the correct button in side menu
-        # Deselect all sections first
-        self.section_list.select_row(None)
-        row = self.section_list.get_first_child()
-        while row:
-            if hasattr(row, "section") and row.section == section:
-                self.section_list.select_row(row)
-                break
-            row = row.get_next_sibling()
+        self.section_list.select_row(selected_row)
 
-    # Callback received when changing selected row. Will be emitted further in @selected_section.setter.
+    # Callback received when the selected row changes.
     @Gtk.Template.Callback()
     def row_selected(self, _, row):
         if row and hasattr(row, "section"):
