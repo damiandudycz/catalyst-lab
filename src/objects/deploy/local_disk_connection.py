@@ -22,18 +22,31 @@ class LocalDiskConnection:
 
     # Connection:
 
-    def connect(self, password: str | None = None) -> str | None:
+    def connect(self, password: str | None = None, process_holder: list | None = None,
+                output_handler=print, cancel_event=None) -> str | None:
         """Asks for root access. Returns error message, or None when authorized."""
         authorized = threading.Event()
         keepers = []
         def callback(authorization_keeper):
+            if cancel_event is not None and cancel_event.is_set():
+                if authorization_keeper:
+                    authorization_keeper.release()
+                keepers.append(None)
+                authorized.set()
+                return
             # Keeper is released when callback returns, connection retains it until closed.
             if authorization_keeper:
                 authorization_keeper.retain()
             keepers.append(authorization_keeper)
             authorized.set()
         RootHelperClient.shared().authorize_and_run(name="Deploy", callback=callback)
-        authorized.wait()
+        while not authorized.wait(0.1):
+            if cancel_event is not None and cancel_event.is_set():
+                return "Canceled"
+        if cancel_event is not None and cancel_event.is_set():
+            if keepers[0]:
+                keepers[0].release()
+            return "Canceled"
         self._authorization_keeper = keepers[0]
         if self._authorization_keeper is None:
             return "Root access is needed to install on disks of this computer"

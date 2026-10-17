@@ -1,14 +1,15 @@
 from __future__ import annotations
-import base64, functools, json, os, re, shlex, shutil, signal, subprocess, threading, time, uuid
+import base64, functools, json, os, re, shlex, shutil, signal, subprocess, tempfile, threading, time, uuid
 from .repository import Repository
 
 # ------------------------------------------------------------------------------
 # Working without root privileges.
 # Commands run as root of unprivileged user namespace, where ids 1..65536 are mapped to subordinate ids of user
 # (/etc/subuid, /etc/subgid), so files can have their real owners (portage, shadow...). Things that need real root
-# are replaced: squashfs files are extracted (loop mounts are not allowed) and host /dev is bound instead of creating
-# device nodes. Files of namespace root are owned by user, other owners are mapped ids (100000+), so such files are
-# created, packed and removed inside namespace.
+# are replaced: on local rootless execution SquashFS files are extracted (loop mounts are not allowed), while a build
+# machine can mount them read-only with its real root; host /dev is bound instead of creating device nodes. Files of
+# namespace root are owned by user, other owners are mapped ids (100000+), so such files are created, packed and
+# removed inside namespace.
 # Commands run on this computer (LocalExecutor) or in virtual machine linked to toolset (MachineExecutor), where
 # folders of Catalyst Lab are shared at the same paths. Data owned by mapped ids is kept in cache and temporary
 # directories of executor: on this computer they are Cache and Temporary folders from settings, on machine they are on
@@ -23,7 +24,7 @@ _NAMESPACE_LAUNCHER = r'''
 set -u
 INNER=$(mktemp); FIFO=$(mktemp -u)
 trap 'rm -f "$INNER" "$FIFO"' EXIT
-echo "$1" | base64 -d > "$INNER"
+cat "$1" > "$INNER"
 mkfifo "$FIFO"
 read -r SUBUID_START SUBUID_COUNT < <(awk -F: -v u="$(id -un)" -v i="$(id -u)" '($1==u||$1==i){print $2, ($3>65536?65536:$3); exit}' /etc/subuid)
 read -r SUBGID_START SUBGID_COUNT < <(awk -F: -v u="$(id -un)" -v i="$(id -u)" '($1==u||$1==i){print $2, ($3>65536?65536:$3); exit}' /etc/subgid)
@@ -213,11 +214,10 @@ class MachineExecutor(Executor):
     def __init__(self, machine):
         self.machine = machine
 
-    # Working space of machine is deleted after use, so everything there is temporary. Cache folder keeps the same
-    # layout as on this computer.
+    # Reusable files are stored in the configured Library cache, which Lima shares at the same host path. Temporary
+    # operation data remains in the machine's disposable working space.
     def cache_directory(self) -> str:
-        from .lima import MACHINE_DATA_DIRECTORY
-        return os.path.join(MACHINE_DATA_DIRECTORY, "Cache")
+        return os.path.realpath(os.path.expanduser(Repository.Settings.value.cache_location))
 
     def temporary_directory(self) -> str:
         from .lima import MACHINE_DATA_DIRECTORY
@@ -234,7 +234,7 @@ class MachineExecutor(Executor):
             return f"Virtual machine {self.machine.name} doesn't exist"
         lines = []
         script = r'''
-for tool in unshare newuidmap newgidmap bwrap unsquashfs mksquashfs python3; do
+for tool in unshare newuidmap newgidmap bwrap unsquashfs mksquashfs python3 mount mountpoint sudo; do
     command -v $tool > /dev/null || { echo "$tool is not installed in machine"; exit 1; }
 done
 grep -q "^$(id -un):" /etc/subuid || { echo "Machine user has no entries in /etc/subuid"; exit 1; }
@@ -257,23 +257,51 @@ echo "Machine is ready: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname 
             raise
         token = uuid.uuid4().hex
         pid_file = f"/tmp/catalystlab-{token}.pid"
-        encoded = base64.b64encode(script.encode()).decode()
+        # Long scripts exceed the command payload limit of Lima's SSH multiplexing channel (mm_send_fd:
+        # "Message too long"). Put the script in the shared Library Temporary folder and pass only its short path.
+        try:
+            script_directory = os.path.join(
+                os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location)), "MachineCommands")
+            os.makedirs(script_directory, exist_ok=True)
+            descriptor, script_path = tempfile.mkstemp(prefix=f"{token}-", suffix=".sh", dir=script_directory)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+                file.write(script)
+        except Exception:
+            if "script_path" in locals():
+                try:
+                    os.unlink(script_path)
+                except FileNotFoundError:
+                    pass
+            self.machine.end_use()
+            raise
+        q = shlex.quote
         if namespace:
-            command = f"bash -c {shlex.quote(_NAMESPACE_LAUNCHER)} launcher {encoded}"
+            command = f"bash -c {q(_NAMESPACE_LAUNCHER)} launcher {q(script_path)}"
         else:
-            command = f"echo {encoded} | base64 -d > /tmp/catalystlab-{token}.sh && bash /tmp/catalystlab-{token}.sh; status=$?; rm -f /tmp/catalystlab-{token}.sh; exit $status"
+            command = f"bash {q(script_path)}; status=$?; rm -f {q(script_path)}; exit $status"
         # Own session in machine, so canceling can stop its whole process group.
         bootstrap = f"echo $$ > {pid_file}; exec 2>&1 < /dev/null; {command}"
-        process = subprocess.Popen(
-            [limactl_path(), "shell", "--workdir", "/", self.machine.instance_name, "setsid", "-w", "bash", "-c", bootstrap],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
-            text=True, errors="replace", bufsize=1, env=lima_environment(self.machine.lima_home)
-        )
+        try:
+            process = subprocess.Popen(
+                [limactl_path(), "shell", "--workdir", "/", self.machine.instance_name, "setsid", "-w", "bash", "-c", bootstrap],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
+                text=True, errors="replace", bufsize=1, env=lima_environment(self.machine.lima_home)
+            )
+        except Exception:
+            os.unlink(script_path)
+            self.machine.end_use()
+            raise
         def terminate_remote():
             subprocess.run([limactl_path(), "shell", self.machine.instance_name, "sh", "-c",
                             f"[ -f {pid_file} ] && kill -TERM -- -$(cat {pid_file}); rm -f {pid_file}"],
                            capture_output=True, timeout=30, env=lima_environment(self.machine.lima_home))
-        return ExecutorProcess(process, on_terminate=terminate_remote, on_exit=self.machine.end_use)
+        def cleanup_script():
+            try:
+                os.unlink(script_path)
+            except FileNotFoundError:
+                pass
+            self.machine.end_use()
+        return ExecutorProcess(process, on_terminate=terminate_remote, on_exit=cleanup_script)
 
     def run(self, script: str, output_handler, process_holder: list | None = None, namespace: bool = False) -> bool:
         # Lima writes its warnings to output, they are not part of script output.
@@ -358,33 +386,106 @@ def extracted_squashfs(squashfs_path: str, kind: str, output_handler, process_ho
     name = os.path.basename(squashfs_path)
     parent = extracted_directory(kind, executor)
     path = os.path.join(parent, name + ".d")
-    temporary_path = os.path.join(work_directory(executor), f"{name}.{uuid.uuid4().hex}")
+    # Stage beside the cache destination so publishing the extracted tree is a same-filesystem
+    # rename. MachineExecutor's temporary directory is on the VM's local disk while its cache
+    # is a host-mounted library volume; moving between them makes mv recursively copy/merge and
+    # can fail when a previous interrupted extraction left non-empty directories behind.
+    temporary_path = os.path.join(parent, f".{name}.{uuid.uuid4().hex}.tmp")
     script = f"""
-set -u
+set -euo pipefail
 STAMP=$(stat -c '%s:%Y' {q(squashfs_path)}) || exit 1
 if [ -d {q(path)} ] && [ "$(cat {q(path + '.stamp')} 2>/dev/null)" = "$STAMP" ]; then
     echo "Using extracted {name}"
     exit 0
 fi
 echo "Extracting {name}, this is done once for every version of the file..."
-mkdir -p {q(parent)} {q(os.path.dirname(temporary_path))} && rm -rf {q(path)} {q(path + '.stamp')}
-unsquashfs -n -d {q(temporary_path)} {q(squashfs_path)} 2>&1 | grep -v -e "create_inode: failed to create character device" -e "^\\[" -e "^$" | tail -5
-if [ ! -e {q(os.path.join(temporary_path, check_path or ''))} ]; then
+mkdir -p {q(parent)}
+rm -rf -- {q(path)} {q(path + '.stamp')}
+TEMP_PATH={q(temporary_path)}
+CHECK_PATH={q(check_path or '')}
+rm -rf -- "$TEMP_PATH"
+trap 'rm -rf -- "$TEMP_PATH"' EXIT
+unsquashfs -n -d "$TEMP_PATH" {q(squashfs_path)} 2>&1 | {{ grep -v -e "create_inode: failed to create character device" -e "^\\[" -e "^$" || [ "$?" -eq 1 ]; }} | tail -5
+if [ ! -e "$TEMP_PATH/$CHECK_PATH" ]; then
     echo "Extraction failed"
-    rm -rf {q(temporary_path)}
     exit 1
 fi
-mv {q(temporary_path)} {q(path)} && echo "$STAMP" > {q(path + '.stamp')}
+mv -T -- "$TEMP_PATH" {q(path)}
+trap - EXIT
+echo "$STAMP" > {q(path + '.stamp')}
 """
     if not executor.run_in_namespace(script, output_handler, process_holder):
         raise RuntimeError(f"Failed to extract {name}")
     return path
 
+def mount_squashfs_read_only(squashfs_path: str, output_handler, process_holder: list | None = None,
+                             executor: Executor | None = None, kind: str = "toolsets") -> str:
+    """Mounts a SquashFS image read-only in a Linux build machine, without extracting its files."""
+    executor = executor or LOCAL_EXECUTOR
+    if not executor.is_machine:
+        raise RuntimeError("Direct SquashFS mounts are only supported in build machines")
+    q = shlex.quote
+    mount_point = create_work_directory(f"{kind}/mount_", executor)
+    output_handler(f"Mounting {os.path.basename(squashfs_path)} read-only")
+    script = f"""
+set -euo pipefail
+sudo mount -t squashfs -o loop,ro {q(squashfs_path)} {q(mount_point)}
+mountpoint -q {q(mount_point)}
+"""
+    if not executor.run(script, output_handler, process_holder):
+        cleanup_script = f"""
+if mountpoint -q {q(mount_point)}; then sudo umount -- {q(mount_point)}; fi
+rmdir -- {q(mount_point)} 2>/dev/null || true
+"""
+        executor.run(cleanup_script, output_handler)
+        raise RuntimeError(f"Failed to mount {os.path.basename(squashfs_path)} read-only")
+    return mount_point
+
+def prepare_toolset_squashfs(squashfs_path: str, output_handler, process_holder: list | None = None,
+                             executor: Executor | None = None) -> tuple[str, bool]:
+    """Prepare a toolset lower layer, mounting it on build machines and extracting it locally if needed.
+
+    Stage builds create a writable OverlayFS upper layer over this read-only lower layer. Local rootless execution
+    cannot mount SquashFS, so it keeps using the extracted cache.
+    """
+    executor = executor or LOCAL_EXECUTOR
+    if executor.is_machine:
+        return mount_squashfs_read_only(squashfs_path, output_handler, process_holder, executor), True
+    return extracted_squashfs(squashfs_path, "toolsets", output_handler, process_holder,
+                              check_path="bin/bash", executor=executor), False
+
+def prepare_snapshot_squashfs(squashfs_path: str, output_handler, process_holder: list | None = None,
+                              executor: Executor | None = None) -> tuple[str, bool]:
+    """Prepare a read-only Gentoo repository layer, mounting on build machines and extracting locally if needed."""
+    executor = executor or LOCAL_EXECUTOR
+    if executor.is_machine:
+        return mount_squashfs_read_only(squashfs_path, output_handler, process_holder,
+                                        executor, kind="snapshots"), True
+    return extracted_squashfs(squashfs_path, "snapshots", output_handler, process_holder,
+                              check_path="profiles", executor=executor), False
+
+def unmount_squashfs(mount_point: str, output_handler, process_holder: list | None = None,
+                     executor: Executor | None = None) -> None:
+    """Unmounts a read-only SquashFS mounted in a Linux build machine and removes its mountpoint."""
+    executor = executor or LOCAL_EXECUTOR
+    if not executor.is_machine:
+        raise RuntimeError("Direct SquashFS mounts are only supported in build machines")
+    q = shlex.quote
+    script = f"""
+set -euo pipefail
+if mountpoint -q {q(mount_point)}; then
+    sudo umount -- {q(mount_point)}
+fi
+rmdir -- {q(mount_point)}
+"""
+    if not executor.run(script, output_handler, process_holder):
+        raise RuntimeError(f"Failed to unmount SquashFS at {mount_point}")
+
 def remove_extracted_squashfs(squashfs_path: str, kind: str, executor: Executor | None = None):
     """Removes extracted copy of squashfs file (eg. when toolset or snapshot is deleted), in background."""
     executor = executor or LOCAL_EXECUTOR
     if executor.is_machine:
-        return # Working space of machine is temporary, extracted copies are deleted with it.
+        return # Machine extracted trees are inside the disposable ext4 workspace.
     if rootless_unsupported_reason() is not None:
         return
     path = os.path.join(extracted_directory(kind, executor), os.path.basename(squashfs_path) + ".d")
@@ -399,14 +500,21 @@ def remove_in_namespace(paths: list[str], output_handler, process_holder: list |
 # ------------------------------------------------------------------------------
 # Folders of executor:
 # Cache/Distfiles             sources downloaded by portage
-# Cache/Extracted/<Kind>      extracted toolsets and snapshots
+# Cache/Extracted/<Kind>      extracted toolsets and snapshots on this computer
+# Machine Temporary/Work/Extracted/<Kind> extracted Linux trees on ext4
 # Cache/ToolsetStages         downloaded Gentoo stages used to create toolsets
 # Temporary/Sessions          builds and toolset environments
 # Temporary/Work              writable toolset copies, work directories and unfinished extractions
 # Temporary/Downloads         downloads of operations (this computer only)
 
 def extracted_directory(kind: str, executor: Executor | None = None) -> str:
-    return os.path.join((executor or LOCAL_EXECUTOR).cache_directory(), "Extracted", kind.capitalize())
+    executor = executor or LOCAL_EXECUTOR
+    if executor.is_machine:
+        # Linux trees can contain case-colliding paths (for example xt_CONNMARK.h and
+        # xt_connmark.h). A macOS library volume is often case-insensitive, so extracted
+        # trees must live on the machine's ext4 workspace instead of its shared Cache mount.
+        return os.path.join(work_directory(executor), "Extracted", kind.capitalize())
+    return os.path.join(executor.cache_directory(), "Extracted", kind.capitalize())
 
 def distfiles_directory(executor: Executor | None = None) -> str:
     return os.path.join((executor or LOCAL_EXECUTOR).cache_directory(), "Distfiles")

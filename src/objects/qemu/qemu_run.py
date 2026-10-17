@@ -6,7 +6,7 @@ from .event_bus import EventBus
 
 # ------------------------------------------------------------------------------
 # Running builds in QEMU: live CD ISO images (booted by firmware of machine), and stages with generic kernel (stage
-# kernel and initramfs started by QEMU, system in disk image made from stage archive). Display is served over VNC on
+# kernel and initramfs started by QEMU, system in a temporary disk image made from stage archive). Display is served over VNC on
 # local socket and shown in the app, serial console and QEMU monitor (QMP) use sockets too.
 # Machine of the same architecture as this computer is accelerated (HVF on macOS, KVM on Linux), others are emulated.
 # Whether a build boots depends on its architecture and kernel support for the emulated machine. Do not infer target
@@ -110,6 +110,20 @@ class QemuSupport:
     initramfs: str | None = None
     reason: str | None = None     # Why build can't run.
     backend: str = "qemu"
+    kernel_package: str | None = None # Emerged into the temporary guest image before boot.
+    kernel_snapshot: object | None = None # Gentoo repository snapshot used to emerge the selected package.
+    image_directory: str | None = None # Per-run Library/Temporary workspace, removed when the VM stops.
+    base_image_path: str | None = None # Immutable cached raw disk used as a QEMU qcow2 backing image.
+    base_kernel_path: str | None = None # Cached boot kernel used directly by QEMU.
+    base_initramfs_path: str | None = None # Cached initramfs used directly by QEMU.
+
+    @property
+    def boot_kernel(self) -> str | None:
+        return "custom-kernel" if self.kernel_package else self.kernel
+
+    @property
+    def boot_initramfs(self) -> str | None:
+        return "custom-initramfs" if self.kernel_package else self.initramfs
 
     @property
     def available(self) -> bool:
@@ -221,14 +235,13 @@ def qemu_support(project_directory, build, *, check_runtime: bool = True) -> Qem
     elif is_deployable(project_directory, build):
         kind = QemuBuildKind.STAGE
         kernels, images = _stage_boot_files(build)
-        if not kernels:
-            return QemuSupport(kind, machine, reason="Stage has no kernel in /boot")
         if machine is None:
             return QemuSupport(kind, None, reason=f"Running {architecture.value if architecture else 'this architecture'} in QEMU isn't supported yet")
         # Kernel filenames are user-defined by Catalyst. Use the newest available kernel and let QEMU determine
-        # whether it supports the selected virtual machine instead of guessing from target-specific names.
-        kernel = sorted(kernels)[-1]
-        version = re.sub(r"^(vmlinuz|vmlinux|Image)-?", "", kernel)
+        # whether it supports the selected virtual machine instead of guessing from target-specific names. A stage
+        # with no kernel can still run after the launch wizard builds one into its disposable VM image.
+        kernel = sorted(kernels)[-1] if kernels else None
+        version = re.sub(r"^(vmlinuz|vmlinux|Image)-?", "", kernel) if kernel else ""
         initramfs = next((image for image in images if version and version in image), images[0] if images else None)
     else:
         return QemuSupport(None, machine, reason="Only stage3, stage4 and live CD builds can run")
@@ -256,23 +269,144 @@ def accelerated(machine: QemuMachine) -> str | None:
     return None
 
 # ------------------------------------------------------------------------------
-# Disk image of stage (cached independently of build files).
+# Cached pristine stage disk images are copied into a per-run Temporary workspace before boot.
 
-def stage_image_directory(build, backend: str = "qemu") -> str:
-    """Reusable test VM disk and boot files, shared by backends and cached by build artifact."""
+def stage_image_cache_directory(build, support: QemuSupport, size: int) -> str:
+    """Stable cache location for the pristine image derived from this exact stage build."""
     from .repository import Repository
-    artifact = os.path.realpath(build.artifact_path or build.path)
+    artifact = build.artifact_path
+    signature = [str(build.id), os.path.realpath(artifact), str(size),
+                 support.kernel or "", support.initramfs or ""]
     try:
         stat = os.stat(artifact)
-        signature = f"{artifact}:{stat.st_size}:{stat.st_mtime_ns}"
+        signature.append(f"{stat.st_size}:{stat.st_mtime_ns}")
     except OSError:
-        signature = artifact
-    key = hashlib.sha256(signature.encode()).hexdigest()[:24]
-    return os.path.join(Repository.Settings.value.cache_location, "TestVM", key)
+        signature.append("missing")
+    key = hashlib.sha256("\n".join(signature).encode()).hexdigest()[:24]
+    cache = os.path.realpath(os.path.expanduser(Repository.Settings.value.cache_location))
+    return os.path.join(cache, "TestVMImages", key)
+
+def stage_base_image_ready(directory: str, kernel: str | None, initramfs: str | None) -> bool:
+    """A cache entry is usable only after image creation completed and was marked ready."""
+    files = ["root.img"] + ([kernel] if kernel else []) + ([initramfs] if initramfs else [])
+    return (os.path.isfile(os.path.join(directory, ".ready"))
+            and all(os.path.isfile(os.path.join(directory, name)) for name in files))
+
+def _clone_or_sparse_copy(source: str, destination: str, process_holder: list | None = None,
+                          cancel_event=None) -> bool:
+    """Clone a large image instantly when the filesystem supports it; otherwise preserve sparse holes."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise InterruptedError("VM startup canceled")
+    def run_copy(command, quiet=False):
+        if cancel_event is not None and cancel_event.is_set():
+            raise InterruptedError("VM startup canceled")
+        process = subprocess.Popen(command, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL if quiet else None)
+        if process_holder is not None:
+            process_holder.append(process)
+        try:
+            status = process.wait()
+        finally:
+            if process_holder is not None and process in process_holder:
+                process_holder.remove(process)
+        if cancel_event is not None and cancel_event.is_set():
+            raise InterruptedError("VM startup canceled")
+        if status:
+            raise subprocess.CalledProcessError(status, command)
+
+    if sys.platform == "darwin":
+        import ctypes
+        clonefile = ctypes.CDLL(None, use_errno=True).clonefile
+        clonefile.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int)
+        clonefile.restype = ctypes.c_int
+        if clonefile(os.fsencode(source), os.fsencode(destination), 0) == 0:
+            return True
+    elif sys.platform.startswith("linux"):
+        import fcntl
+        # Linux FICLONE asks the filesystem to share extents copy-on-write.
+        try:
+            with open(source, "rb") as source_file, open(destination, "xb") as destination_file:
+                fcntl.ioctl(destination_file.fileno(), 0x40049409, source_file.fileno())
+            return True
+        except OSError:
+            try:
+                os.unlink(destination)
+            except FileNotFoundError:
+                pass
+
+    try:
+        if sys.platform.startswith("linux"):
+            run_copy(["cp", "--reflink=always", "--sparse=always", "--preserve=mode,timestamps",
+                      source, destination])
+        else:
+            # BSD cp requests clonefile on APFS; if unsupported it reports failure and we use a regular copy.
+            run_copy(["cp", "-c", "-p", source, destination], quiet=True)
+            return True
+    except (OSError, subprocess.CalledProcessError):
+        try:
+            os.unlink(destination)
+        except FileNotFoundError:
+            pass
+        if sys.platform == "darwin":
+            run_copy(["cp", "-p", source, destination])
+        elif sys.platform.startswith("linux"):
+            run_copy(["cp", "--sparse=always", "--preserve=mode,timestamps", source, destination])
+        else:
+            shutil.copy2(source, destination)
+    return False
+
+def copy_stage_base_image(source: str, destination: str, kernel: str | None, initramfs: str | None,
+                          process_holder: list | None = None, cancel_event=None) -> bool:
+    """Copy the immutable cached base to a writable run workspace; return whether root.img was cloned."""
+    os.makedirs(destination, exist_ok=True)
+    image_cloned = _clone_or_sparse_copy(os.path.join(source, "root.img"), os.path.join(destination, "root.img"),
+                                         process_holder, cancel_event)
+    files = ([kernel] if kernel else []) + ([initramfs] if initramfs else [])
+    for name in files:
+        _clone_or_sparse_copy(os.path.join(source, name), os.path.join(destination, name),
+                              process_holder, cancel_event)
+    return image_cloned
+
+def stage_image_directory(build, backend: str = "qemu", kernel_package: str | None = None,
+                          kernel_snapshot: object | None = None, image_directory: str | None = None) -> str:
+    """Returns the temporary workspace allocated to this VM run."""
+    if image_directory:
+        return image_directory
+    raise RuntimeError("Temporary VM image directory has not been allocated")
+
+def create_stage_image_directory() -> str:
+    """Creates an isolated VM image workspace in the selected Library's Temporary folder."""
+    from .repository import Repository
+    temporary = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
+    root = os.path.join(temporary, "TestVMImages")
+    os.makedirs(root, exist_ok=True)
+    return tempfile.mkdtemp(prefix="stage-", dir=root)
+
+def cleanup_stage_image_directory(directory: str | None) -> None:
+    """Removes only a VM image workspace created directly under Library/Temporary/TestVMImages."""
+    if not directory:
+        return
+    try:
+        from .repository import Repository
+        temporary = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
+        root = os.path.realpath(os.path.join(temporary, "TestVMImages"))
+        target = os.path.realpath(directory)
+        if os.path.dirname(target) == root and os.path.basename(target).startswith("stage-"):
+            shutil.rmtree(target, ignore_errors=True)
+    except (AttributeError, OSError):
+        pass
 
 def stage_image_ready(build, support: QemuSupport) -> bool:
-    directory = stage_image_directory(build, support.backend)
-    files = ["root.img", support.kernel] + ([support.initramfs] if support.initramfs else [])
+    if support.kind == QemuBuildKind.STAGE and not support.boot_kernel:
+        return False
+    directory = stage_image_directory(build, support.backend, support.kernel_package,
+                                      support.kernel_snapshot, support.image_directory)
+    if support.backend == "qemu" and not support.kernel_package and support.base_image_path:
+        files = [support.base_image_path, support.base_kernel_path]
+        if support.boot_initramfs:
+            files.append(support.base_initramfs_path)
+        return all(path and os.path.isfile(path) for path in files)
+    files = ["root.img", support.boot_kernel] + ([support.boot_initramfs] if support.boot_initramfs else [])
     if not all(os.path.isfile(os.path.join(directory, name)) for name in files):
         # Move already prepared files from older releases out of the build folder once.
         legacy = os.path.join(build.path, support.backend)
@@ -321,13 +455,16 @@ print("@@extract-progress 100", flush=True)
     return f"python3 -c {quote(program)} {quote(archive)} \"$MNT\""
 
 
-def stage_image_script(archive: str, directory: str, size: int, kernel: str, initramfs: str | None) -> str:
+def stage_image_script(archive: str, directory: str, size: int, kernel: str | None, initramfs: str | None) -> str:
     """Creates ext4 disk image with stage (as root): root password removed (login without password, machine is for
     testing), serial console enabled, root filesystem in fstab. Kernel and initramfs are copied next to it."""
     from .ssh_connection import quote
     from .deploy_installation import tar_extract_command
     image = quote(os.path.join(directory, "root.img"))
-    boot_files = " ".join(quote(name) for name in [kernel] + ([initramfs] if initramfs else []))
+    boot_files = " ".join(quote(name) for name in ([kernel] if kernel else []) +
+                           ([initramfs] if initramfs else []))
+    copy_boot_files = (f'for file in {boot_files}; do cp "$MNT/boot/$file" "$D/$file"; done'
+                       if boot_files else ':')
     return f"""set -e
 D={quote(directory)}
 MNT=$(mktemp -d)
@@ -352,10 +489,28 @@ if [ -f "$MNT/etc/inittab" ]; then
         grep -q "^$id:" "$MNT/etc/inittab" || echo "$entry" >> "$MNT/etc/inittab"
     done
 fi
-for file in {boot_files}; do cp "$MNT/boot/$file" "$D/$file"; done
+{copy_boot_files}
 chmod a+r "$D"/*
 echo "Disk image: $(du -h {image} | cut -f1) used of {size // (1024 ** 3)} GiB"
 """
+
+def stage_image_mount_script(directory: str) -> str:
+    """Mount the disposable guest root while a custom kernel is prepared."""
+    from .ssh_connection import quote
+    image, mount = quote(os.path.join(directory, "root.img")), quote(os.path.join(directory, "rootfs"))
+    return f"set -e\nmkdir -p {mount}\nmount -o loop {image} {mount}\n"
+
+def stage_image_unmount_script(directory: str) -> str:
+    from .ssh_connection import quote
+    mount = quote(os.path.join(directory, "rootfs"))
+    return f"umount {mount} && rmdir {mount} || true\n"
+
+def stage_image_add_modules_script(directory: str) -> str:
+    """Install modules built with a custom kernel into the temporary VM root filesystem."""
+    from .ssh_connection import quote
+    source = quote(os.path.join(directory, "custom-modules"))
+    mount = quote(os.path.join(directory, "rootfs"))
+    return f"set -e\nmkdir -p {mount}/lib/modules\ncp -a --no-preserve=ownership {source}/. {mount}/lib/modules/\n"
 
 # ------------------------------------------------------------------------------
 # Running machine.
@@ -434,16 +589,18 @@ class QemuRun:
             command += ["-drive", f"file={self.build.artifact_path},format=raw,readonly=on,media=cdrom,if=none,id=cd",
                         "-device", "virtio-scsi-pci", "-device", "scsi-cd,drive=cd"]
         else:
-            directory = stage_image_directory(self.build)
+            directory = stage_image_directory(self.build, self.support.backend, self.support.kernel_package,
+                                              self.support.kernel_snapshot, self.support.image_directory)
             if machine.disk_device:
                 command += ["-drive", f"file={self.overlay},format=qcow2,if=none,id=disk",
                             "-device", f"{machine.disk_device},drive=disk"]
             else:
                 command += ["-drive", f"file={self.overlay},format=qcow2,if={machine.disk_interface}"]
-            command += ["-kernel", os.path.join(directory, self.support.kernel),
+            command += ["-kernel", self.support.base_kernel_path or os.path.join(directory, self.support.boot_kernel),
                         "-append", f"root=/dev/vda rw rootwait console=tty0 console={machine.console}"]
-            if self.support.initramfs:
-                command += ["-initrd", os.path.join(directory, self.support.initramfs)]
+            if self.support.boot_initramfs:
+                command += ["-initrd", self.support.base_initramfs_path or
+                            os.path.join(directory, self.support.boot_initramfs)]
         command += ["-pidfile", os.path.join(self.directory, "pid")] # Machines left by stopped app are found by it.
         command += ["-vnc", f"unix:{self.vnc_socket}", "-display", "none",
                     "-chardev", f"socket,id=serial,path={self.serial_socket},server=on,wait=off", "-serial", "chardev:serial",
@@ -458,12 +615,16 @@ class QemuRun:
         with QemuRun._start_lock:
             if any(run.is_running for run in QemuRun.running_runs):
                 raise RuntimeError("Only one QEMU machine can run at a time")
+            if self.support.kind == QemuBuildKind.STAGE and not self.support.boot_kernel:
+                raise RuntimeError("This stage has no boot kernel; build a custom kernel before running it")
             self._start_locked()
 
     def _start_locked(self):
         if self.support.kind == QemuBuildKind.STAGE:
             # Changes of system are discarded when machine stops: it runs on overlay of disk image.
-            image = os.path.join(stage_image_directory(self.build), "root.img")
+            image = self.support.base_image_path or os.path.join(
+                stage_image_directory(self.build, self.support.backend, self.support.kernel_package,
+                                      self.support.kernel_snapshot, self.support.image_directory), "root.img")
             image_tool = qemu_binary("qemu-img")
             if image_tool is None:
                 raise RuntimeError("qemu-img is not installed")
@@ -490,6 +651,7 @@ class QemuRun:
             QemuRun.running_runs.remove(self)
             QemuRun.running_runs_event_bus.emit(QemuRunEvent.RUNNING_RUNS_CHANGED)
         shutil.rmtree(self.directory, ignore_errors=True)
+        cleanup_stage_image_directory(self.support.image_directory)
         self.event_bus.emit(QemuRunEvent.STATE_CHANGED, self)
 
     def _read_serial(self):
@@ -540,7 +702,8 @@ class QemuRun:
         """Host storage allocated to the stage VM's writable overlay and its virtual disk capacity."""
         if self.support.kind != QemuBuildKind.STAGE or not self.is_running:
             return None
-        base_image = os.path.join(stage_image_directory(self.build), "root.img")
+        base_image = os.path.join(stage_image_directory(self.build, self.support.backend, self.support.kernel_package,
+                                                        self.support.kernel_snapshot, self.support.image_directory), "root.img")
         try:
             overlay = os.stat(self.overlay)
             base = os.stat(base_image)
@@ -632,6 +795,14 @@ def stop_orphaned_runs():
         except (OSError, ValueError):
             pass
         shutil.rmtree(directory, ignore_errors=True)
+    try:
+        from .repository import Repository
+        temporary = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
+        image_root = os.path.join(temporary, "TestVMImages")
+        for directory in glob.glob(os.path.join(image_root, "stage-*")):
+            shutil.rmtree(directory, ignore_errors=True)
+    except AttributeError:
+        pass
 
 def _free_port() -> int:
     with socket.socket() as probe:

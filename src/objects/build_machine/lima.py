@@ -40,6 +40,76 @@ def machines_directory() -> str:
     toolsets_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.toolsets_location))
     return os.path.join(os.path.dirname(toolsets_location), "Machines")
 
+def build_machine_temporary_directory(instance_name: str) -> str:
+    """Temporary files for one build machine run, shared by its workspace and swap disk."""
+    from .repository import library_path
+    return os.path.realpath(os.path.expanduser(library_path("Temporary", "BuildMachines", instance_name)))
+
+def workspace_image_path(instance_name: str) -> str:
+    """Temporary ext4 image shared with a machine while an operation is running."""
+    return os.path.join(build_machine_temporary_directory(instance_name), "workspace.img")
+
+def previous_temporary_workspace_image_path(instance_name: str) -> str:
+    """Workspace location used before workspace and swap data shared a per-machine directory."""
+    from .repository import library_path
+    return os.path.realpath(os.path.expanduser(library_path("Temporary", "Workspaces", instance_name + ".img")))
+
+def legacy_workspace_image_path(instance_name: str) -> str:
+    """Workspace image location used before workspaces moved into Library/Temporary."""
+    return os.path.join(machines_directory(), "workspaces", instance_name + ".img")
+
+def temporary_swap_disk_path(disk_name: str) -> str:
+    """Lima swap disk data, beside its workspace in the per-machine Temporary folder."""
+    instance_name = disk_name.removesuffix("-swap")
+    return os.path.join(build_machine_temporary_directory(instance_name), "swap-disk")
+
+def previous_temporary_swap_disk_path(disk_name: str) -> str:
+    """Swap disk location used before it shared the machine workspace folder."""
+    from .repository import library_path
+    return os.path.realpath(os.path.expanduser(library_path("Temporary", "LimaSwapDisks", disk_name)))
+
+def remove_empty_build_machine_temporary_directory(instance_name: str) -> None:
+    """Remove a per-machine run folder after its workspace and swap disk are both gone."""
+    directory = build_machine_temporary_directory(instance_name)
+    try:
+        os.rmdir(directory)
+    except OSError:
+        return
+    try:
+        os.rmdir(os.path.dirname(directory))
+    except OSError:
+        pass
+
+def move_lima_disk_to_temporary(disk_name: str, lima_home: str) -> str:
+    """Move a newly created Lima disk into Temporary and leave its managed path as a symlink.
+
+    Lima currently derives disk file paths from LIMA_HOME/_disks and has no per-disk
+    location option. The symlink keeps Lima's disk management and attachment flow intact.
+    """
+    managed = os.path.join(lima_home, "_disks", disk_name)
+    temporary = temporary_swap_disk_path(disk_name)
+    if os.path.islink(managed) and os.path.realpath(managed) == temporary:
+        return managed
+    if not os.path.isdir(managed):
+        raise FileNotFoundError(f"Lima disk directory not found: {managed}")
+    os.makedirs(os.path.dirname(temporary), exist_ok=True)
+    if os.path.lexists(temporary):
+        shutil.rmtree(temporary) if os.path.isdir(temporary) and not os.path.islink(temporary) else os.unlink(temporary)
+    shutil.move(managed, temporary)
+    os.symlink(temporary, managed)
+    return managed
+
+def remove_temporary_lima_disk_data(disk_name: str, lima_home: str) -> None:
+    """Remove a redirected disk's Temporary data and any leftover Lima symlink."""
+    managed = os.path.join(lima_home, "_disks", disk_name)
+    temporary_paths = (temporary_swap_disk_path(disk_name), previous_temporary_swap_disk_path(disk_name))
+    if os.path.islink(managed) and os.path.realpath(managed) in temporary_paths:
+        os.unlink(managed)
+    for temporary in temporary_paths:
+        if os.path.lexists(temporary):
+            shutil.rmtree(temporary) if os.path.isdir(temporary) and not os.path.islink(temporary) else os.unlink(temporary)
+    remove_empty_build_machine_temporary_directory(disk_name.removesuffix("-swap"))
+
 def default_lima_home() -> str:
     """~/.lima in real home of user (not $HOME, which can be changed). Used by machines created before machines
     directory, and when its path is too long."""
@@ -229,12 +299,11 @@ def machine_configuration(cpus: int, memory_gib: int, shared_paths: list[str]) -
     """Lima configuration (YAML) of build machine."""
     mounts = "\n".join(f'- location: "{path}"\n  writable: true' for path in shared_paths)
     indented_setup = "\n".join("    " + line for line in machine_setup_script().splitlines())
-    rosetta = "rosetta:\n  enabled: true\n  binfmt: true\n" if _ROSETTA_FOR_AMD64 else ""
     return f"""minimumLimaVersion: 2.0.0
 base:
 - {LIMA_TEMPLATE}
 vmType: vz
-{rosetta}cpus: {cpus}
+cpus: {cpus}
 memory: {memory_gib}GiB
 disk: {SYSTEM_DISK_GIB}GiB
 containerd:

@@ -14,6 +14,7 @@ import sys
 from gi.repository import GLib
 
 from .qemu_run import QemuRun, QemuRunEvent, QemuBuildKind, QemuSupport, qemu_support, stage_image_directory
+from .custom_kernel import is_arm64_linux_image
 
 
 def apple_vm_library() -> str | None:
@@ -162,10 +163,16 @@ class AppleVirtualizationRun(QemuRun):
         if self.support.kind == QemuBuildKind.ISO:
             options['iso'] = self.build.artifact_path
         else:
-            directory = stage_image_directory(self.build, 'apple')
-            options.update(disk=os.path.join(directory, 'root.img'), kernel=os.path.join(directory, self.support.kernel))
-            if self.support.initramfs:
-                options['initramfs'] = os.path.join(directory, self.support.initramfs)
+            directory = stage_image_directory(self.build, 'apple', self.support.kernel_package,
+                                              self.support.kernel_snapshot, self.support.image_directory)
+            kernel_path = os.path.join(directory, self.support.boot_kernel)
+            if (self.support.kernel_package and self.support.machine.binary == 'qemu-system-aarch64'
+                    and not is_arm64_linux_image(kernel_path)):
+                shutil.rmtree(self.directory, ignore_errors=True)
+                raise RuntimeError('Apple Virtualization needs a raw ARM64 Image kernel. Choose a source kernel package, such as sys-kernel/gentoo-kernel, instead of a -bin EFI kernel package.')
+            options.update(disk=os.path.join(directory, 'root.img'), kernel=kernel_path)
+            if self.support.boot_initramfs:
+                options['initramfs'] = os.path.join(directory, self.support.boot_initramfs)
         try:
             self._bridge = _load_bridge(current.library, os.stat(current.library).st_mtime_ns)
             self._callback = AppleVMBridge.Callback(self._native_event)
@@ -245,6 +252,8 @@ class AppleVirtualizationRun(QemuRun):
             QemuRun.running_runs.remove(self)
             QemuRun.running_runs_event_bus.emit(QemuRunEvent.RUNNING_RUNS_CHANGED)
         shutil.rmtree(self.directory, ignore_errors=True)
+        from .qemu_run import cleanup_stage_image_directory
+        cleanup_stage_image_directory(self.support.image_directory)
         self.event_bus.emit(QemuRunEvent.STATE_CHANGED, self)
 
     def place_display(self, window, x, y, width, height):

@@ -1,12 +1,8 @@
 #!/bin/bash
-# Run by Catalyst inside the stage, after packages, kernel and root overlay are installed.
+# Run by Catalyst inside the stage, after packages and root overlay are installed.
 set -euo pipefail
 
-# Preserve the compiled-kernel installation when Plasma adds its own fsscript.
-if {{ 'true' if compiled_kernel else 'false' }}; then
-    bash /usr/local/libexec/catalystlab-install-kernel
-    rm -f /usr/local/libexec/catalystlab-install-kernel
-fi
+bash "${CATALYSTLAB_KERNEL_INSTALLER:-/usr/local/libexec/catalystlab-install-kernel}"
 
 if {{ 'true' if init == 'systemd' else 'false' }}; then
     # Configure the image offline; never start services inside the build chroot.

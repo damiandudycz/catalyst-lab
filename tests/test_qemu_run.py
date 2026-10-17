@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from unittest.mock import Mock, patch
@@ -14,13 +15,80 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab import qemu_run as qemu
+from catalystlab import repository
 
 
 class QemuRunTests(unittest.TestCase):
+    def test_stage_image_workspace_is_created_and_cleaned_in_library_temporary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = types.SimpleNamespace(temporary_location=temporary)
+            with patch.object(repository.Repository, 'Settings', types.SimpleNamespace(value=settings), create=True):
+                directory = qemu.create_stage_image_directory()
+                expected_root = Path(temporary).resolve() / 'TestVMImages' / 'stage-'
+                self.assertTrue(directory.startswith(str(expected_root)))
+                self.assertTrue(Path(directory).is_dir())
+                qemu.cleanup_stage_image_directory(directory)
+                self.assertFalse(Path(directory).exists())
+
+    def test_cached_base_image_is_scoped_to_build_and_marks_only_complete_images_ready(self):
+        with tempfile.TemporaryDirectory() as cache:
+            settings = types.SimpleNamespace(cache_location=cache)
+            support = qemu.QemuSupport(qemu.QemuBuildKind.STAGE, qemu._MACHINES['arm64'],
+                                       kernel='Image', initramfs='initramfs')
+            build = types.SimpleNamespace(id='build-one', artifact_path='/build/stage.tar.xz')
+            with patch.object(repository.Repository, 'Settings', types.SimpleNamespace(value=settings), create=True):
+                first = qemu.stage_image_cache_directory(build, support, 8 << 30)
+                same = qemu.stage_image_cache_directory(build, support, 8 << 30)
+                other_build = types.SimpleNamespace(id='build-two', artifact_path='/build/stage.tar.xz')
+                other = qemu.stage_image_cache_directory(other_build, support, 8 << 30)
+            self.assertEqual(first, same)
+            self.assertNotEqual(first, other)
+            Path(first).mkdir(parents=True)
+            for name in ('root.img', 'Image', 'initramfs'):
+                Path(first, name).touch()
+            self.assertFalse(qemu.stage_base_image_ready(first, 'Image', 'initramfs'))
+            Path(first, '.ready').touch()
+            self.assertTrue(qemu.stage_base_image_ready(first, 'Image', 'initramfs'))
+
+    def test_cached_base_image_copy_is_writable_and_keeps_cache_pristine(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = Path(temporary, 'Cache'), Path(temporary, 'Temporary', 'run')
+            source.mkdir()
+            Path(source, 'root.img').write_bytes(b'base disk contents')
+            Path(source, 'Image').write_bytes(b'kernel')
+            Path(source, 'initramfs').write_bytes(b'initramfs')
+            cloned = qemu.copy_stage_base_image(str(source), str(destination), 'Image', 'initramfs')
+            self.assertIsInstance(cloned, bool)
+            self.assertEqual(Path(destination, 'root.img').read_bytes(), b'base disk contents')
+            self.assertEqual(Path(destination, 'Image').read_bytes(), b'kernel')
+            self.assertEqual(Path(destination, 'initramfs').read_bytes(), b'initramfs')
+            Path(destination, 'root.img').write_bytes(b'guest modifications')
+            self.assertEqual(Path(source, 'root.img').read_bytes(), b'base disk contents')
+
+    def test_base_image_can_be_prepared_without_a_stage_kernel(self):
+        script = qemu.stage_image_script('/build/stage.tar.xz', '/temporary/run', 8 << 30, None, None)
+        self.assertIn('mkfs.ext4', script)
+        self.assertNotIn('cp "$MNT/boot/', script)
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, 'root.img').touch()
+            Path(directory, '.ready').touch()
+            self.assertTrue(qemu.stage_base_image_ready(directory, None, None))
+
+    def test_cached_base_image_copy_stops_when_startup_is_canceled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = Path(temporary, 'Cache'), Path(temporary, 'Temporary', 'run')
+            source.mkdir()
+            Path(source, 'root.img').touch()
+            canceled = threading.Event()
+            canceled.set()
+            with self.assertRaises(InterruptedError):
+                qemu.copy_stage_base_image(str(source), str(destination), 'Image', None,
+                                           process_holder=[], cancel_event=canceled)
+
     def make_run(self, kind=qemu.QemuBuildKind.STAGE, architecture='arm64', kernel='Image', initramfs='initramfs'):
         machine = qemu._MACHINES[architecture]
         support = qemu.QemuSupport(kind, machine, kernel=kernel, initramfs=initramfs)
-        build = types.SimpleNamespace(stage_name='stage4', artifact_path='/build/stage.tar.xz', path='/build')
+        build = types.SimpleNamespace(id='build', stage_name='stage4', artifact_path='/build/stage.tar.xz', path='/build')
         with patch.object(qemu, '_free_port', return_value=2222):
             run = qemu.QemuRun(types.SimpleNamespace(id='project'), build, support, memory_mib=8192, cpus=6)
         self.addCleanup(lambda: shutil.rmtree(run.directory, ignore_errors=True))
@@ -46,6 +114,31 @@ class QemuRunTests(unittest.TestCase):
         self.assertIn('qemu-xhci', command)
         self.assertIn(f'unix:{run.vnc_socket}', command)
         self.assertIn(f'unix:{run.qmp_socket},server=on,wait=off', command)
+
+    def test_stage_command_uses_cached_base_and_boot_files_without_copying(self):
+        run = self.make_run()
+        run.support.base_image_path = '/library/Cache/TestVMImages/build/root.img'
+        run.support.base_kernel_path = '/library/Cache/TestVMImages/build/Image'
+        run.support.base_initramfs_path = '/library/Cache/TestVMImages/build/initramfs'
+        with patch.object(qemu, 'qemu_binary', side_effect=lambda name: '/qemu/' + name), \
+             patch.object(qemu, '_firmware_path', return_value='/firmware/uefi.fd'), \
+             patch.object(qemu, 'stage_image_directory', return_value='/library/Temporary/run'), \
+             patch.object(qemu, 'accelerated', return_value=None):
+            command = run.command()
+        self.assertEqual(command[command.index('-kernel') + 1], run.support.base_kernel_path)
+        self.assertEqual(command[command.index('-initrd') + 1], run.support.base_initramfs_path)
+
+    def test_cached_qemu_stage_is_ready_without_temporary_root_copy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            image, kernel, initramfs = (Path(temporary, name) for name in ('root.img', 'Image', 'initramfs'))
+            for path in (image, kernel, initramfs):
+                path.touch()
+            support = qemu.QemuSupport(qemu.QemuBuildKind.STAGE, qemu._MACHINES['arm64'], kernel='Image',
+                                       initramfs='initramfs', backend='qemu', image_directory=temporary,
+                                       base_image_path=str(image), base_kernel_path=str(kernel),
+                                       base_initramfs_path=str(initramfs))
+            build = types.SimpleNamespace(id='build', artifact_path='/build/stage.tar.xz', path='/build')
+            self.assertTrue(qemu.stage_image_ready(build, support))
 
     def test_iso_command_attaches_read_only_cd_and_omits_stage_boot_flags(self):
         run = self.make_run(kind=qemu.QemuBuildKind.ISO, architecture='amd64', kernel=None, initramfs=None)

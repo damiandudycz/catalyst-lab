@@ -120,6 +120,23 @@ class BackendTests(unittest.TestCase):
             self.assertTrue(qemu.qemu_support(self.project, self.build, check_runtime=False).available)
             self.assertIn('not installed', qemu.qemu_support(self.project, self.build).reason)
 
+    def test_stage_without_kernel_remains_available_for_custom_kernel_launch(self):
+        modules = {
+            'catalystlab.project_build': types.SimpleNamespace(StageBuildStatus=types.SimpleNamespace(COMPLETED='done')),
+            'catalystlab.deploy_live_iso': types.SimpleNamespace(is_live_iso_build=lambda build: False),
+            'catalystlab.deploy_installation': types.SimpleNamespace(is_deployable=lambda project, build: True),
+        }
+        self.build.status = 'done'
+        self.build.artifact = 'stage.tar.xz'
+        with patch.dict(sys.modules, modules), patch.object(qemu.os.path, 'isfile', return_value=True), \
+             patch.object(qemu, '_stage_boot_files', return_value=([], [])), \
+             patch.object(qemu, 'qemu_binary', return_value='/emulator'):
+            support = qemu.qemu_support(self.project, self.build)
+        self.assertTrue(support.available)
+        self.assertEqual(support.kind, qemu.QemuBuildKind.STAGE)
+        self.assertIsNone(support.kernel)
+        self.assertIsNone(support.initramfs)
+
     def test_native_startup_error_is_retained_and_run_removed(self):
         availability = apple.AppleSupport(self.support, '/bridge', LIMITS)
         run = apple.AppleVirtualizationRun(self.project, self.build, availability)

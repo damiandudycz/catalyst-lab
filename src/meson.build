@@ -63,6 +63,7 @@ catalystlab_sources = [
   'objects/deploy/deploy_image_steps.py',
   'objects/deploy/deploy_live_iso.py',
   'objects/qemu/qemu_run.py',
+  'objects/qemu/custom_kernel.py',
   'objects/qemu/apple_virtualization.py',
   'objects/global_objects/library.py',
   'objects/global_objects/modules_scanner.py',

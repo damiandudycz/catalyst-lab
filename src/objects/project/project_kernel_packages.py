@@ -56,12 +56,13 @@ _CATEGORY = "sys-kernel"
 _cache: dict[tuple, dict[str, KernelPackageKind]] = {}
 _cache_lock = threading.Lock()
 
-def load_kernel_packages(project_directory, stage) -> list[KernelPackage]:
+def load_kernel_packages(project_directory, stage, snapshot=None) -> list[KernelPackage]:
     """Kernel packages of snapshot of project and overlays used by stage. Slow at first (snapshot is read), call it in
-    background. Packages with kernel sources first."""
+    background. An explicit snapshot can be supplied for temporary build choices. Packages with kernel sources first."""
     packages: dict[str, KernelPackage] = {}
     sources = []
-    if (snapshot := project_directory.get_snapshot()) is not None and os.path.isfile(snapshot.file_path()):
+    snapshot = snapshot or project_directory.get_snapshot()
+    if snapshot is not None and os.path.isfile(snapshot.file_path()):
         sources.append(("gentoo", ("snapshot", snapshot.filename), lambda snapshot=snapshot: _snapshot_packages(snapshot.file_path())))
     for name, path in _stage_overlays(project_directory, stage):
         sources.append((name, ("overlay", path, _tree_state(path)), lambda path=path: _folder_packages(path)))

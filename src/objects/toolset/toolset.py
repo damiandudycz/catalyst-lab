@@ -18,7 +18,7 @@ from .status_indicator import StatusIndicatorState, StatusIndicatorValues, Statu
 from .rootless import (
     rootless_toolset_unsupported_reason, run_in_namespace, extracted_squashfs, writable_squashfs_copy,
     remove_in_namespace, squashfs_process, sessions_directory, executor_for_machine, LOCAL_EXECUTOR,
-    _filesystem_operations
+    mount_squashfs_read_only, unmount_squashfs, _filesystem_operations
 )
 
 class ToolsetEvents(Enum):
@@ -57,8 +57,8 @@ class Toolset(Serializable):
         self.additional_bindings: list[BindMount] | None = None
         self.hot_fixes: list[HotFix] | None = None
         self.work_dir: str | None = None
-        # Rootless spawn runs bwrap in user namespace instead of root helper. Toolset root is then extracted copy of
-        # squashfs: shared read only copy, or writable copy (rootless_writable_copy) removed when unspawning.
+        # Rootless spawn runs bwrap in user namespace instead of root helper. Machine toolsets use a read-only
+        # SquashFS mount; local rootless toolsets use an extracted copy. Writable copies are removed when unspawning.
         self.rootless = False
         self.rootless_writable_copy: str | None = None
         self.event_bus = EventBus[ToolsetEvents]()
@@ -223,9 +223,15 @@ class Toolset(Serializable):
                 if store_changes:
                     self.squashfs_binding_dir = writable_squashfs_copy(squashfs_path=self.file_path(), output_handler=print, executor=executor)
                     self.rootless_writable_copy = self.squashfs_binding_dir
+                elif machine:
+                    # The machine can loop-mount a shared SquashFS read-only. Overlay bindings below keep all writes
+                    # in the per-spawn upper layer, avoiding a costly full extraction for every toolset operation.
+                    self.squashfs_binding_dir = mount_squashfs_read_only(
+                        squashfs_path=self.file_path(), output_handler=print, executor=executor)
+                    self.squashfs_loop_mounted = True
                 else:
                     self.squashfs_binding_dir = extracted_squashfs(squashfs_path=self.file_path(), kind="toolsets", output_handler=print, check_path="usr", executor=executor)
-                self.squashfs_loop_mounted = False
+                    self.squashfs_loop_mounted = False
             elif uses_squashfs_file:
                 prefix = f"toolsets/{Toolset.sanitized_name_for_name(name=self.name)}/mount_"
                 if store_changes:
@@ -262,6 +268,7 @@ class Toolset(Serializable):
                 BindMount(mount_path="/etc", toolset_path="/etc", store_changes=store_changes),
                 BindMount(mount_path="/etc/resolv.conf", host_path="/etc/resolv.conf"), # Take resolv.conf directly from main system
             ]
+            replacement_mounts = {binding.mount_path for binding in (additional_bindings or [])}
             _working_bindings = [ # Working.
                 BindMount(mount_path="/var", toolset_path="/var", store_changes=store_changes),
                 # Work/tmp/cache directories that should always be stored in temporary directory, not in the real toolset.
@@ -271,7 +278,8 @@ class Toolset(Serializable):
                 # Set portage owner
                 BindMount(mount_path="/var/tmp/portage", create_if_missing=True, owner="portage:portage"),
                 BindMount(mount_path="/var/cache/distfiles", create_if_missing=True, owner="portage:portage"),
-                BindMount(mount_path="/var/cache/binpkgs", create_if_missing=True, owner="portage:portage"),
+                *([] if "/var/cache/binpkgs" in replacement_mounts else
+                  [BindMount(mount_path="/var/cache/binpkgs", create_if_missing=True, owner="portage:portage")]),
                 # Uncomment if portage tree should not be kept in squashfs
                 #BindMount(mount_path="/var/db/repos", create_if_missing=True),
             ]
@@ -417,6 +425,8 @@ class Toolset(Serializable):
                     if kind == "dir":
                         if binding.store_changes:
                             bind_options.extend(["--bind", binding.host_path, binding.mount_path])
+                        elif binding.read_only:
+                            bind_options.extend(["--ro-bind", binding.host_path, binding.mount_path])
                         else:
                             overlay = create_overlay_map(binding.mount_path)
                             bind_options.extend([
@@ -490,6 +500,11 @@ class Toolset(Serializable):
     def _release_squashfs_binding_dir(self):
         """Unmounts or deletes squashfs contents prepared by spawn, used when spawning fails."""
         if self.rootless:
+            if self.squashfs_loop_mounted and self.machine and self.squashfs_binding_dir:
+                unmount_squashfs(mount_point=self.squashfs_binding_dir, output_handler=print, executor=self.executor)
+                self.squashfs_loop_mounted = False
+                self.squashfs_binding_dir = None
+                return
             if self.rootless_writable_copy:
                 remove_in_namespace([self.rootless_writable_copy], print, executor=self.executor)
             self.rootless_writable_copy = None
@@ -522,7 +537,8 @@ class Toolset(Serializable):
                         shutil.move(self.file_path()+"_tmp", self.file_path())
                 if self.rootless:
                     # Shared read only copy is kept, writable one is removed.
-                    if clean_squashfs_binding_dir:
+                    # Machine mounts must always be released before the disposable workspace is detached.
+                    if clean_squashfs_binding_dir or (self.squashfs_loop_mounted and self.machine):
                         self._release_squashfs_binding_dir()
                 elif self.squashfs_binding_dir and clean_squashfs_binding_dir:
                     if self.squashfs_loop_mounted:
@@ -853,6 +869,7 @@ class BindMount:
     resolve_host_path: bool = True  # Whether to resolve path through runtime_env.
     create_if_missing: bool = False # Creates directory if not found on host.
     owner: str | None = None        # Sets owner of given file/dir. Works only with toolset_path or tmp bindings
+    read_only: bool = False         # Bind directories directly as read-only instead of adding a writable overlay.
 
 @root_function
 def _start_toolset_command(work_dir: str, fake_root: str, bind_options: list[str], command_to_run: str):

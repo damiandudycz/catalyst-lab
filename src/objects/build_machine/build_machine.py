@@ -1,10 +1,13 @@
 from __future__ import annotations
-import os, threading, uuid, json
+import os, threading, uuid, json, shlex
 from typing import Self
 from .event_bus import EventBus, SharedEvent
 from .repository import Repository
 from .status_indicator import StatusIndicatorState, StatusIndicatorValues, StatusDetail, item_status, status_values
-from .lima import list_instances, run_limactl, run_as_root_in_instance, swap_activation_script, default_lima_home, MACHINE_DATA_DIRECTORY, kill_instance_processes, instance_process_ids
+from .lima import (list_instances, run_limactl, run_as_root_in_instance, swap_activation_script, default_lima_home,
+                   MACHINE_DATA_DIRECTORY, kill_instance_processes, instance_process_ids,
+                   move_lima_disk_to_temporary, remove_temporary_lima_disk_data,
+                   remove_empty_build_machine_temporary_directory)
 from .lima import lima_home as default_new_lima_home
 
 class BuildMachine:
@@ -259,6 +262,7 @@ class BuildMachine:
             output_handler(f"Starting virtual machine {self.name}...")
             self._set_status(self.STATUS_STARTING)
             try:
+                self._remove_deprecated_rosetta_setting(output_handler, process_holder)
                 self._update_provision_script(output_handler, process_holder)
                 self._update_mounts(output_handler, process_holder)
                 self._prepare_swap_disk(output_handler, process_holder)
@@ -336,9 +340,11 @@ class BuildMachine:
         disabled."""
         if self.swap_gib:
             run_limactl(["disk", "delete", "--force", self.swap_disk_name], lambda line: None, home=self.lima_home)
+            remove_temporary_lima_disk_data(self.swap_disk_name, self.lima_home)
             if not run_limactl(["disk", "create", self.swap_disk_name, f"--size={self.swap_gib}GiB", "--format=raw"],
                                output_handler, process_holder, home=self.lima_home):
                 raise RuntimeError(f"Failed to create swap disk of virtual machine {self.name}")
+            move_lima_disk_to_temporary(self.swap_disk_name, self.lima_home)
         if self._swap_disk_attached() != bool(self.swap_gib):
             expression = (f'.additionalDisks = [{{"name": "{self.swap_disk_name}", "format": false}}]' if self.swap_gib
                           else "del(.additionalDisks)")
@@ -346,6 +352,7 @@ class BuildMachine:
                 raise RuntimeError(f"Failed to configure swap disk of virtual machine {self.name}")
         if not self.swap_gib:
             run_limactl(["disk", "delete", "--force", self.swap_disk_name], lambda line: None, home=self.lima_home)
+            remove_temporary_lima_disk_data(self.swap_disk_name, self.lima_home)
 
     def _update_provision_script(self, output_handler, process_holder: list | None = None):
         """Lima runs provisioning script (stored in configuration of machine) on every boot. Machines created by
@@ -364,6 +371,21 @@ class BuildMachine:
         expression = f'.provision = [{{"mode": "system", "script": {json.dumps(script)}}}]'
         if not run_limactl(["edit", "--set", expression, self.instance_name], output_handler, process_holder, home=self.lima_home):
             output_handler(f"Warning: provisioning of virtual machine {self.name} was not updated")
+
+    def _remove_deprecated_rosetta_setting(self, output_handler, process_holder: list | None = None):
+        """Remove the legacy top-level Rosetta key; Lima templates configure it under vmOpts.vz."""
+        import re
+        try:
+            with open(os.path.join(self.machine_directory, "lima.yaml"), encoding="utf-8") as file:
+                configuration = file.read()
+        except OSError:
+            return
+        if not re.search(r"^rosetta:", configuration, re.MULTILINE):
+            return
+        output_handler(f"Updating deprecated Rosetta setting of virtual machine {self.name}")
+        if not run_limactl(["edit", "--set", "del(.rosetta)", self.instance_name], output_handler,
+                           process_holder, home=self.lima_home):
+            output_handler(f"Warning: deprecated Rosetta setting of virtual machine {self.name} was not removed")
 
     def _update_mounts(self, output_handler, process_holder: list | None = None):
         """Machine shares current folders of Catalyst Lab (they change when library is moved to other place)."""
@@ -401,6 +423,7 @@ class BuildMachine:
 
     def delete_swap_disk(self, output_handler=print):
         run_limactl(["disk", "delete", "--force", self.swap_disk_name], output_handler, home=self.lima_home)
+        remove_temporary_lima_disk_data(self.swap_disk_name, self.lima_home)
 
     # Settings:
 
@@ -425,15 +448,26 @@ class BuildMachine:
         self.event_bus.emit(SharedEvent.STATE_UPDATED, self)
 
     # Working space:
-    # Ext4 image in shared folder, mounted in machine at MACHINE_DATA_DIRECTORY while operations use it (environments,
-    # builds, installations). It's created for first operation and deleted when last one finishes, so data doesn't
-    # stay in machine nor take space on this computer.
+    # Ext4 image in Library/Temporary/BuildMachines/<instance>, mounted in the machine at MACHINE_DATA_DIRECTORY
+    # while operations use it. The temporary swap disk lives beside it; each is removed at the end of its lifecycle.
 
     @property
     def workspace_image_path(self) -> str:
-        """In a dedicated shared folder, so both host management and the guest can access it."""
-        from .lima import machines_directory
-        return os.path.join(machines_directory(), "workspaces", self.instance_name + ".img")
+        """Temporary ext4 workspace image shared with the machine while an operation is running."""
+        from .lima import workspace_image_path
+        return workspace_image_path(self.instance_name)
+
+    @property
+    def legacy_workspace_image_path(self) -> str:
+        """Workspace location used by versions before workspaces moved into Library/Temporary."""
+        from .lima import legacy_workspace_image_path
+        return legacy_workspace_image_path(self.instance_name)
+
+    @property
+    def previous_temporary_workspace_image_path(self) -> str:
+        """Workspace location used before workspace and swap data shared a per-machine directory."""
+        from .lima import previous_temporary_workspace_image_path
+        return previous_temporary_workspace_image_path(self.instance_name)
 
     @property
     def machine_directory(self) -> str:
@@ -474,7 +508,8 @@ class BuildMachine:
         # Left by previous session of app (eg. after crash) is replaced.
         script = f"""
 set -e
-sudo umount -l {MACHINE_DATA_DIRECTORY} 2>/dev/null || true
+sudo umount -R -l {MACHINE_DATA_DIRECTORY} 2>/dev/null || true
+mkdir -p {shlex.quote(os.path.dirname(image))}
 rm -f "{image}"
 truncate -s {self.workspace_gib}G "{image}"
 mkfs.ext4 -q -F -m 0 "{image}"
@@ -487,13 +522,17 @@ sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
     def _delete_workspace(self, output_handler):
         from .rootless import MachineExecutor
         image = self.workspace_image_path
-        if not os.path.exists(image):
+        images = [image, self.previous_temporary_workspace_image_path, self.legacy_workspace_image_path]
+        existing_images = [path for path in images if os.path.exists(path)]
+        if not existing_images:
             return
         output_handler(f"Removing working space of {self.name}")
         if self.is_running:
             try:
                 # Do not unlink the backing file if the guest couldn't unmount it.
-                cleanup = (f'if mountpoint -q {MACHINE_DATA_DIRECTORY}; then sudo umount -l {MACHINE_DATA_DIRECTORY}; fi; '
+                # Toolset SquashFS mounts live inside this workspace. Recursively unmount them too if the app exited
+                # before normal toolset cleanup, so the workspace image can be detached safely.
+                cleanup = (f'if mountpoint -q {MACHINE_DATA_DIRECTORY}; then sudo umount -R -l {MACHINE_DATA_DIRECTORY}; fi; '
                            f'rm -f "{image}"')
                 if not MachineExecutor(self).run(cleanup, output_handler):
                     output_handler(f"Failed to remove working space of {self.name}: guest unmount failed")
@@ -502,8 +541,16 @@ sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
                 output_handler(f"Failed to unmount working space: {e}")
                 return
         try:
-            if os.path.exists(image):
-                os.remove(image)
+            for path in existing_images:
+                if os.path.exists(path):
+                    os.remove(path)
+            previous_directory = os.path.dirname(self.previous_temporary_workspace_image_path)
+            try:
+                os.rmdir(previous_directory)
+                os.rmdir(os.path.dirname(previous_directory))
+            except OSError:
+                pass
+            remove_empty_build_machine_temporary_directory(self.instance_name)
         except OSError as e:
             output_handler(f"Failed to remove working space of {self.name}: {e}")
 

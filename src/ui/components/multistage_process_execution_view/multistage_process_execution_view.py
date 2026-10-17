@@ -55,6 +55,11 @@ class MultistageProcessExecutionView(Gtk.Box):
 
     @Gtk.Template.Callback()
     def on_cancel_pressed(self, _):
+        if hasattr(self.multistage_process, "cancel_async"):
+            self.cancel_button.set_sensitive(False)
+            self.cancel_button.set_label("Canceling…")
+            self.multistage_process.cancel_async()
+            return
         from .build_queue import BuildQueue
         from .project_build_process import ProjectBuild
         queue = BuildQueue.shared()
@@ -154,7 +159,9 @@ class MultistageProcessExecutionView(Gtk.Box):
             case MultiStageProcessState.COMPLETED:
                 display_status(text="Completed successfully.", style="success")
             case MultiStageProcessState.FAILED:
-                display_status(text="Failed. Open failed steps to see their output.", style="error")
+                display_status(text=("Canceled." if getattr(self.multistage_process, "canceled", False)
+                                     else "Failed. Open failed steps to see their output."),
+                               style="error")
 
 class MultiStageProcessStageRow(Adw.ActionRow):
     """Displays stage state. Can be activated to open output of commands executed by stage."""

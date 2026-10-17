@@ -14,8 +14,13 @@ from .toolset import BindMount
 from .toolset_env_builder import ToolsetEnvBuilder
 from .project_stage_arguments import StageArgumentDetails
 from .project_stage_cache import CACHE_ARGUMENTS, stage_cache_path
-from .rootless import extracted_squashfs, remove_stale_sessions, distfiles_directory
-from .project_build_rootless import stage_build_session_script, save_interrupted_caches, CATALYST_WRAPPER
+from .rootless import (
+    prepare_toolset_squashfs, prepare_snapshot_squashfs, unmount_squashfs,
+    remove_stale_sessions, distfiles_directory
+)
+from .project_build_rootless import (
+    stage_build_session_script, save_interrupted_caches, CATALYST_WRAPPER, catalyst_snapshot_command,
+)
 from .project_build import StageBuild, StageBuildStatus, StageBuildPlan, project_builds_directory, stage_builds_directory
 from .project_build_details import run_details, seed_details, failure_details, output_details, failure_logs_script
 from .project_build_spec import (
@@ -71,8 +76,10 @@ class ProjectBuild(MultiStageProcess):
         self._rosetta_amd64: bool | None = None
         self.rootless_unsupported_reason = self.executor.unsupported_reason() if self.executor and not self.machine else None
         self.rootless = self.machine is not None or self.rootless_unsupported_reason is None
-        self.rootless_toolset_path: str | None = None # Extracted toolset and snapshot, set when preparing toolset.
+        self.rootless_toolset_path: str | None = None # Read-only mounted or extracted toolset lower layer.
+        self.rootless_toolset_mounted = False # Mounted SquashFS lower layer, released before machine workspace.
         self.rootless_snapshot_path: str | None = None
+        self.rootless_snapshot_mounted = False
         super().__init__(title=f"Building {project_directory.name}")
         # Project rows show running builds in their status indicators, so project state changes with build state.
         self.event_bus.subscribe(MultiStageProcessEvent.STATE_CHANGED, self._on_state_changed)
@@ -425,8 +432,9 @@ class ProjectBuildStepFetchSnapshot(ProjectBuildStep):
             process.snapshot = snapshot
             self.log(f"Using snapshot {snapshot.filename} ({snapshot.name})")
             if process.rootless:
-                process.rootless_snapshot_path = extracted_squashfs(
-                    snapshot.file_path(), "snapshots", self.log, self.namespace_processes, check_path="profiles", executor=process.executor)
+                (process.rootless_snapshot_path,
+                 process.rootless_snapshot_mounted) = prepare_snapshot_squashfs(
+                    snapshot.file_path(), self.log, self.namespace_processes, executor=process.executor)
             if process.update_project_snapshot:
                 GLib.idle_add(process.store_project_snapshot)
             self.complete(MultiStageProcessStageState.COMPLETED)
@@ -442,7 +450,7 @@ class ProjectBuildStepFetchSnapshot(ProjectBuildStep):
         snapshots = os.path.realpath(os.path.expanduser(Repository.Settings.value.snapshots_location))
         os.makedirs(snapshots, exist_ok=True)
         started = datetime.now().timestamp() - 1
-        command = "catalyst -s stable"
+        command = catalyst_snapshot_command()
         if process.rootless:
             # Same session as stage builds, catalyst writes snapshot to snapshots folder.
             self.log(f"$ {command}")
@@ -516,7 +524,7 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
             print(f"Error during '{self.name}': {e}")
             self.complete(MultiStageProcessStageState.FAILED)
     def _prepare_rootless(self):
-        """Extracts toolset and snapshot (once for every version of their files), used by stage builds."""
+        """Prepares toolset and snapshot lower layers used by stage builds."""
         process = self.multistage_process
         executor = process.executor
         if process.machine:
@@ -528,15 +536,16 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
         else:
             self.log("Building without root privileges, in user namespace")
         remove_stale_sessions(self.log, self.namespace_processes, executor=executor)
-        process.rootless_toolset_path = extracted_squashfs(
-            process.toolset.file_path(), "toolsets", self.log, self.namespace_processes, check_path="bin/bash", executor=executor)
+        process.rootless_toolset_path, process.rootless_toolset_mounted = prepare_toolset_squashfs(
+            process.toolset.file_path(), self.log, self.namespace_processes, executor=executor)
         # Latest snapshot is extracted after it's generated.
         if not process.fetch_snapshot:
             snapshot = process.snapshot
             if snapshot is None:
                 raise RuntimeError("Build has no snapshot")
-            process.rootless_snapshot_path = extracted_squashfs(
-                snapshot.file_path(), "snapshots", self.log, self.namespace_processes, check_path="profiles", executor=executor)
+            (process.rootless_snapshot_path,
+             process.rootless_snapshot_mounted) = prepare_snapshot_squashfs(
+                snapshot.file_path(), self.log, self.namespace_processes, executor=executor)
         process.make_directories([distfiles_directory(executor), process.seed_cache_directory, process.work_root] + process.mirrored_paths())
     def required_bindings(self) -> list[BindMount]:
         process = self.multistage_process
@@ -570,6 +579,23 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
                 save_interrupted_caches(self.multistage_process.executor, self.log)
             except Exception as e:
                 self.log(f"Failed to save caches: {e}")
+            if self.multistage_process.rootless_toolset_mounted:
+                try:
+                    unmount_squashfs(self.multistage_process.rootless_toolset_path, self.log,
+                                     executor=self.multistage_process.executor)
+                    self.multistage_process.rootless_toolset_mounted = False
+                    self.multistage_process.rootless_toolset_path = None
+                except Exception as e:
+                    # Releasing the workspace recursively unmounts any remaining mount as a fallback.
+                    self.log(f"Failed to unmount toolset image: {e}")
+            if self.multistage_process.rootless_snapshot_mounted:
+                try:
+                    unmount_squashfs(self.multistage_process.rootless_snapshot_path, self.log,
+                                     executor=self.multistage_process.executor)
+                    self.multistage_process.rootless_snapshot_mounted = False
+                    self.multistage_process.rootless_snapshot_path = None
+                except Exception as e:
+                    self.log(f"Failed to unmount Gentoo snapshot: {e}")
             self.multistage_process.machine.release_workspace(self.log, user=self.workspace_user)
         shutil.rmtree(self.multistage_process.work_root, ignore_errors=True)
         if self.reserved:
@@ -852,6 +878,11 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             command=f'bash "{process.container_path(build_script_path)}"',
             diagnostics_command=f'bash "{process.container_path(diagnostics_path)}"' if diagnostics_path else None,
             synced_caches=process.synced_caches(self.stage),
+            overlay_file_replacements=[(
+                "/usr/share/catalyst/targets/stage1/build.py",
+                'sys.stdout.write(b + " ")',
+                'sys.stdout.write(str(b) + " ")',
+            )],
         )
         self.log(f"$ bash {process.container_path(build_script_path)}")
         return process.executor.run_in_namespace(script, self.log, self.namespace_processes)

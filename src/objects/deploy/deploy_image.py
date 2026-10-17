@@ -66,13 +66,20 @@ class MachineRootConnection:
         self.host = f"virtual machine {machine.name}" if machine else "virtual machine"
         self.connected = False
 
-    def connect(self, password: str | None = None) -> str | None:
+    def connect(self, password: str | None = None, process_holder: list | None = None,
+                output_handler=print, cancel_event=None) -> str | None:
         if self.machine is None:
             return "No virtual machine to create image"
         self.machine.begin_use(self._USER)
         self.connected = True
         try:
-            self.machine.ensure_running()
+            if output_handler is print and process_holder is None:
+                self.machine.ensure_running()
+            else:
+                self.machine.ensure_running(output_handler, process_holder)
+            if cancel_event is not None and cancel_event.is_set():
+                self.close()
+                return "Canceled"
         except Exception as e:
             self.close()
             return f"Failed to start virtual machine {self.machine.name}: {e}"
