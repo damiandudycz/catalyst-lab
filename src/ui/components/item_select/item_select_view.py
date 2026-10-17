@@ -5,7 +5,7 @@ from .repository import Repository, RepositoryEvent
 from .repository_list_view import ItemRow
 from .event_bus import EventBus
 from .scroll_position import preserved_scroll_position
-from .item_select_state import no_valid_items_visible
+from .item_select_state import ItemSelectionData, no_valid_items_visible
 
 class ItemSelectionViewEvent(Enum):
     ITEM_CHANGED = auto() # Means selection was changed or currently selected state changed.
@@ -27,7 +27,7 @@ def update_selection_messages(view, valid_items=None, allow_multiselect=False):
     view.is_not_usable_label.set_visible(bool(unusable))
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/components/item_select/item_select_view.ui')
-class ItemSelectionView(Gtk.Box):
+class ItemSelectionView(ItemSelectionData, Gtk.Box):
     __gtype_name__ = "ItemSelectionView"
 
     __gsignals__ = {
@@ -64,11 +64,6 @@ class ItemSelectionView(Gtk.Box):
         self._load_labels()
         self.connect("realize", self.on_realize)
 
-    def set_static_list(self, list: list):
-        """Use static list insetad of repository. Only call this once."""
-        self.static_list = list
-        self._load_items()
-
     def on_realize(self, widget):
         self.items_list.set_title(GLib.markup_escape_text(self.title) if self.title else "")
         self.items_list.set_description(self.description or None)
@@ -85,16 +80,6 @@ class ItemSelectionView(Gtk.Box):
     def _on_repository_changed(self, *args):
         with preserved_scroll_position(self):
             self._load_items()
-
-    def set_leading_items(self, items: list):
-        """Items shown before items of repository (or static list), eg. option that isn't stored in repository."""
-        self.leading_items = items
-        if hasattr(self, 'rows'):
-            self._load_items()
-
-    def items(self) -> list:
-        items = self.static_list if hasattr(self, 'static_list') else self.repository.value if hasattr(self, 'repository') else []
-        return getattr(self, 'leading_items', []) + list(items)
 
     def select(self, item):
         self.selected_item = item

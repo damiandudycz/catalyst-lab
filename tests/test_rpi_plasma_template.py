@@ -54,6 +54,8 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
                 subprocess.run(['bash', '-n', str(script)], check=True)
                 self.assertTrue((stage / 'kernel.config').is_file())
                 self.assertTrue((stage / 'portage/package.accept_keywords/raspberrypi-sources').is_file())
+                self.assertEqual((stage / 'portage/package.use/genkernel').read_text().strip(),
+                                 'sys-kernel/genkernel -firmware')
                 self.assertTrue((stage / 'root_overlay/usr/local/libexec/catalystlab-install-kernel').is_file())
                 self.assertTrue((stage / 'install-kernel.sh').is_file())
                 self.assertFalse((stage / 'root_overlay/usr/local/sbin/build-raspberrypi-kernel').exists())
