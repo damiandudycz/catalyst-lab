@@ -8,6 +8,24 @@ from unittest.mock import Mock
 
 
 class LaunchSettingsTests(unittest.TestCase):
+    def test_unavailable_display_keeps_screen_selected(self):
+        path = Path(__file__).resolve().parents[1] / 'src/ui/qemu/qemu_run_view.py'
+        tree = ast.parse(path.read_text())
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'QemuRunView')
+        status = next(node for node in cls.body
+                      if isinstance(node, ast.FunctionDef) and node.name == '_set_screen_status')
+        namespace = {}
+        exec(compile(ast.Module(body=[status], type_ignores=[]), str(path), 'exec'), namespace)
+        view = types.SimpleNamespace(
+            screen_status=Mock(), _screen_widget=Mock(), status_heading=Mock(),
+            backend='qemu', stack=Mock(),
+        )
+
+        namespace['_set_screen_status'](view, 'Display output is not active')
+
+        view._screen_widget.set_visible_child_name.assert_called_once_with('status')
+        view.stack.set_visible_child_name.assert_not_called()
+
     def test_qemu_console_page_change_updates_tab_without_avf_detach(self):
         path = Path(__file__).resolve().parents[1] / 'src/ui/qemu/qemu_run_view.py'
         tree = ast.parse(path.read_text())

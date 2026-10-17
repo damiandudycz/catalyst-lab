@@ -31,6 +31,7 @@ def present_qemu_run(run: QemuRun):
     if navigation is not None and page is not None:
         stack = navigation.get_navigation_stack()
         if any(stack.get_item(index) is page for index in range(stack.get_n_items())):
+            view.stack.set_visible_child_name("screen")
             navigation.pop_to_page(page)
             return
         # A view can remain referenced briefly after its page is removed.
@@ -59,7 +60,6 @@ class QemuRunView(Gtk.Box):
         self.run: QemuRun | None = None
         self._serial_filter = SerialConsoleFilter()
         self._serial_style = AnsiStyle()
-        self._auto_console_detection = False
         self._native_input_active = False
         # Start with the native view uncaptured. Once the user clicks the VM,
         # normal focus restoration can keep the keyboard routed to it.
@@ -67,6 +67,7 @@ class QemuRunView(Gtk.Box):
         self._updating_capture_button = False
         self._native_display_suspended = False
         self._native_input_root = None
+        self._native_focus_handler = None
         self._native_key_controller = None
         self.preparation: QemuImagePreparation | None = None
         self._launch_cpus = cpus
@@ -375,14 +376,6 @@ class QemuRunView(Gtk.Box):
             self._screen_widget.set_visible_child_name("status")
         else:
             self._screen_widget.set_visible_child_name("native" if self.backend == "apple" else "display")
-        if "display output is not active" in text.lower():
-            self._switch_to_console()
-            self._auto_console_detection = False
-
-    def _switch_to_console(self):
-        if self.stack.get_visible_child_name() == "screen":
-            self.stack.set_visible_child_name("console")
-
     def _set_running(self, running: bool):
         ready = running and (self.backend == "qemu" or self.run.ready)
         starting = running and not ready
@@ -586,7 +579,6 @@ class QemuRunView(Gtk.Box):
             self._native_focus_handler = None
             self._native_input_root = None
         self._stop_usage_updates()
-        self._auto_console_detection = False
         if self.run is not None:
             run = self.run
             for event in (QemuRunEvent.STATE_CHANGED, QemuRunEvent.SERIAL_OUTPUT, QemuRunEvent.OUTPUT_LINE_ADDED):
@@ -596,6 +588,9 @@ class QemuRunView(Gtk.Box):
             self.run = None
         self.vnc_view.disconnect_vnc()
     def start(self, *_):
+        # Each launch (including a restart from an existing run view) begins on
+        # Screen. Console and Log remain available through the user's tab choice.
+        self.stack.set_visible_child_name("screen")
         if any(run is not self.run and run.is_running for run in QemuRun.running_runs):
             self._set_status("Only one test virtual machine can run at a time")
             self._set_screen_status("Another test virtual machine is already running")
@@ -609,7 +604,6 @@ class QemuRunView(Gtk.Box):
             self.support = replace(self.support, image_directory=create_stage_image_directory())
             if self.apple is not None:
                 self.apple = replace(self.apple, support=self.support)
-        self._auto_console_detection = True
         if self.support.kind == QemuBuildKind.STAGE and not stage_image_ready(self.support):
             self._prepare_image()
             return
@@ -630,7 +624,6 @@ class QemuRunView(Gtk.Box):
             run.start()
         except Exception as e:
             self._hide_progress()
-            self._auto_console_detection = False
             self._detach_run()
             self.run = None
             cleanup_stage_image_directory(self.support.image_directory)
@@ -828,11 +821,6 @@ class QemuRunView(Gtk.Box):
             if visible_text.strip():
                 self.console_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
                 self._append_serial_text(visible_text)
-            serial_output = self.run.serial_output.casefold() if self.run is not None else ""
-            if self._auto_console_detection and any(message in serial_output for message in (
-                    "display output is not active", "can't be loaded on", "could not load image")):
-                self._switch_to_console()
-                self._auto_console_detection = False
             return False
         GLib.idle_add(append)
 
