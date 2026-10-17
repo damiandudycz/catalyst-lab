@@ -1,5 +1,5 @@
 from __future__ import annotations
-import gzip, hashlib, json, os, re, shutil, socket, subprocess, sys, tempfile, threading
+import base64, gzip, hashlib, json, os, re, shutil, socket, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 from gi.repository import GLib
 from dataclasses import dataclass, field
@@ -9,7 +9,8 @@ from .multistage_process import (
     MultiStageProcess, MultiStageProcessStage, MultiStageProcessStageState,
     MultiStageProcessEvent, MultiStageProcessState,
 )
-from .custom_kernel import KERNEL_OUTPUTS_MANIFEST, copy_kernel_outputs
+from .custom_kernel import (KERNEL_OUTPUTS_MANIFEST, KERNEL_BUILD_METADATA, copy_kernel_outputs,
+                            write_kernel_build_metadata)
 
 # ------------------------------------------------------------------------------
 # Running builds in QEMU: live CD ISO images (booted by firmware of machine), and stages with generic kernel (stage
@@ -23,7 +24,6 @@ _QEMU_SEARCH_PATHS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
 _FIRMWARE_DIRECTORIES = ("/opt/homebrew/share/qemu", "/usr/local/share/qemu", "/usr/share/qemu", "/usr/share/edk2",
                          "/usr/share/edk2-ovmf", "/usr/share/AAVMF", "/usr/share/qemu-efi-aarch64",
                          "/usr/share/AAVMF")
-
 def _new_run_directory(backend_name: str) -> str:
     """Create VM state in Library/Temporary for Apple VMs; keep QEMU sockets in short /tmp paths."""
     root = "/tmp"
@@ -122,6 +122,7 @@ class QemuSupport:
     kernel_toolset: object | None = None # Toolset used for this run when the project's toolset is busy.
     local_users: list[object] = field(default_factory=list, repr=False) # Accounts created only in this run's writable stage image.
     root_password: str | None = field(default=None, repr=False) # Optional password set only in this run's writable stage image.
+    host_resolv_conf: str | None = field(default=None, repr=False) # Optional host DNS config, copied only to this run's image.
     image_directory: str | None = None # Per-run Library/Temporary workspace, removed when the VM stops.
     base_image_path: str | None = None # Immutable cached raw disk used as a QEMU qcow2 backing image.
     base_kernel_path: str | None = None # Cached boot kernel used directly by QEMU.
@@ -537,6 +538,25 @@ def stage_image_configure_accounts_script(directory: str, root_password: str | N
         ]
     return f"set -e\nROOT={root}\n{CHROOT_SETUP}\n" + "\n".join(commands) + "\n"
 
+def stage_image_configure_resolv_conf_script(directory: str, resolv_conf: str) -> str:
+    """Copy host DNS settings into the disposable VM root filesystem."""
+    from .ssh_connection import quote
+    root = quote(os.path.join(directory, "rootfs"))
+    encoded = base64.b64encode(resolv_conf.encode("utf-8")).decode("ascii")
+    return (f"set -e\nROOT={root}\nrm -f \"$ROOT/etc/resolv.conf\"\n"
+            f"printf '%s' {quote(encoded)} | base64 -d > \"$ROOT/etc/resolv.conf\"\n"
+            "chmod 0644 \"$ROOT/etc/resolv.conf\"\n"
+            "echo 'Configured /etc/resolv.conf from host'\n")
+
+def read_host_resolv_conf() -> str | None:
+    """Return the host resolver configuration when it contains a nameserver."""
+    try:
+        content = Path("/etc/resolv.conf").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    return content if any(line.strip().lower().startswith("nameserver ")
+                          for line in content.splitlines()) else None
+
 # ------------------------------------------------------------------------------
 # Running machine.
 
@@ -854,96 +874,11 @@ def _connect_unix(path: str, alive, attempts: int = 100) -> socket.socket | None
 
 # VM image and optional custom-kernel preparation.
 
-def _kernel_tree_signature(path: str) -> str:
-    """Hash config or repository files by relative path and contents, ignoring timestamps."""
-    digest = hashlib.sha256()
-    if not os.path.isdir(path):
-        return digest.hexdigest()
-    for root, directories, files in os.walk(path, followlinks=False):
-        directories.sort()
-        files.sort()
-        for name in directories + files:
-            item = os.path.join(root, name)
-            digest.update(os.path.relpath(item, path).encode())
-            if os.path.islink(item):
-                digest.update(os.readlink(item).encode())
-            elif os.path.isfile(item):
-                with open(item, "rb") as file:
-                    for chunk in iter(lambda: file.read(1024 * 1024), b""):
-                        digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _kernel_portage_config_signature(project, stage) -> str:
-    if stage is None:
-        return ""
-    from .project_build_spec import generate_portage_confdir
-    with tempfile.TemporaryDirectory(prefix="catalystlab-kernel-config-") as directory:
-        generate_portage_confdir(project, stage, directory)
-        return _kernel_tree_signature(directory)
-
-
-def _kernel_binary_cache_signature(cache_directory: str | None, package: str) -> str:
-    """Fingerprint indexed binaries for this atom, so unrelated package builds don't invalidate the cache."""
-    digest = hashlib.sha256()
-    if not cache_directory:
-        return "disabled"
-    index = os.path.join(cache_directory, "Packages")
-    try:
-        with open(index, encoding="utf-8", errors="replace") as file:
-            entry, cpv = [], ""
-            for line in file:
-                if line.strip():
-                    entry.append(line)
-                    key, separator, value = line.partition(":")
-                    if separator and key == "CPV":
-                        cpv = value.strip()
-                    continue
-                suffix = cpv[len(package) + 1:] if cpv.startswith(package + "-") else ""
-                if suffix and suffix[0].isdigit():
-                    digest.update("".join(entry).encode())
-                entry, cpv = [], ""
-            suffix = cpv[len(package) + 1:] if cpv.startswith(package + "-") else ""
-            if suffix and suffix[0].isdigit():
-                digest.update("".join(entry).encode())
-        return digest.hexdigest()
-    except OSError:
-        try:
-            stat = os.stat(index)
-            return f"unreadable:{os.path.realpath(index)}:{stat.st_size}:{stat.st_mtime_ns}"
-        except OSError:
-            return f"unavailable:{os.path.abspath(cache_directory)}"
-
-
-def _kernel_output_cache_directory(project, stage, architecture: str, package: str, snapshot, overlays,
-                                   toolset=None) -> str:
-    from .project_stage_arguments import StageArgumentDetails
-    from .project_stage_value_resolver import resolve_stage_argument
+def _kernel_output_cache_directory(architecture: str, package: str, toolset) -> str:
+    """Return the shared VM-kernel cache path for an architecture, package atom, and toolset."""
     from .repository import Repository, resolve_path
-    package_cache = resolve_stage_argument(project, stage, StageArgumentDetails.pkgcache_path.value) if stage else None
-    package_cache = resolve_path(package_cache.strip()) if isinstance(package_cache, str) and package_cache.strip() else None
     toolset_identity = str(getattr(toolset, "uuid", None) or getattr(toolset, "name", ""))
-    try:
-        stat = os.stat(toolset.file_path())
-        toolset_identity += f":{stat.st_size}:{stat.st_mtime_ns}"
-    except (AttributeError, OSError):
-        pass
-    signature = [architecture, package, snapshot.filename, toolset_identity,
-                 _kernel_portage_config_signature(project, stage),
-                 _kernel_binary_cache_signature(package_cache, package),
-                 "raw-arm64-and-efi-zboot-image-v3"]
-    try:
-        stat = os.stat(snapshot.file_path())
-        snapshot_state = (snapshot.filename if re.fullmatch(r"gentoo-[0-9a-f]{40}\.sqfs", snapshot.filename)
-                          else f"{snapshot.filename}:{stat.st_size}:{stat.st_mtime_ns}")
-    except OSError:
-        snapshot_state = f"{snapshot.filename}:missing"
-    signature.append(snapshot_state)
-    for name, path in overlays:
-        signature.append(f"overlay:{name}")
-        for subdirectory in ("sys-kernel", "eclass", "profiles", "metadata"):
-            signature.append(_kernel_tree_signature(os.path.join(path, subdirectory)))
-    key = hashlib.sha256("\n".join(signature).encode()).hexdigest()[:24]
+    key = hashlib.sha256(f"{architecture}\n{package}\n{toolset_identity}".encode()).hexdigest()[:24]
     return os.path.join(resolve_path(Repository.Settings.value.cache_location), "TestVMKernels", key)
 
 
@@ -987,6 +922,10 @@ class QemuImagePreparation(MultiStageProcess):
             self.stages.append(_StepImage("Build and install custom kernel", self, "kernel"))
         if self.support.local_users or self.support.root_password:
             self.stages.append(_StepImage("Configure login accounts", self, "accounts"))
+        if self.support.host_resolv_conf:
+            self.stages.append(_StepImage("Configure host DNS", self, "dns"))
+        if self.support.backend == "apple":
+            self.stages.append(_StepImage("Stop build VM", self, "shutdown"))
 
     def name(self) -> str:
         return self.build.stage_name
@@ -1043,6 +982,8 @@ class _StepImage(MultiStageProcessStage):
             "image": "Creates this run's writable image from the cached base",
             "kernel": "Builds the selected package and installs its kernel, initramfs, and modules",
             "accounts": "Creates the optional user and sets the root password in this run's image",
+            "dns": "Copies the host DNS configuration into this run's image",
+            "shutdown": "Waits for the build VM to stop before this run starts",
         }
         super().__init__(name=name, description=descriptions[operation], multistage_process=multistage_process)
         self.operation = operation
@@ -1069,26 +1010,33 @@ class _StepImage(MultiStageProcessStage):
         process = self.multistage_process
         connection = None
         try:
-            from .deploy_image import image_connection
             directory = process.support.image_directory
             if not directory:
                 raise RuntimeError("Temporary VM image directory has not been allocated")
             os.makedirs(directory, exist_ok=True)
-            connection = image_connection(process.project_directory)
-            if error := connection.connect(process_holder=self.processes, output_handler=self.log,
-                                           cancel_event=self._cancel_event):
-                raise RuntimeError(error)
-            self._check_canceled()
-            if self.operation == "machine":
-                self.log("Build machine is ready")
-            elif self.operation == "cache":
-                self._prepare_cached_image(connection)
-            elif self.operation == "image":
-                self._prepare_writable_image()
-            elif self.operation == "accounts":
-                self._configure_accounts(connection)
+            if self.operation == "shutdown":
+                self._stop_build_machine()
             else:
-                self._prepare_custom_kernel(connection)
+                from .deploy_image import image_connection
+                connection = image_connection(
+                    process.project_directory,
+                    user=f"Preparing VM image for {process.build.stage_name}")
+                if error := connection.connect(process_holder=self.processes, output_handler=self.log,
+                                               cancel_event=self._cancel_event):
+                    raise RuntimeError(error)
+                self._check_canceled()
+                if self.operation == "machine":
+                    self.log("Build machine is ready")
+                elif self.operation == "cache":
+                    self._prepare_cached_image(connection)
+                elif self.operation == "image":
+                    self._prepare_writable_image()
+                elif self.operation == "accounts":
+                    self._configure_accounts(connection)
+                elif self.operation == "dns":
+                    self._configure_host_dns(connection)
+                else:
+                    self._prepare_custom_kernel(connection)
             self._check_canceled()
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
@@ -1104,6 +1052,31 @@ class _StepImage(MultiStageProcessStage):
                     connection.close()
                 except Exception:
                     pass
+
+    def _stop_build_machine(self):
+        from .deploy_image import image_machine
+
+        machine = image_machine(self.multistage_process.project_directory)
+        if machine is None:
+            self.log("No build VM needs to be stopped")
+            return
+        if not machine.is_running:
+            self.log("Build VM is already stopped")
+            return
+
+        self.log(f"Waiting for other operations to release build VM {machine.name}")
+        deadline = time.monotonic() + 300
+        while machine.is_used:
+            self._check_canceled()
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"Timed out waiting for build VM {machine.name} to become idle")
+            time.sleep(0.25)
+
+        self._check_canceled()
+        self.log(f"Stopping build VM {machine.name}")
+        if not machine.stop(output_handler=self.log) or machine.is_running:
+            raise RuntimeError(f"Failed to stop build VM {machine.name}")
+        self.log("Build VM stopped")
 
     def _cache_directory(self):
         build = self.multistage_process.build
@@ -1132,7 +1105,8 @@ class _StepImage(MultiStageProcessStage):
         support = self.multistage_process.support
         cache_directory, _ = self._cache_directory()
         directory = support.image_directory
-        if support.backend == "qemu" and not support.kernel_package and not (support.local_users or support.root_password):
+        if (support.backend == "qemu" and not support.kernel_package
+                and not (support.local_users or support.root_password or support.host_resolv_conf)):
             support.base_image_path = os.path.join(cache_directory, "root.img")
             support.base_kernel_path = os.path.join(cache_directory, support.kernel)
             support.base_initramfs_path = (os.path.join(cache_directory, support.initramfs)
@@ -1158,6 +1132,20 @@ class _StepImage(MultiStageProcessStage):
         finally:
             if not connection.run(stage_image_unmount_script(directory), self.log, self.processes):
                 raise RuntimeError("Failed to unmount the temporary VM image after account setup")
+
+    def _configure_host_dns(self, connection):
+        support = self.multistage_process.support
+        directory = support.image_directory
+        self.log(f"Configuring /etc/resolv.conf in this run's writable image: {os.path.join(directory, 'root.img')}")
+        if not connection.run(stage_image_mount_script(directory), self.log, self.processes):
+            raise RuntimeError("Failed to mount the temporary VM image for DNS setup")
+        try:
+            script = stage_image_configure_resolv_conf_script(directory, support.host_resolv_conf)
+            if not connection.run(script, self.log, self.processes):
+                raise RuntimeError("Failed to configure /etc/resolv.conf in the temporary VM image")
+        finally:
+            if not connection.run(stage_image_unmount_script(directory), self.log, self.processes):
+                raise RuntimeError("Failed to unmount the temporary VM image after DNS setup")
 
     def _prepare_custom_kernel(self, connection):
         directory = self.multistage_process.support.image_directory
@@ -1233,8 +1221,7 @@ class _StepImage(MultiStageProcessStage):
                 package_cache = None
         architecture = project.get_architecture()
         cache_directory = _kernel_output_cache_directory(
-            project, stage, architecture.value if architecture else "unknown",
-            process.support.kernel_package, snapshot, overlays, toolset)
+            architecture.value if architecture else "unknown", process.support.kernel_package, toolset)
         if _kernel_outputs_ready(cache_directory, process.support.kernel_package):
             copy_kernel_outputs(cache_directory, directory)
             return
@@ -1353,4 +1340,24 @@ class _StepImage(MultiStageProcessStage):
                             shutil.rmtree(cache_directory, ignore_errors=True)
         if not _kernel_outputs_ready(cache_directory, process.support.kernel_package):
             raise RuntimeError("Kernel package did not produce reusable boot files")
+        try:
+            with open(os.path.join(cache_directory, KERNEL_OUTPUTS_MANIFEST), encoding="utf-8") as manifest:
+                _package_name, kernel_release = manifest.read().splitlines()
+            write_kernel_build_metadata(cache_directory, {
+                "architecture": architecture.value if architecture else "unknown",
+                "kernel_package": process.support.kernel_package,
+                "kernel_release": kernel_release,
+                "toolset": {"uuid": str(getattr(toolset, "uuid", "")),
+                            "name": str(getattr(toolset, "name", ""))},
+                "gentoo_snapshot": snapshot.filename,
+                "stage": {"id": str(stage.id), "name": stage.name} if stage is not None else None,
+                "overlays": [{"name": name, "path": path} for name, path in overlays],
+                "binary_package_cache": {"enabled": use_binary_packages, "path": package_cache},
+                "emerge_arguments": ["--ask=n", "--oneshot", "--verbose"]
+                                    + (["--usepkg"] if use_binary_packages else [])
+                                    + [process.support.kernel_package],
+                "kernel_image_handling": "Extract raw ARM64 Image from raw or EFI_ZBOOT kernel output",
+            })
+        except (OSError, ValueError, TypeError) as error:
+            self.log(f"Could not save kernel build metadata: {error}")
         copy_kernel_outputs(cache_directory, directory)

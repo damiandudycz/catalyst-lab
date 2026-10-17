@@ -5,6 +5,7 @@ import sys
 import tempfile
 import types
 import unittest
+import json
 import shlex
 import tarfile
 import io
@@ -20,10 +21,30 @@ if 'catalystlab' not in sys.modules:
 from catalystlab.custom_kernel import (copy_kernel_outputs, kernel_package_build_command,
                                        portage_config_setup_command,
                                        valid_kernel_package,
-                                       KERNEL_OUTPUTS_MANIFEST)
+                                       KERNEL_OUTPUTS_MANIFEST, KERNEL_BUILD_METADATA,
+                                       write_kernel_build_metadata)
 
 
 class CustomKernelTests(unittest.TestCase):
+    def test_kernel_build_metadata_is_saved_as_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            metadata = {
+                'built_at': '2026-10-18T10:00:00+00:00',
+                'architecture': 'arm64',
+                'kernel_package': 'sys-kernel/gentoo-kernel-bin',
+                'toolset': {'uuid': 'toolset-id', 'name': 'arm64 openrc'},
+                'gentoo_snapshot': 'gentoo-abc.sqfs',
+                'emerge_arguments': ['--oneshot', 'sys-kernel/gentoo-kernel-bin'],
+            }
+            path = write_kernel_build_metadata(temporary, metadata)
+            self.assertEqual(Path(path).name, KERNEL_BUILD_METADATA)
+            with open(path, encoding='utf-8') as file:
+                saved = json.load(file)
+        self.assertEqual(saved['schema_version'], 1)
+        self.assertEqual(saved['built_at'], metadata['built_at'])
+        self.assertEqual(saved['toolset'], metadata['toolset'])
+        self.assertEqual(saved['gentoo_snapshot'], metadata['gentoo_snapshot'])
+
     def test_portage_config_is_merged_into_writable_run_mount(self):
         with tempfile.TemporaryDirectory() as temporary:
             base, stage, destination = (Path(temporary, name) for name in ("base", "stage", "portage"))

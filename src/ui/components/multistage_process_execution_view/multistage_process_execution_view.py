@@ -473,7 +473,11 @@ def append_ansi_line(buffer: Gtk.TextBuffer, line: str, style: AnsiStyle) -> Ans
     (continues in next line)."""
     if buffer.get_char_count() > 0:
         buffer.insert(buffer.get_end_iter(), "\n")
-    segments, style = parse_ansi_line(line, style)
+    return append_ansi_text(buffer, line, style)
+
+def append_ansi_text(buffer: Gtk.TextBuffer, text: str, style: AnsiStyle) -> AnsiStyle:
+    """Append ANSI-styled text without adding a newline; useful for streamed output."""
+    segments, style = parse_ansi_line(text, style)
     for text, segment_style in segments:
         tag = _tag_for_style(buffer, segment_style)
         if tag:

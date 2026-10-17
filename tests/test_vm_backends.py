@@ -163,6 +163,17 @@ class BackendTests(unittest.TestCase):
         run._report_missing_serial_output()
         self.assertIn('No guest serial output after 30 seconds', run.output[-1])
 
+    def test_native_launch_configuration_is_added_to_vm_log(self):
+        run = apple.AppleVirtualizationRun(
+            self.project, self.build, apple.AppleSupport(self.support))
+        self.addCleanup(lambda: __import__('shutil').rmtree(run.directory, ignore_errors=True))
+        run._active = True
+        run._handle_event('LAUNCH: CPUs: 4')
+        run._handle_event('LAUNCH: Kernel command line: root=/dev/vda rw rootwait console=hvc0')
+
+        self.assertIn('CPUs: 4', run.output)
+        self.assertIn('Kernel command line: root=/dev/vda rw rootwait console=hvc0', run.output)
+
     def test_stale_events_after_stop_do_not_reactivate_run(self):
         run = apple.AppleVirtualizationRun(self.project, self.build, apple.AppleSupport(self.support))
         self.addCleanup(lambda: __import__('shutil').rmtree(run.directory, ignore_errors=True))

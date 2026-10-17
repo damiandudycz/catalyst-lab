@@ -11,17 +11,14 @@ from .usage_graph import USAGE_INTERVAL_SECONDS, usage_row, format_gib
 from .app_events import AppEvents, app_event_bus
 from .qemu_run import QemuImagePreparation
 from .multistage_process import MultiStageProcessEvent, MultiStageProcessStageEvent, MultiStageProcessState
+from .multistage_process_execution_view import AnsiStyle, append_ansi_text
 
 # ------------------------------------------------------------------------------
 # Build running in QEMU: screen of machine (VNC), its serial console and QEMU log, with power controls. A pristine stage
 # image is cached per build; each run gets a writable copy in Library/Temporary that is cleaned up when it stops.
 
-_ANSI = re.compile(r"\x1b\[[0-9;?=<>:]*[A-Za-z]|\x1b[()][A-Za-z0-9]|\x1b[=>78]|\r")
-
-
 def _visible_serial_text(text: str) -> str:
-    text = _ANSI.sub("", text)
-    return "".join(char for char in text if char in "\n\t" or char.isprintable())
+    return "".join(char for char in text if char in "\n\t\r\x1b" or char.isprintable())
 
 def present_qemu_run(run: QemuRun):
     """Show an existing VM view, or create a fresh view attached to the running machine."""
@@ -63,12 +60,14 @@ class QemuRunView(Gtk.Box):
             self.apple = replace(self.apple, support=self.support)
         self.run: QemuRun | None = None
         self._serial_pending = ""
+        self._serial_style = AnsiStyle()
         self._auto_console_detection = False
         self._native_input_active = False
+        self._native_input_user_released = False
+        self._updating_capture_button = False
         self._native_display_suspended = False
-        self._native_pressed_keys = {}
         self._native_input_root = None
-        self._native_event_controller = None
+        self._native_key_controller = None
         self.preparation: QemuImagePreparation | None = None
         self._launch_cpus = cpus
         self._launch_memory_mib = memory_mib
@@ -108,9 +107,9 @@ class QemuRunView(Gtk.Box):
             for button in self.buttons[1:3]:
                 button.set_visible(False)
             self.keyboard_capture_button = Gtk.ToggleButton(icon_name="input-keyboard-symbolic",
-                tooltip_text="Capture keyboard for the VM (Ctrl+Alt+G releases it)", sensitive=False)
+                tooltip_text="Capture or release the keyboard for the VM", sensitive=False)
             self.keyboard_capture_button.add_css_class("flat")
-            self.keyboard_capture_button.connect("toggled", lambda button: self._capture_native_input(button.get_active()))
+            self.keyboard_capture_button.connect("toggled", self._on_keyboard_capture_toggled)
             bar.append(self.keyboard_capture_button)
             self.buttons.append(self.keyboard_capture_button)
         self.control_bar = bar
@@ -139,6 +138,12 @@ class QemuRunView(Gtk.Box):
         screen.add_named(status_box, "status")
         if self.backend == "apple":
             self.native_display = Gtk.DrawingArea(hexpand=True, vexpand=True)
+            self.native_display.set_focusable(True)
+            self._native_key_controller = Gtk.EventControllerKey(
+                propagation_phase=Gtk.PropagationPhase.CAPTURE)
+            self._native_key_controller.connect("key-pressed", self._on_native_key_pressed)
+            self._native_key_controller.connect("key-released", self._on_native_key_released)
+            self.native_display.add_controller(self._native_key_controller)
             self.native_display.connect("map", self._sync_native_display)
             self.native_display.connect("unmap", lambda _: self._detach_native_display())
             self.native_display.add_tick_callback(self._sync_native_display)
@@ -411,7 +416,7 @@ class QemuRunView(Gtk.Box):
         if run.serial_output:
             text = _visible_serial_text(run.serial_output)
             if text.strip():
-                self.console_view.get_buffer().set_text(text)
+                self._append_serial_text(text)
                 self.console_placeholder.set_visible(False)
                 self.console_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             else:
@@ -453,52 +458,87 @@ class QemuRunView(Gtk.Box):
 
     def _capture_native_input(self, active):
         active = active and isinstance(self.run, AppleVirtualizationRun) and self.run.ready
-        if active == self._native_input_active:
-            return
+        changed = active != self._native_input_active
         self._native_input_active = active
         if isinstance(self.run, AppleVirtualizationRun):
-            if not active:
-                # Release held keys/modifiers when switching tabs, losing focus or navigating away.
-                for code, text in self._native_pressed_keys.items():
-                    self.run.send_key(code, False, 0, text)
-                self._native_pressed_keys.clear()
+            # AVF installs an AppKit local event monitor while captured. It
+            # forwards original macOS events before GTK can activate controls.
             self.run.focus_display(active)
-            self._set_status(self._running_status(self.run))
-        self.keyboard_capture_button.set_active(active)
+            if active and hasattr(self, "native_display"):
+                self.native_display.grab_focus()
+            if changed:
+                self._set_status(self._running_status(self.run))
+        if self.keyboard_capture_button.get_active() != active:
+            self._updating_capture_button = True
+            try:
+                self.keyboard_capture_button.set_active(active)
+            finally:
+                self._updating_capture_button = False
 
-    def _native_pointer_press(self, gesture, count, x, y):
-        valid, bounds = self.native_display.compute_bounds(self._native_input_root)
-        inside = (valid and self.stack.get_visible_child_name() == "screen"
-                  and bounds.get_x() <= x < bounds.get_x() + bounds.get_width()
-                  and bounds.get_y() <= y < bounds.get_y() + bounds.get_height())
-        button_valid, button_bounds = self.keyboard_capture_button.compute_bounds(self._native_input_root)
-        over_button = (button_valid and button_bounds.get_x() <= x < button_bounds.get_x() + button_bounds.get_width()
-                       and button_bounds.get_y() <= y < button_bounds.get_y() + button_bounds.get_height())
-        if not over_button:
-            self._capture_native_input(inside)
-        gesture.set_state(Gtk.EventSequenceState.DENIED)
+    def _on_keyboard_capture_toggled(self, button):
+        if self._updating_capture_button:
+            return
+        active = button.get_active()
+        self._native_input_user_released = not active
+        self._capture_native_input(active)
 
-    def _native_key(self, keyval, code, state, pressed):
-        if not self._native_input_active or not isinstance(self.run, AppleVirtualizationRun) or not self.run.ready:
+    def _native_key_event(self, controller, keyval, keycode, state, pressed):
+        if (not self._native_input_active or not isinstance(self.run, AppleVirtualizationRun)
+                or not self.run.ready):
             return False
-        if (pressed and Gdk.keyval_to_lower(keyval) == Gdk.KEY_g
-                and state & Gdk.ModifierType.CONTROL_MASK and state & Gdk.ModifierType.ALT_MASK):
-            self._capture_native_input(False)
-            return True
+        modifier_keys = {
+            Gdk.KEY_Shift_L: (56, 1 << 17, Gdk.ModifierType.SHIFT_MASK),
+            Gdk.KEY_Shift_R: (60, 1 << 17, Gdk.ModifierType.SHIFT_MASK),
+            Gdk.KEY_Control_L: (59, 1 << 18, Gdk.ModifierType.CONTROL_MASK),
+            Gdk.KEY_Control_R: (62, 1 << 18, Gdk.ModifierType.CONTROL_MASK),
+            Gdk.KEY_Alt_L: (58, 1 << 19, Gdk.ModifierType.ALT_MASK),
+            Gdk.KEY_Alt_R: (61, 1 << 19, Gdk.ModifierType.ALT_MASK),
+            Gdk.KEY_Meta_L: (55, 1 << 20, Gdk.ModifierType.META_MASK),
+            Gdk.KEY_Meta_R: (54, 1 << 20, Gdk.ModifierType.META_MASK),
+            Gdk.KEY_Super_L: (55, 1 << 20, Gdk.ModifierType.SUPER_MASK),
+            Gdk.KEY_Super_R: (54, 1 << 20, Gdk.ModifierType.SUPER_MASK),
+            Gdk.KEY_Hyper_L: (55, 1 << 20, Gdk.ModifierType.HYPER_MASK),
+            Gdk.KEY_Hyper_R: (54, 1 << 20, Gdk.ModifierType.HYPER_MASK),
+            Gdk.KEY_Caps_Lock: (57, 1 << 16, Gdk.ModifierType.LOCK_MASK),
+        }
+        if keyval == Gdk.KEY_Caps_Lock:
+            if not pressed:
+                return True
+            state = state ^ Gdk.ModifierType.LOCK_MASK
+        modifier = modifier_keys.get(keyval)
+        modifier_state = modifier[2] if modifier else None
+        if modifier_state is not None:
+            state = (state | modifier_state) if pressed else (state & ~modifier_state)
         flags = 0
-        for modifier, bit in ((Gdk.ModifierType.LOCK_MASK, 16), (Gdk.ModifierType.SHIFT_MASK, 17),
-                              (Gdk.ModifierType.CONTROL_MASK, 18), (Gdk.ModifierType.ALT_MASK, 19),
-                              (Gdk.ModifierType.META_MASK | Gdk.ModifierType.SUPER_MASK, 20)):
-            if state & modifier:
+        for mask, bit in ((Gdk.ModifierType.LOCK_MASK, 16), (Gdk.ModifierType.SHIFT_MASK, 17),
+                          (Gdk.ModifierType.CONTROL_MASK, 18), (Gdk.ModifierType.ALT_MASK, 19),
+                          (Gdk.ModifierType.META_MASK | Gdk.ModifierType.SUPER_MASK |
+                           Gdk.ModifierType.HYPER_MASK, 20)):
+            if state & mask:
                 flags |= 1 << bit
-        character = Gdk.keyval_to_unicode(keyval)
-        text = chr(character) if character else ""
-        if pressed:
-            self._native_pressed_keys[code] = text
-        else:
-            self._native_pressed_keys.pop(code, None)
-        self.run.send_key(code, pressed, flags, text)
-        return True # Consume before GTK navigation and application shortcuts.
+        special = {
+            Gdk.KEY_Return: "\r", Gdk.KEY_KP_Enter: "\r", Gdk.KEY_BackSpace: "\x7f",
+            Gdk.KEY_Tab: "\t", Gdk.KEY_ISO_Left_Tab: "\t", Gdk.KEY_Escape: "\x1b",
+            Gdk.KEY_Up: "\uf700", Gdk.KEY_Down: "\uf701", Gdk.KEY_Left: "\uf702",
+            Gdk.KEY_Right: "\uf703", Gdk.KEY_Delete: "\uf728", Gdk.KEY_Home: "\uf729",
+            Gdk.KEY_End: "\uf72b", Gdk.KEY_Page_Up: "\uf72c", Gdk.KEY_Page_Down: "\uf72d",
+        }
+        character = special.get(keyval)
+        if character is None:
+            unicode_value = Gdk.keyval_to_unicode(keyval)
+            character = chr(unicode_value) if unicode_value else ""
+        unmodified_value = Gdk.keyval_to_unicode(Gdk.keyval_to_lower(keyval))
+        unmodified = special.get(keyval, chr(unmodified_value) if unmodified_value else character)
+        native_keycode = modifier[0] if modifier else max(0, min(int(keycode), 0xffff))
+        self.run.send_key_event(native_keycode, pressed, modifier is not None,
+                                flags, character, unmodified)
+        return True
+
+    def _on_native_key_pressed(self, controller, keyval, keycode, state):
+        return self._native_key_event(controller, keyval, keycode, state, True)
+
+    def _on_native_key_released(self, controller, keyval, keycode, state):
+        return self._native_key_event(controller, keyval, keycode, state, False)
 
     def _sync_native_display(self, widget, frame_clock=None):
         if not isinstance(self.run, AppleVirtualizationRun) or not self.run.ready:
@@ -521,24 +561,28 @@ class QemuRunView(Gtk.Box):
             return True
         self.run.place_display(surface.get_native_window(), bounds.get_x(), bounds.get_y(),
                                bounds.get_width(), bounds.get_height())
+        # The VM page is often opened automatically when startup finishes. GTK
+        # may still have the last wizard control focused, so capture the native
+        # AVF view as soon as it is embedded in the active window.
+        if (self._native_input_root is not None and self._native_input_root.is_active()
+                and not self._native_input_active and not self._native_input_user_released):
+            GLib.idle_add(self._capture_native_input, True)
         return True
 
     def _running_status(self, run):
         if self.backend == "apple":
             if not run.ready:
                 return "Starting Apple Virtualization…"
-            return ("Keyboard captured · Ctrl+Alt+G to release" if self._native_input_active else
+            return ("Keyboard captured · Use the keyboard button to release" if self._native_input_active else
                     "Running with Apple Virtualization · Click the screen to type")
         speed = f"accelerated ({run.accelerator.upper()})" if run.accelerator else "emulated (slow)"
         return f"Running, {speed} · SSH: ssh -p {run.ssh_port} root@localhost"
 
     def _detach_run(self):
         self._detach_native_display()
-        if self._native_event_controller is not None:
-            self._native_input_root.remove_controller(self._native_event_controller)
-            self._native_input_root.remove_controller(self._native_pointer_controller)
+        if self._native_focus_handler is not None:
             self._native_input_root.disconnect(self._native_focus_handler)
-            self._native_event_controller = None
+            self._native_focus_handler = None
             self._native_input_root = None
         self._stop_usage_updates()
         self._auto_console_detection = False
@@ -787,7 +831,7 @@ class QemuRunView(Gtk.Box):
             visible_text = _visible_serial_text(complete)
             if visible_text.strip():
                 self.console_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-                self._append(self.console_view, visible_text)
+                self._append_serial_text(visible_text)
             serial_output = self.run.serial_output.casefold() if self.run is not None else ""
             if self._auto_console_detection and any(message in serial_output for message in (
                     "display output is not active", "can't be loaded on", "could not load image")):
@@ -796,16 +840,18 @@ class QemuRunView(Gtk.Box):
             return False
         GLib.idle_add(append)
 
+    def _append_serial_text(self, text: str):
+        buffer = self.console_view.get_buffer()
+        self._serial_style = append_ansi_text(buffer, text, self._serial_style)
+        if buffer.get_line_count() > 5000:
+            buffer.delete(buffer.get_start_iter(), buffer.get_iter_at_line(buffer.get_line_count() - 5000)[1])
+        self.console_view.scroll_to_iter(buffer.get_end_iter(), 0, False, 0, 1)
+        self.console_placeholder.set_visible(not buffer.get_text(
+            buffer.get_start_iter(), buffer.get_end_iter(), True).strip())
+
     def _on_realize(self, widget):
-        if self.backend == "apple" and self._native_event_controller is None:
+        if self.backend == "apple" and self._native_input_root is None:
             self._native_input_root = self.get_native()
-            self._native_event_controller = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
-            self._native_event_controller.connect("key-pressed", lambda _, key, code, state: self._native_key(key, code, state, True))
-            self._native_event_controller.connect("key-released", lambda _, key, code, state: self._native_key(key, code, state, False))
-            self._native_input_root.add_controller(self._native_event_controller)
-            self._native_pointer_controller = Gtk.GestureClick(button=0, propagation_phase=Gtk.PropagationPhase.CAPTURE)
-            self._native_pointer_controller.connect("pressed", self._native_pointer_press)
-            self._native_input_root.add_controller(self._native_pointer_controller)
             self._native_focus_handler = self._native_input_root.connect("notify::is-active", lambda window, _: (
                 self._capture_native_input(False) if not window.is_active() else None))
         page = self.get_ancestor(Adw.NavigationPage)

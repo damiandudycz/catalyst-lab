@@ -64,7 +64,8 @@ class AppleVMBridge:
         api.cl_vm_release.restype = None
         api.cl_vm_focus.argtypes = [ctypes.c_void_p, ctypes.c_bool]
         api.cl_vm_focus.restype = None
-        api.cl_vm_key.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool, ctypes.c_uint64, ctypes.c_char_p]
+        api.cl_vm_key.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool,
+                                  ctypes.c_bool, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_char_p]
         api.cl_vm_key.restype = None
 
     def probe(self):
@@ -173,7 +174,7 @@ class AppleVirtualizationRun(QemuRun):
             self._handle = self._bridge.api.cl_vm_create(json.dumps(options).encode(), self._callback, None)
             if not self._handle:
                 raise RuntimeError('Could not create the Apple Virtualization VM')
-        except Exception:
+        except Exception as error:
             shutil.rmtree(self.directory, ignore_errors=True)
             raise
         self._active = True
@@ -215,6 +216,10 @@ class AppleVirtualizationRun(QemuRun):
             if self.output and self.output[-1].startswith('Preparing temporary disk image'):
                 self.output[-1] = f'Preparing temporary disk image… {percent}%'
             self.event_bus.emit(QemuRunEvent.OUTPUT_LINE_ADDED, line)
+        elif line.startswith('LAUNCH:'):
+            detail = line.partition(':')[2].strip()
+            self.output.append(detail)
+            self.event_bus.emit(QemuRunEvent.OUTPUT_LINE_ADDED, detail)
         else:
             if line.startswith('ERROR:'):
                 self.error = line[6:]
@@ -262,9 +267,10 @@ class AppleVirtualizationRun(QemuRun):
         if self._handle:
             self._bridge.api.cl_vm_focus(self._handle, active)
 
-    def send_key(self, code, pressed, flags, text):
-        if self._handle:
-            self._bridge.api.cl_vm_key(self._handle, code, pressed, flags, text.encode())
+    def send_key_event(self, keycode, pressed, is_modifier, flags, characters, unmodified_characters):
+        if self._handle and self.input_captured:
+            self._bridge.api.cl_vm_key(self._handle, keycode, pressed, is_modifier, flags,
+                                       characters.encode('utf-8'), unmodified_characters.encode('utf-8'))
 
     def control(self, command):
         if self._handle:

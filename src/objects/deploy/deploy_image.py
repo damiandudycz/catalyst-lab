@@ -36,12 +36,12 @@ def image_machine(project_directory):
         return toolset.machine
     return next(iter(Repository.BuildMachine.value), None)
 
-def image_connection(project_directory):
+def image_connection(project_directory, user: str = "Deploy image"):
     """Connection running scripts as root where image is created."""
     if sys.platform.startswith("linux"):
         from .local_disk_connection import LocalDiskConnection
         return LocalDiskConnection()
-    return MachineRootConnection(image_machine(project_directory))
+    return MachineRootConnection(image_machine(project_directory), user=user)
 
 def initial_image_size(archive_size: int) -> int:
     """Size of image before it's shrunk: enough for unpacked stage and installed packages (with Gentoo repository).
@@ -59,10 +59,9 @@ def image_path(build) -> str:
 class MachineRootConnection:
     """Runs scripts as root in virtual machine. Machine is used (kept running) while connection is open."""
     is_local = True
-    _USER = "Deploy image"
-
-    def __init__(self, machine):
+    def __init__(self, machine, user: str = "Deploy image"):
         self.machine = machine
+        self.user = user
         self.host = f"virtual machine {machine.name}" if machine else "virtual machine"
         self.connected = False
 
@@ -70,7 +69,7 @@ class MachineRootConnection:
                 output_handler=print, cancel_event=None) -> str | None:
         if self.machine is None:
             return "No virtual machine to create image"
-        self.machine.begin_use(self._USER)
+        self.machine.begin_use(self.user)
         self.connected = True
         try:
             self.machine.ensure_running(output_handler, process_holder)
@@ -85,7 +84,7 @@ class MachineRootConnection:
     def close(self):
         if self.connected:
             self.connected = False
-            self.machine.end_use(self._USER)
+            self.machine.end_use(self.user)
 
     def is_alive(self) -> bool:
         return self.connected and self.machine.is_running

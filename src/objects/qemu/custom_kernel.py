@@ -1,5 +1,7 @@
 """Validation and Portage commands for kernels used by disposable test VMs."""
 from __future__ import annotations
+from datetime import datetime, timezone
+import json
 import os
 import re
 import shlex
@@ -7,6 +9,21 @@ import shutil
 
 _PACKAGE_ATOM = re.compile(r"^[A-Za-z0-9+_.-]+/[A-Za-z0-9+_.-]+(?:::[A-Za-z0-9+_.-]+)?$")
 KERNEL_OUTPUTS_MANIFEST = ".kernel-output"
+KERNEL_BUILD_METADATA = ".kernel-build.json"
+
+
+def write_kernel_build_metadata(directory: str, metadata: dict) -> str:
+    """Atomically save provenance for the reusable kernel outputs."""
+    path = os.path.join(directory, KERNEL_BUILD_METADATA)
+    temporary = path + ".tmp"
+    document = {"schema_version": 1,
+                "built_at": metadata.get("built_at", datetime.now(timezone.utc).isoformat()),
+                **metadata}
+    with open(temporary, "w", encoding="utf-8") as file:
+        json.dump(document, file, indent=2, sort_keys=True)
+        file.write("\n")
+    os.replace(temporary, path)
+    return path
 
 
 def valid_kernel_package(value: str) -> bool:

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import os
 import threading
 from gi.repository import Gtk, Adw, GLib
@@ -7,7 +8,8 @@ from .deploy_system import local_user_identity
 from .user_row import UserRow
 from .kernel_package_row import KernelPackageRow
 from .wizard_view import WizardView
-from .qemu_run import QemuRun, QemuBuildKind, qemu_support, create_stage_image_directory, kernel_build_toolsets
+from .qemu_run import (QemuRun, QemuBuildKind, qemu_support, create_stage_image_directory,
+                       kernel_build_toolsets, read_host_resolv_conf)
 from .qemu_run_view import QemuImagePreparation, QemuRunView
 from .multistage_process import MultiStageProcessState
 from .apple_virtualization import apple_support
@@ -22,7 +24,7 @@ class QemuLaunchWizard(Gtk.Box):
         self.project_directory = project_directory
         self.build = build
         self._launch_started = False
-        self.auto_close_on_finish = False
+        self.auto_close_on_finish = True
         self.support = qemu_support(project_directory, build)
         self.apple = apple_support(project_directory, build)
         self.kernel_required = self.support.kind == QemuBuildKind.STAGE and self.support.kernel is None
@@ -33,6 +35,17 @@ class QemuLaunchWizard(Gtk.Box):
             self.backends.append(("QEMU", "qemu"))
         self.wizard_view = WizardView()
         self.wizard_view._window = None
+        self.wizard_view.show_welcome_screen = True
+        self.wizard_view.welcome_screen_icon_name = "computer-symbolic"
+        self.wizard_view.welcome_screen_title = "Run in Virtual Machine"
+        artifact_name = os.path.basename(build.artifact_path or build.artifact or "the selected build")
+        self.wizard_view.welcome_screen_description = (
+            f"Boot {build.stage_name} ({artifact_name}) in an isolated virtual machine. "
+            "Choose the VM resources and, for a stage, optionally build a kernel or configure login accounts. "
+            "Changes made while the VM runs are temporary.")
+        # Install the welcome page before adding setup pages so the carousel's
+        # initial position remains the welcome screen after pages are appended.
+        self.wizard_view._setup_welcome_page()
         self.wizard_view.install_button_label = "Start virtual machine"
         self.wizard_view.connect("is-page-ready-to-continue", self._page_ready)
         self.wizard_view.connect("begin-installation", self._start)
@@ -94,6 +107,15 @@ class QemuLaunchWizard(Gtk.Box):
             lower=1, upper=256, step_increment=1, value=settings.qemu_memory_gib))
         settings_group.add(self.cpus_row)
         settings_group.add(self.memory_row)
+        self.host_resolv_conf = read_host_resolv_conf()
+        self.host_dns_row = Adw.SwitchRow(
+            title="Set guest /etc/resolv.conf from host",
+            subtitle=("Copies this computer's DNS settings into this run's writable stage image."
+                      if self.host_resolv_conf else "No DNS nameserver was found in the host's /etc/resolv.conf."))
+        self.host_dns_row.set_active(bool(self.host_resolv_conf))
+        self.host_dns_row.set_visible(is_stage)
+        self.host_dns_row.set_sensitive(bool(self.host_resolv_conf))
+        settings_group.add(self.host_dns_row)
         self.custom_kernel_row = Adw.SwitchRow(
             title="Build a kernel package",
             subtitle="Build it in a Gentoo toolset using the snapshot and stage overlays. The stage does not need Portage.")
@@ -374,21 +396,26 @@ class QemuLaunchWizard(Gtk.Box):
 
     def _read_kernel_cache(self, atom, generation):
         try:
-            from .project_kernel_packages import _stage_overlays
             from .qemu_run import _kernel_output_cache_directory, _kernel_outputs_ready
-            stage = next((item for item in self.project_directory.stages if item.id == self.build.stage_id), None)
-            snapshot = self._selected_snapshot()
-            toolset = self._selected_kernel_toolset()
             architecture = self.project_directory.get_architecture()
-            if stage is not None and snapshot is not None and toolset is not None:
+            toolset = self._selected_kernel_toolset()
+            if architecture is not None and toolset is not None:
                 output_cache = _kernel_output_cache_directory(
-                    self.project_directory, stage, architecture.value if architecture else "unknown", atom,
-                    snapshot, _stage_overlays(self.project_directory, stage), toolset)
+                    architecture.value, atom, toolset)
                 if _kernel_outputs_ready(output_cache, atom):
                     manifest = os.path.join(output_cache, ".kernel-output")
                     with open(manifest, encoding="utf-8") as file:
                         _package, release = file.read().splitlines()
-                    subtitle = f"Cached kernel output for release {release}; this run will reuse it."
+                    metadata_path = os.path.join(output_cache, ".kernel-build.json")
+                    try:
+                        with open(metadata_path, encoding="utf-8") as file:
+                            metadata = json.load(file)
+                        built_at = metadata.get("built_at", "unknown date")[:10]
+                        snapshot_name = metadata.get("gentoo_snapshot", "unknown snapshot")
+                        toolset_name = metadata.get("toolset", {}).get("name", "unknown toolset")
+                        subtitle = (f"Cached {release} · {toolset_name} · {snapshot_name} · built {built_at}; reused by this run.")
+                    except (OSError, ValueError, TypeError, AttributeError):
+                        subtitle = f"Cached kernel output for release {release}; this run will reuse it."
                     GLib.idle_add(lambda: self._show_kernel_cache_status(subtitle, generation))
                     return
             subtitle = "No cached kernel output; this run will prepare the selected kernel package."
@@ -479,7 +506,8 @@ class QemuLaunchWizard(Gtk.Box):
         support = replace(support, kernel_package=kernel_package,
                           kernel_snapshot=self._selected_snapshot() if kernel_package else None,
                           kernel_toolset=self._selected_kernel_toolset() if kernel_package else None,
-                          local_users=local_users, root_password=root_password)
+                          local_users=local_users, root_password=root_password,
+                          host_resolv_conf=(self.host_resolv_conf if self.host_dns_row.get_active() else None))
         title = f"{self.build.stage_name} — {'Apple Virtualization' if backend == 'apple' else 'QEMU'}"
         if support.kind == QemuBuildKind.STAGE:
             support = replace(support, image_directory=create_stage_image_directory())
@@ -511,5 +539,8 @@ class QemuLaunchWizard(Gtk.Box):
     def _finish_preparation(self, preparation, runtime, title):
         if preparation.status != MultiStageProcessState.COMPLETED:
             return False
-        self._show_runtime(runtime, title)
+        # Defer replacing the wizard while the Finish button handler is still
+        # unwinding; closing/removing its current child synchronously can drop
+        # the navigation page before the VM view is attached.
+        GLib.idle_add(lambda: (self._show_runtime(runtime, title), GLib.SOURCE_REMOVE)[1])
         return True

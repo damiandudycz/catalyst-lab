@@ -25,8 +25,12 @@ class LaunchSettingsTests(unittest.TestCase):
         view = types.SimpleNamespace(backends=[('QEMU', 'qemu')], backend_row=Mock(),
                                      cpus_row=Mock(), memory_row=Mock(), project_directory=object(), build=Mock(),
                                      _launch_started=False, support=types.SimpleNamespace(kind='iso'),
-                                     user_rows=[], root_password_entry=Mock(), _login_settings_error=lambda: None)
+                                     user_rows=[], root_password_entry=Mock(), host_dns_row=Mock(),
+                                     host_resolv_conf='nameserver 192.0.2.1\n',
+                                     _login_settings_error=lambda: None,
+                                     _account_settings_error=lambda: None)
         view.root_password_entry.get_text.return_value = ''
+        view.host_dns_row.get_active.return_value = False
         view.kernel_required = False
         view.backend_row.get_selected.return_value = 0
         view.cpus_row.get_value.return_value = 8
@@ -39,7 +43,7 @@ class LaunchSettingsTests(unittest.TestCase):
         self.assertEqual(settings.qemu_memory_gib, 4)
         repository.Settings.save.assert_not_called()
         runtime.assert_called_once_with(view.project_directory, view.build, memory_mib=12 * 1024,
-                                        cpus=8, support=support, start_immediately=True, backend='qemu')
+                                        cpus=8, support=support, backend='qemu')
 
     def test_stage_launch_prepares_once_then_starts_vm(self):
         path = Path(__file__).resolve().parents[1] / 'src/ui/qemu/qemu_launch_wizard.py'
@@ -89,9 +93,15 @@ class LaunchSettingsTests(unittest.TestCase):
             _launch_started=False,
             custom_kernel_row=Mock(), _selected_kernel_package=Mock(), _selected_snapshot=Mock(),
             _selected_kernel_toolset=Mock(), support=types.SimpleNamespace(kind='stage'), user_rows=[],
-            root_password_entry=Mock(), _login_settings_error=lambda: None,
+            root_password_entry=Mock(), host_dns_row=Mock(), host_resolv_conf='nameserver 192.0.2.1\n',
+            _login_settings_error=lambda: None, _account_settings_error=lambda: None,
+            auto_close_on_finish=True,
+            wizard_view=types.SimpleNamespace(install_view=types.SimpleNamespace(on_finish_requested=None),
+                                              set_installation=Mock()),
+            _show_runtime=Mock(side_effect=lambda runtime, title: runtime.start()),
         )
         view.root_password_entry.get_text.return_value = ''
+        view.host_dns_row.get_active.return_value = False
         view.backend_row.get_selected.return_value = 0
         view.cpus_row.get_value.return_value = 4
         view.memory_row.get_value.return_value = 8
