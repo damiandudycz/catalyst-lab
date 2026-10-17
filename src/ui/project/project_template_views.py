@@ -114,7 +114,6 @@ class ProjectTemplateOptionsView(Gtk.Box):
         self.append(self.overlays_group)
         self.append(self.error_label)
         self.append(self.stages_group)
-        self._option_rows: list[Gtk.Widget] = []
         self._group_rows: list[Gtk.Widget] = []
         self._overlay_rows: list[Gtk.Widget] = []
         self._stage_rows: list[Gtk.Widget] = []
@@ -162,7 +161,7 @@ class ProjectTemplateOptionsView(Gtk.Box):
         self._overlay_rows = []
         for row in self._stage_rows:
             self.stages_group.remove(row)
-        self._option_rows, self._group_rows, self._stage_rows = [], [], []
+        self._group_rows, self._stage_rows = [], []
         self.generated = None
         error = None
         if self.template is not None:
@@ -290,7 +289,6 @@ class ProjectTemplateOptionsView(Gtk.Box):
                 option_row.connect("notify::active", on_toggled)
                 row.add_row(option_row)
             group.add(row)
-            self._option_rows.append(row)
             self._section_rows[variable.section].append(row)
             return
         if variable.type == TemplateVariableType.BOOLEAN:
@@ -307,7 +305,6 @@ class ProjectTemplateOptionsView(Gtk.Box):
         if variable.description:
             row.set_subtitle(GLib.markup_escape_text(variable.description))
         group.add(row)
-        self._option_rows.append(row)
         self._section_rows[variable.section].append(row)
 
     def _set_value(self, variable_id: str, value):

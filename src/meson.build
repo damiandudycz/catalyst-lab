@@ -126,6 +126,7 @@ catalystlab_sources = [
   'objects/snapshot/snapshot_manager.py',
   'objects/snapshot/snapshot.py',
   'objects/packages/packages_directory.py',
+  'objects/packages/package_search.py',
   'objects/toolset/toolset_application.py',
   'objects/toolset/toolset_env_builder.py',
   'objects/toolset/toolset_installation.py',
