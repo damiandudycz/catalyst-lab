@@ -8,8 +8,8 @@ import shlex
 import shutil
 
 _PACKAGE_ATOM = re.compile(r"^[A-Za-z0-9+_.-]+/[A-Za-z0-9+_.-]+(?:::[A-Za-z0-9+_.-]+)?$")
-KERNEL_OUTPUTS_MANIFEST = ".kernel-output"
-KERNEL_BUILD_METADATA = ".kernel-build.json"
+KERNEL_OUTPUTS_MANIFEST = "kernel-output.manifest"
+KERNEL_BUILD_METADATA = "kernel-build.json"
 
 
 def write_kernel_build_metadata(directory: str, metadata: dict) -> str:

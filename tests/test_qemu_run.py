@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import subprocess
 import tempfile
 import threading
 import types
@@ -28,37 +29,41 @@ class QemuRunTests(unittest.TestCase):
                        if isinstance(node, ast.ClassDef) and node.name == 'QemuImagePreparation')
         setup = next(node for node in process.body
                      if isinstance(node, ast.FunctionDef) and node.name == 'setup_stages')
-        namespace = {'_StepImage': lambda name, owner, operation: (name, operation)}
+        namespace = {'_StepImage': lambda name, owner, operation: (name, operation),
+                     'QemuBuildKind': qemu.QemuBuildKind}
         exec(compile(ast.Module(body=[setup], type_ignores=[]), 'qemu_run.py', 'exec'), namespace)
 
         for kernel_package, expected in ((None, [('Prepare build VM', 'machine'),
                                                   ('Prepare stage image', 'cache'),
-                                                  ('Create writable VM image', 'image')]),
+                                                  ('Create writable VM image', 'image'),
+                                                  ('Configure guest networking', 'network')]),
                                          ('sys-kernel/gentoo-kernel', [('Prepare build VM', 'machine'),
                                                                        ('Prepare stage image', 'cache'),
                                                                        ('Create writable VM image', 'image'),
-                                                                       ('Build and install custom kernel', 'kernel')])):
+                                                                       ('Build and install custom kernel', 'kernel'),
+                                                                       ('Configure guest networking', 'network')])):
             with self.subTest(kernel_package=kernel_package):
                 view = types.SimpleNamespace(support=types.SimpleNamespace(
-                    kernel_package=kernel_package, local_users=[], root_password=None,
-                    host_resolv_conf=None, backend='qemu'), stages=[])
+                    kind=qemu.QemuBuildKind.STAGE, kernel_package=kernel_package, local_users=[], root_password=None,
+                    host_resolv_conf=None, backend='qemu', network_enabled=True), stages=[])
                 namespace['setup_stages'](view)
                 self.assertEqual(view.stages, expected)
 
-        support = types.SimpleNamespace(kernel_package=None, local_users=[object()], root_password=None,
-                                        host_resolv_conf=None, backend='qemu')
+        support = types.SimpleNamespace(kind=qemu.QemuBuildKind.STAGE, kernel_package=None, local_users=[object()], root_password=None,
+                                        host_resolv_conf=None, backend='qemu', network_enabled=True)
         view = types.SimpleNamespace(support=support, stages=[])
         namespace['setup_stages'](view)
-        self.assertEqual(view.stages[-1], ('Configure login accounts', 'accounts'))
+        self.assertEqual(view.stages[-2:], [('Configure login accounts', 'accounts'),
+                                            ('Configure guest networking', 'network')])
 
-        support = types.SimpleNamespace(kernel_package=None, local_users=[], root_password=None,
-                                        host_resolv_conf=None, backend='apple')
+        support = types.SimpleNamespace(kind=qemu.QemuBuildKind.STAGE, kernel_package=None, local_users=[], root_password=None,
+                                        host_resolv_conf=None, backend='apple', network_enabled=False)
         view = types.SimpleNamespace(support=support, stages=[])
         namespace['setup_stages'](view)
         self.assertEqual(view.stages[-1], ('Stop build VM', 'shutdown'))
 
-        support = types.SimpleNamespace(kernel_package=None, local_users=[], root_password=None,
-                                        host_resolv_conf='nameserver 192.0.2.1\n', backend='qemu')
+        support = types.SimpleNamespace(kind=qemu.QemuBuildKind.STAGE, kernel_package=None, local_users=[], root_password=None,
+                                        host_resolv_conf='nameserver 192.0.2.1\n', backend='qemu', network_enabled=False)
         view = types.SimpleNamespace(support=support, stages=[])
         namespace['setup_stages'](view)
         self.assertEqual(view.stages[-1], ('Configure host DNS', 'dns'))
@@ -72,6 +77,52 @@ class QemuRunTests(unittest.TestCase):
         encoded = base64.b64encode(content.encode()).decode()
         self.assertIn(encoded, script)
         self.assertNotIn('/cache/', script)
+
+    def test_stage_network_script_enables_systemd_networkd_and_dns_resolution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary, 'rootfs')
+            (root / 'usr/bin').mkdir(parents=True)
+            (root / 'usr/bin/init').symlink_to('/usr/lib/systemd/systemd')
+            units = root / 'usr/lib/systemd/system'
+            units.mkdir(parents=True)
+            (units / 'systemd-networkd.service').touch()
+            (units / 'systemd-resolved.service').touch()
+            script = qemu.stage_image_configure_network_script(str(temporary))
+            result = subprocess.run(['sh', '-ec', script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            network = (root / 'etc/systemd/network/20-catalystlab.network').read_text()
+            self.assertIn('Name=en* eth*', network)
+            self.assertIn('DHCP=yes', network)
+            self.assertTrue((root / 'etc/systemd/system/multi-user.target.wants/systemd-networkd.service').is_symlink())
+            self.assertEqual(os.readlink(root / 'etc/resolv.conf'), '/run/systemd/resolve/stub-resolv.conf')
+
+    def test_stage_network_script_falls_back_to_openrc_netifrc(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary, 'rootfs')
+            (root / 'usr/bin').mkdir(parents=True)
+            (root / 'usr/bin/init').symlink_to('/sbin/openrc-init')
+            (root / 'etc/init.d').mkdir(parents=True)
+            (root / 'etc/init.d/net.lo').touch()
+            (root / 'usr/sbin').mkdir(parents=True)
+            (root / 'usr/sbin/dhcpcd').touch()
+            (root / 'usr/sbin/dhcpcd').chmod(0o755)
+            script = qemu.stage_image_configure_network_script(str(temporary))
+            result = subprocess.run(['sh', '-ec', script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = (root / 'etc/conf.d/net').read_text()
+            self.assertIn('config_enp0s1="dhcp"', config)
+            self.assertIn('config_eth0="dhcp"', config)
+            self.assertTrue((root / 'etc/runlevels/default/net.enp0s1').is_symlink())
+
+    def test_qemu_can_disable_network_adapter(self):
+        run = self.make_run()
+        run.support.network_enabled = False
+        with patch.object(qemu, 'qemu_binary', side_effect=lambda name: '/qemu/' + name), \
+             patch.object(qemu, '_firmware_path', return_value='/firmware/uefi.fd'), \
+             patch.object(qemu, 'accelerated', return_value=None):
+            command = run.command()
+        self.assertNotIn('-netdev', command)
+        self.assertFalse(any(argument.startswith('virtio-net-') for argument in command))
 
     def test_vm_image_shutdown_step_stops_build_machine_before_finishing(self):
         machine = types.SimpleNamespace(name='Build machine', is_running=True, is_used=False)
@@ -99,6 +150,7 @@ class QemuRunTests(unittest.TestCase):
 
         self.assertIn("ROOT=/library/Temporary/TestVMImages/stage-run/rootfs", script)
         self.assertIn('mount --types proc /proc "$ROOT/proc"', script)
+        self.assertIn('rm -f "$ROOT/etc/resolv.conf"\ncp -L /etc/resolv.conf "$ROOT/etc/resolv.conf"', script)
         self.assertIn('mount --rbind /dev "$ROOT/dev"', script)
         self.assertIn("in_root useradd", script)
         self.assertIn("tester:user-secret", script)

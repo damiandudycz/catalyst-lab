@@ -122,6 +122,7 @@ class QemuSupport:
     kernel_toolset: object | None = None # Toolset used for this run when the project's toolset is busy.
     local_users: list[object] = field(default_factory=list, repr=False) # Accounts created only in this run's writable stage image.
     root_password: str | None = field(default=None, repr=False) # Optional password set only in this run's writable stage image.
+    network_enabled: bool = True # NAT networking; configure DHCP in the run image when supported.
     host_resolv_conf: str | None = field(default=None, repr=False) # Optional host DNS config, copied only to this run's image.
     image_directory: str | None = None # Per-run Library/Temporary workspace, removed when the VM stops.
     base_image_path: str | None = None # Immutable cached raw disk used as a QEMU qcow2 backing image.
@@ -536,7 +537,14 @@ def stage_image_configure_accounts_script(directory: str, root_password: str | N
             'awk -F: \'$1 == "root" && $2 != "" && $2 !~ /^[!*]/ { found=1 } END { exit !found }\' "$ROOT/etc/shadow"',
             'echo "Verified root password"',
         ]
-    return f"set -e\nROOT={root}\n{CHROOT_SETUP}\n" + "\n".join(commands) + "\n"
+    # A stage may have /etc/resolv.conf as a symlink into /run. The target is
+    # absent while the image is mounted offline, so cp -L cannot write through it.
+    # Remove the image-side link before copying the host resolver into the chroot.
+    chroot_setup = CHROOT_SETUP.replace(
+        'cp -L /etc/resolv.conf "$ROOT/etc/resolv.conf"',
+        'rm -f "$ROOT/etc/resolv.conf"\ncp -L /etc/resolv.conf "$ROOT/etc/resolv.conf"',
+    )
+    return f"set -e\nROOT={root}\n{chroot_setup}\n" + "\n".join(commands) + "\n"
 
 def stage_image_configure_resolv_conf_script(directory: str, resolv_conf: str) -> str:
     """Copy host DNS settings into the disposable VM root filesystem."""
@@ -556,6 +564,53 @@ def read_host_resolv_conf() -> str | None:
         return None
     return content if any(line.strip().lower().startswith("nameserver ")
                           for line in content.splitlines()) else None
+
+def stage_image_configure_network_script(directory: str) -> str:
+    """Enable an installed DHCP service in this run's writable Gentoo image."""
+    from .deploy_system import enable_service_script, init_system_script
+    from .ssh_connection import quote
+    root = quote(os.path.join(directory, "rootfs"))
+    networkd = enable_service_script(None, "systemd-networkd")
+    resolved = enable_service_script(None, "systemd-resolved")
+    network_manager = enable_service_script("NetworkManager", "NetworkManager")
+    dhcpcd = enable_service_script("dhcpcd", "dhcpcd")
+    return f'''set -e
+ROOT={root}
+{init_system_script()}
+if [ "$CL_INIT_SYSTEM" = systemd ] && {{ [ -e "$ROOT/usr/lib/systemd/system/systemd-networkd.service" ] || [ -e "$ROOT/lib/systemd/system/systemd-networkd.service" ]; }}; then
+    mkdir -p "$ROOT/etc/systemd/network"
+    printf '%s\\n' '[Match]' 'Name=en* eth*' '' '[Network]' 'DHCP=yes' > "$ROOT/etc/systemd/network/20-catalystlab.network"
+    {networkd}
+    if [ -e "$ROOT/usr/lib/systemd/system/systemd-resolved.service" ] || [ -e "$ROOT/lib/systemd/system/systemd-resolved.service" ]; then
+        {resolved}
+        rm -f "$ROOT/etc/resolv.conf"
+        ln -s /run/systemd/resolve/stub-resolv.conf "$ROOT/etc/resolv.conf"
+    fi
+    echo 'Configured systemd-networkd for DHCP'
+elif {{ ( [ -x "$ROOT/usr/bin/NetworkManager" ] || [ -x "$ROOT/usr/sbin/NetworkManager" ] ) &&
+       ( [ -e "$ROOT/etc/init.d/NetworkManager" ] || [ -e "$ROOT/usr/lib/systemd/system/NetworkManager.service" ] || [ -e "$ROOT/lib/systemd/system/NetworkManager.service" ] ); }}; then
+    mkdir -p "$ROOT/etc/NetworkManager/system-connections"
+    printf '%s\\n' '[connection]' 'id=Catalyst Lab DHCP' 'type=ethernet' 'autoconnect=true' '' '[ipv4]' 'method=auto' '' '[ipv6]' 'method=auto' > "$ROOT/etc/NetworkManager/system-connections/catalystlab-dhcp.nmconnection"
+    chmod 600 "$ROOT/etc/NetworkManager/system-connections/catalystlab-dhcp.nmconnection"
+    {network_manager}
+    echo 'Configured NetworkManager for DHCP'
+elif [ -e "$ROOT/etc/init.d/dhcpcd" ] || [ -e "$ROOT/usr/lib/systemd/system/dhcpcd.service" ] || [ -e "$ROOT/lib/systemd/system/dhcpcd.service" ]; then
+    {dhcpcd}
+    echo 'Enabled dhcpcd for DHCP'
+elif [ "$CL_INIT_SYSTEM" = openrc ] && [ -e "$ROOT/etc/init.d/net.lo" ] && {{
+       [ -x "$ROOT/sbin/dhcpcd" ] || [ -x "$ROOT/usr/sbin/dhcpcd" ] ||
+       [ -x "$ROOT/sbin/udhcpc" ] || [ -x "$ROOT/usr/bin/udhcpc" ]; }}; then
+    mkdir -p "$ROOT/etc/conf.d" "$ROOT/etc/runlevels/default"
+    printf '%s\\n' 'config_enp0s1="dhcp"' 'config_eth0="dhcp"' >> "$ROOT/etc/conf.d/net"
+    for interface in enp0s1 eth0; do
+        ln -sf net.lo "$ROOT/etc/init.d/net.$interface"
+        ln -sf "/etc/init.d/net.$interface" "$ROOT/etc/runlevels/default/net.$interface"
+    done
+    echo 'Configured netifrc for DHCP on enp0s1/eth0'
+else
+    echo 'WARNING: No supported DHCP service is installed in this stage; NAT is available but guest networking was not enabled.'
+fi
+'''
 
 # ------------------------------------------------------------------------------
 # Running machine.
@@ -627,8 +682,9 @@ class QemuRun:
         command += machine.display
         if machine.usb:
             command += ["-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-tablet"]
-        command += ["-netdev", f"user,id=net,hostfwd=tcp:127.0.0.1:{self.ssh_port}-:22",
-                    "-device", f"virtio-net-{machine.device_bus},netdev=net"]
+        if self.support.network_enabled:
+            command += ["-netdev", f"user,id=net,hostfwd=tcp:127.0.0.1:{self.ssh_port}-:22",
+                        "-device", f"virtio-net-{machine.device_bus},netdev=net"]
         command += ["-device", f"virtio-rng-{machine.device_bus}"]
         if self.support.kind == QemuBuildKind.ISO:
             command += ["-drive", f"file={self.build.artifact_path},format=raw,readonly=on,media=cdrom,if=none,id=cd",
@@ -885,7 +941,11 @@ def _kernel_output_cache_directory(architecture: str, package: str, toolset) -> 
 def _kernel_outputs_ready(directory: str, package: str) -> bool:
     try:
         kernel = os.path.join(directory, "custom-kernel")
-        with open(os.path.join(directory, KERNEL_OUTPUTS_MANIFEST), encoding="utf-8") as manifest:
+        manifest_path = os.path.join(directory, KERNEL_OUTPUTS_MANIFEST)
+        legacy_manifest_path = os.path.join(directory, ".kernel-output")
+        if not os.path.isfile(manifest_path) and os.path.isfile(legacy_manifest_path):
+            os.replace(legacy_manifest_path, manifest_path)
+        with open(manifest_path, encoding="utf-8") as manifest:
             package_name, release = manifest.read().splitlines()
         if package_name != package.strip() or not release or os.path.basename(release) != release:
             return False
@@ -922,6 +982,10 @@ class QemuImagePreparation(MultiStageProcess):
             self.stages.append(_StepImage("Build and install custom kernel", self, "kernel"))
         if self.support.local_users or self.support.root_password:
             self.stages.append(_StepImage("Configure login accounts", self, "accounts"))
+        # Account setup's chroot bootstrap copies the host resolver file. Configure
+        # the guest's runtime resolver symlink only after that copy has completed.
+        if getattr(self.support, "network_enabled", True) and self.support.kind == QemuBuildKind.STAGE:
+            self.stages.append(_StepImage("Configure guest networking", self, "network"))
         if self.support.host_resolv_conf:
             self.stages.append(_StepImage("Configure host DNS", self, "dns"))
         if self.support.backend == "apple":
@@ -983,6 +1047,7 @@ class _StepImage(MultiStageProcessStage):
             "kernel": "Builds the selected package and installs its kernel, initramfs, and modules",
             "accounts": "Creates the optional user and sets the root password in this run's image",
             "dns": "Copies the host DNS configuration into this run's image",
+            "network": "Enables DHCP in this run's writable image",
             "shutdown": "Waits for the build VM to stop before this run starts",
         }
         super().__init__(name=name, description=descriptions[operation], multistage_process=multistage_process)
@@ -1035,6 +1100,8 @@ class _StepImage(MultiStageProcessStage):
                     self._configure_accounts(connection)
                 elif self.operation == "dns":
                     self._configure_host_dns(connection)
+                elif self.operation == "network":
+                    self._configure_guest_network(connection)
                 else:
                     self._prepare_custom_kernel(connection)
             self._check_canceled()
@@ -1106,7 +1173,8 @@ class _StepImage(MultiStageProcessStage):
         cache_directory, _ = self._cache_directory()
         directory = support.image_directory
         if (support.backend == "qemu" and not support.kernel_package
-                and not (support.local_users or support.root_password or support.host_resolv_conf)):
+                and not (support.local_users or support.root_password or support.host_resolv_conf
+                         or support.network_enabled)):
             support.base_image_path = os.path.join(cache_directory, "root.img")
             support.base_kernel_path = os.path.join(cache_directory, support.kernel)
             support.base_initramfs_path = (os.path.join(cache_directory, support.initramfs)
@@ -1146,6 +1214,19 @@ class _StepImage(MultiStageProcessStage):
         finally:
             if not connection.run(stage_image_unmount_script(directory), self.log, self.processes):
                 raise RuntimeError("Failed to unmount the temporary VM image after DNS setup")
+
+    def _configure_guest_network(self, connection):
+        directory = self.multistage_process.support.image_directory
+        self.log(f"Configuring DHCP networking in this run's writable image: {os.path.join(directory, 'root.img')}")
+        if not connection.run(stage_image_mount_script(directory), self.log, self.processes):
+            raise RuntimeError("Failed to mount the temporary VM image for network setup")
+        try:
+            script = stage_image_configure_network_script(directory)
+            if not connection.run(script, self.log, self.processes):
+                raise RuntimeError("Failed to configure guest DHCP networking in the temporary VM image")
+        finally:
+            if not connection.run(stage_image_unmount_script(directory), self.log, self.processes):
+                raise RuntimeError("Failed to unmount the temporary VM image after network setup")
 
     def _prepare_custom_kernel(self, connection):
         directory = self.multistage_process.support.image_directory

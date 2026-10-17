@@ -29,6 +29,8 @@ bridge.api.cl_vm_test_display.argtypes = [AppleVMBridge.Callback, ctypes.c_void_
 bridge.api.cl_vm_test_display.restype = ctypes.c_void_p
 bridge.api.cl_vm_test_parent.argtypes = [ctypes.c_void_p]
 bridge.api.cl_vm_test_parent.restype = ctypes.c_bool
+bridge.api.cl_vm_test_is_first_responder.argtypes = [ctypes.c_void_p]
+bridge.api.cl_vm_test_is_first_responder.restype = ctypes.c_bool
 bridge.api.cl_vm_test_keys.argtypes = [ctypes.c_void_p]
 bridge.api.cl_vm_test_keys.restype = ctypes.c_int32
 bridge.api.cl_vm_test_post_click.argtypes = [ctypes.c_void_p]
@@ -56,6 +58,8 @@ shortcuts = Gtk.ShortcutController(scope=Gtk.ShortcutScope.LOCAL)
 shortcuts.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("Escape"),
     Gtk.CallbackAction.new(lambda *args: host_keys.append('Escape') or True)))
 window.add_controller(shortcuts)
+# VM startup should leave the embedded native view uncaptured until the user
+# clicks inside it.
 window.present()
 loop = GLib.MainLoop()
 errors = []
@@ -65,6 +69,9 @@ def fail(error):
 def first():
     try:
         assert bridge.api.cl_vm_test_parent(run._handle), 'Display did not attach'
+        assert not view._native_input_active, 'Keyboard was captured automatically at startup'
+        assert not bridge.api.cl_vm_test_is_first_responder(run._handle), (
+            'AVF view unexpectedly took first-responder status at startup')
         frame = (ctypes.c_double * 4)()
         bridge.api.cl_vm_test_frame(run._handle, frame)
         assert frame[2] == view.native_display.get_width(), (list(frame),view.native_display.get_width())

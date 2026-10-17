@@ -107,6 +107,12 @@ class QemuLaunchWizard(Gtk.Box):
             lower=1, upper=256, step_increment=1, value=settings.qemu_memory_gib))
         settings_group.add(self.cpus_row)
         settings_group.add(self.memory_row)
+        self.network_row = Adw.SwitchRow(
+            title="Enable guest networking",
+            subtitle=("Adds a NAT adapter and configures DHCP in this run's stage image. "
+                      "Live ISOs use their own network setup."))
+        self.network_row.set_active(True)
+        settings_group.add(self.network_row)
         self.host_resolv_conf = read_host_resolv_conf()
         self.host_dns_row = Adw.SwitchRow(
             title="Set guest /etc/resolv.conf from host",
@@ -336,11 +342,14 @@ class QemuLaunchWizard(Gtk.Box):
         self.kernel_packages = [package for package in packages if package.supported]
         self.kernel_package_row.set_packages(self.kernel_packages)
         default = next((package.atom for package in self.kernel_packages
-                        if package.atom == "sys-kernel/gentoo-kernel"),
-                       self.kernel_packages[0].atom if self.kernel_packages else "sys-kernel/gentoo-kernel")
+                        if package.atom == "sys-kernel/gentoo-kernel-bin"),
+                       next((package.atom for package in self.kernel_packages
+                             if package.atom == "sys-kernel/gentoo-kernel"),
+                            self.kernel_packages[0].atom if self.kernel_packages
+                            else "sys-kernel/gentoo-kernel-bin"))
         self.kernel_package_row.load(default, None)
         if not self.kernel_package_row.custom_row.get_text():
-            self.kernel_package_row.custom_row.set_text("sys-kernel/gentoo-kernel")
+            self.kernel_package_row.custom_row.set_text("sys-kernel/gentoo-kernel-bin")
         self.kernel_package_row.set_sensitive(True)
         self._custom_kernel_changed()
         return True
@@ -403,10 +412,13 @@ class QemuLaunchWizard(Gtk.Box):
                 output_cache = _kernel_output_cache_directory(
                     architecture.value, atom, toolset)
                 if _kernel_outputs_ready(output_cache, atom):
-                    manifest = os.path.join(output_cache, ".kernel-output")
+                    manifest = os.path.join(output_cache, "kernel-output.manifest")
                     with open(manifest, encoding="utf-8") as file:
                         _package, release = file.read().splitlines()
-                    metadata_path = os.path.join(output_cache, ".kernel-build.json")
+                    metadata_path = os.path.join(output_cache, "kernel-build.json")
+                    legacy_metadata_path = os.path.join(output_cache, ".kernel-build.json")
+                    if not os.path.isfile(metadata_path) and os.path.isfile(legacy_metadata_path):
+                        os.replace(legacy_metadata_path, metadata_path)
                     try:
                         with open(metadata_path, encoding="utf-8") as file:
                             metadata = json.load(file)
@@ -502,12 +514,15 @@ class QemuLaunchWizard(Gtk.Box):
         kernel_package = self._selected_kernel_package() if self.custom_kernel_row.get_active() else None
         local_users = [row.user() for row in self.user_rows] if self.support.kind == QemuBuildKind.STAGE else []
         root_password = self.root_password_entry.get_text() or None
+        network_enabled = self.network_row.get_active()
         support = available.support if backend == "apple" else available
         support = replace(support, kernel_package=kernel_package,
                           kernel_snapshot=self._selected_snapshot() if kernel_package else None,
                           kernel_toolset=self._selected_kernel_toolset() if kernel_package else None,
                           local_users=local_users, root_password=root_password,
-                          host_resolv_conf=(self.host_resolv_conf if self.host_dns_row.get_active() else None))
+                          network_enabled=network_enabled,
+                          host_resolv_conf=(self.host_resolv_conf
+                                            if network_enabled and self.host_dns_row.get_active() else None))
         title = f"{self.build.stage_name} — {'Apple Virtualization' if backend == 'apple' else 'QEMU'}"
         if support.kind == QemuBuildKind.STAGE:
             support = replace(support, image_directory=create_stage_image_directory())

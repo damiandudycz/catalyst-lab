@@ -1,5 +1,5 @@
 from __future__ import annotations
-import re, threading
+import threading
 from dataclasses import replace
 from gi.repository import Gtk, Gdk, Adw, GLib, Pango
 from .qemu_run import (QemuRun, QemuRunEvent, QemuBuildKind, qemu_support, stage_image_ready,
@@ -12,13 +12,11 @@ from .app_events import AppEvents, app_event_bus
 from .qemu_run import QemuImagePreparation
 from .multistage_process import MultiStageProcessEvent, MultiStageProcessStageEvent, MultiStageProcessState
 from .multistage_process_execution_view import AnsiStyle, append_ansi_text
+from .serial_console import SerialConsoleFilter
 
 # ------------------------------------------------------------------------------
 # Build running in QEMU: screen of machine (VNC), its serial console and QEMU log, with power controls. A pristine stage
 # image is cached per build; each run gets a writable copy in Library/Temporary that is cleaned up when it stops.
-
-def _visible_serial_text(text: str) -> str:
-    return "".join(char for char in text if char in "\n\t\r\x1b" or char.isprintable())
 
 def present_qemu_run(run: QemuRun):
     """Show an existing VM view, or create a fresh view attached to the running machine."""
@@ -59,11 +57,13 @@ class QemuRunView(Gtk.Box):
         if self.apple is not None and support is not None:
             self.apple = replace(self.apple, support=self.support)
         self.run: QemuRun | None = None
-        self._serial_pending = ""
+        self._serial_filter = SerialConsoleFilter()
         self._serial_style = AnsiStyle()
         self._auto_console_detection = False
         self._native_input_active = False
-        self._native_input_user_released = False
+        # Start with the native view uncaptured. Once the user clicks the VM,
+        # normal focus restoration can keep the keyboard routed to it.
+        self._native_input_user_released = True
         self._updating_capture_button = False
         self._native_display_suspended = False
         self._native_input_root = None
@@ -249,9 +249,11 @@ class QemuRunView(Gtk.Box):
     def _on_stack_page_changed(self, stack, _param):
         names = ("screen", "console", "log")
         name = stack.get_visible_child_name()
-        if name != "screen":
+        if name not in names:
+            return
+        if self.backend == "apple" and name != "screen":
             self._detach_native_display()
-        if name in names and self.view_toggle.get_active() != names.index(name):
+        if self.view_toggle.get_active() != names.index(name):
             self.view_toggle.set_active(names.index(name))
         if name == "console" and hasattr(self, "console_page"):
             # ViewStack can initially allocate a newly shown page before the
@@ -414,7 +416,7 @@ class QemuRunView(Gtk.Box):
         if run.output:
             self.log_view.get_buffer().set_text("\n".join(run.output) + "\n")
         if run.serial_output:
-            text = _visible_serial_text(run.serial_output)
+            text = self._serial_filter.feed(run.serial_output)
             if text.strip():
                 self._append_serial_text(text)
                 self.console_placeholder.set_visible(False)
@@ -434,6 +436,8 @@ class QemuRunView(Gtk.Box):
         self._update_log_page()
 
     def _detach_native_display(self):
+        if self.backend != "apple":
+            return
         self._capture_native_input(False)
         if isinstance(self.run, AppleVirtualizationRun):
             self.run.detach_display()
@@ -458,6 +462,8 @@ class QemuRunView(Gtk.Box):
 
     def _capture_native_input(self, active):
         active = active and isinstance(self.run, AppleVirtualizationRun) and self.run.ready
+        if active:
+            self._native_input_user_released = False
         changed = active != self._native_input_active
         self._native_input_active = active
         if isinstance(self.run, AppleVirtualizationRun):
@@ -468,7 +474,8 @@ class QemuRunView(Gtk.Box):
                 self.native_display.grab_focus()
             if changed:
                 self._set_status(self._running_status(self.run))
-        if self.keyboard_capture_button.get_active() != active:
+        if (hasattr(self, "keyboard_capture_button")
+                and self.keyboard_capture_button.get_active() != active):
             self._updating_capture_button = True
             try:
                 self.keyboard_capture_button.set_active(active)
@@ -561,12 +568,6 @@ class QemuRunView(Gtk.Box):
             return True
         self.run.place_display(surface.get_native_window(), bounds.get_x(), bounds.get_y(),
                                bounds.get_width(), bounds.get_height())
-        # The VM page is often opened automatically when startup finishes. GTK
-        # may still have the last wizard control focused, so capture the native
-        # AVF view as soon as it is embedded in the active window.
-        if (self._native_input_root is not None and self._native_input_root.is_active()
-                and not self._native_input_active and not self._native_input_user_released):
-            GLib.idle_add(self._capture_native_input, True)
         return True
 
     def _running_status(self, run):
@@ -574,7 +575,7 @@ class QemuRunView(Gtk.Box):
             if not run.ready:
                 return "Starting Apple Virtualization…"
             return ("Keyboard captured · Use the keyboard button to release" if self._native_input_active else
-                    "Running with Apple Virtualization · Click the screen to type")
+                    "Running with Apple Virtualization · Click the screen to interact")
         speed = f"accelerated ({run.accelerator.upper()})" if run.accelerator else "emulated (slow)"
         return f"Running, {speed} · SSH: ssh -p {run.ssh_port} root@localhost"
 
@@ -823,12 +824,7 @@ class QemuRunView(Gtk.Box):
             if (text and self.run is not None
                     and self.status_label.get_label().startswith("Apple Virtualization is running · No guest serial output")):
                 self._set_status(self._running_status(self.run))
-            # Control sequences can be split between reads, incomplete one waits for its rest.
-            pending = self._serial_pending + text
-            incomplete = re.search(r"\x1b[^A-Za-z]*$", pending)
-            self._serial_pending = pending[incomplete.start():] if incomplete else ""
-            complete = pending[:incomplete.start()] if incomplete else pending
-            visible_text = _visible_serial_text(complete)
+            visible_text = self._serial_filter.feed(text)
             if visible_text.strip():
                 self.console_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
                 self._append_serial_text(visible_text)
@@ -852,8 +848,8 @@ class QemuRunView(Gtk.Box):
     def _on_realize(self, widget):
         if self.backend == "apple" and self._native_input_root is None:
             self._native_input_root = self.get_native()
-            self._native_focus_handler = self._native_input_root.connect("notify::is-active", lambda window, _: (
-                self._capture_native_input(False) if not window.is_active() else None))
+            self._native_focus_handler = self._native_input_root.connect(
+                "notify::is-active", self._on_native_window_active_changed)
         page = self.get_ancestor(Adw.NavigationPage)
         navigation = self.get_ancestor(Adw.NavigationView)
         if page is not None and navigation is not None and not getattr(self, "_page_observed", False):
@@ -863,6 +859,15 @@ class QemuRunView(Gtk.Box):
                 if all(stack.get_item(index) is not page for index in range(stack.get_n_items())):
                     self._detach_run()
             page.connect("hidden", hidden)
+
+    def _on_native_window_active_changed(self, window, _):
+        if not window.is_active():
+            self._capture_native_input(False)
+        elif not self._native_input_user_released:
+            # AppKit can discard the embedded VM view's first-responder status
+            # while activating the host window. Reassert it after activation
+            # so the initial captured state is usable without a second click.
+            GLib.idle_add(self._capture_native_input, True)
 
     def stop(self):
         if self.run is not None and self.run.is_running:

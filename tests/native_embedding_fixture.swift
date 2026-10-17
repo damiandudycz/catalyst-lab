@@ -5,8 +5,12 @@ public func testDisplay(_ callback: EventCallback, _ context: UnsafeMutableRawPo
     if #available(macOS 13.0, *) {
         let runner = Runner(callback: callback, context: context)
         let view = KeyboardProbeView()
-        view.onFocus = { [weak runner] in runner?.report("INPUT:captured") }
+        view.onFocus = {
+            runner.focus(true)
+            runner.report("INPUT:captured")
+        }
         runner.view = view
+        runner.installPointerMonitor()
         return Unmanaged.passRetained(runner).toOpaque()
     }
     return nil
@@ -14,6 +18,14 @@ public func testDisplay(_ callback: EventCallback, _ context: UnsafeMutableRawPo
 @_cdecl("cl_vm_test_parent")
 public func testParent(_ pointer: UnsafeMutableRawPointer) -> Bool {
     if #available(macOS 13.0, *) { return Unmanaged<Runner>.fromOpaque(pointer).takeUnretainedValue().view?.superview != nil }
+    return false
+}
+@_cdecl("cl_vm_test_is_first_responder")
+public func testIsFirstResponder(_ pointer: UnsafeMutableRawPointer) -> Bool {
+    if #available(macOS 13.0, *) {
+        let runner = Unmanaged<Runner>.fromOpaque(pointer).takeUnretainedValue()
+        return runner.view?.window?.firstResponder === runner.view
+    }
     return false
 }
 @_cdecl("cl_vm_test_frame")

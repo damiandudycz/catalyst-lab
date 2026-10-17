@@ -8,6 +8,48 @@ from unittest.mock import Mock
 
 
 class LaunchSettingsTests(unittest.TestCase):
+    def test_qemu_console_page_change_updates_tab_without_avf_detach(self):
+        path = Path(__file__).resolve().parents[1] / 'src/ui/qemu/qemu_run_view.py'
+        tree = ast.parse(path.read_text())
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'QemuRunView')
+        changed = next(node for node in cls.body
+                       if isinstance(node, ast.FunctionDef) and node.name == '_on_stack_page_changed')
+        namespace = {}
+        exec(compile(ast.Module(body=[changed], type_ignores=[]), str(path), 'exec'), namespace)
+        stack = Mock()
+        stack.get_visible_child_name.return_value = 'console'
+        view = types.SimpleNamespace(backend='qemu', view_toggle=Mock(),
+                                     _detach_native_display=Mock(), console_page=object(),
+                                     _schedule_console_layout_refresh=Mock())
+        view.view_toggle.get_active.return_value = 0
+
+        namespace['_on_stack_page_changed'](view, stack, None)
+
+        view._detach_native_display.assert_not_called()
+        view.view_toggle.set_active.assert_called_once_with(1)
+        view._schedule_console_layout_refresh.assert_called_once_with()
+
+    def test_vm_kernel_picker_defaults_to_binary_gentoo_kernel(self):
+        path = Path(__file__).resolve().parents[1] / 'src/ui/qemu/qemu_launch_wizard.py'
+        tree = ast.parse(path.read_text())
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+        loaded = next(node for node in cls.body
+                      if isinstance(node, ast.FunctionDef) and node.name == '_kernel_packages_loaded')
+        namespace = {}
+        exec(compile(ast.Module(body=[loaded], type_ignores=[]), str(path), 'exec'), namespace)
+        row = Mock()
+        row.custom_row.get_text.return_value = ''
+        gentoo_bin = types.SimpleNamespace(atom='sys-kernel/gentoo-kernel-bin', supported=True)
+        gentoo_source = types.SimpleNamespace(atom='sys-kernel/gentoo-kernel', supported=True)
+        view = types.SimpleNamespace(
+            _kernel_package_load_generation=3, _kernel_packages_loading=True,
+            kernel_packages=[], kernel_package_row=row, _custom_kernel_changed=Mock())
+
+        self.assertTrue(namespace['_kernel_packages_loaded'](view, [gentoo_source, gentoo_bin], 3))
+
+        row.load.assert_called_once_with('sys-kernel/gentoo-kernel-bin', None)
+        row.custom_row.set_text.assert_called_once_with('sys-kernel/gentoo-kernel-bin')
+
     def test_launch_overrides_do_not_change_application_settings(self):
         path = Path(__file__).resolve().parents[1] / 'src/ui/qemu/qemu_launch_wizard.py'
         tree = ast.parse(path.read_text())
@@ -25,12 +67,13 @@ class LaunchSettingsTests(unittest.TestCase):
         view = types.SimpleNamespace(backends=[('QEMU', 'qemu')], backend_row=Mock(),
                                      cpus_row=Mock(), memory_row=Mock(), project_directory=object(), build=Mock(),
                                      _launch_started=False, support=types.SimpleNamespace(kind='iso'),
-                                     user_rows=[], root_password_entry=Mock(), host_dns_row=Mock(),
+                                     user_rows=[], root_password_entry=Mock(), host_dns_row=Mock(), network_row=Mock(),
                                      host_resolv_conf='nameserver 192.0.2.1\n',
                                      _login_settings_error=lambda: None,
                                      _account_settings_error=lambda: None)
         view.root_password_entry.get_text.return_value = ''
         view.host_dns_row.get_active.return_value = False
+        view.network_row.get_active.return_value = True
         view.kernel_required = False
         view.backend_row.get_selected.return_value = 0
         view.cpus_row.get_value.return_value = 8
@@ -93,7 +136,8 @@ class LaunchSettingsTests(unittest.TestCase):
             _launch_started=False,
             custom_kernel_row=Mock(), _selected_kernel_package=Mock(), _selected_snapshot=Mock(),
             _selected_kernel_toolset=Mock(), support=types.SimpleNamespace(kind='stage'), user_rows=[],
-            root_password_entry=Mock(), host_dns_row=Mock(), host_resolv_conf='nameserver 192.0.2.1\n',
+            root_password_entry=Mock(), host_dns_row=Mock(), network_row=Mock(),
+            host_resolv_conf='nameserver 192.0.2.1\n',
             _login_settings_error=lambda: None, _account_settings_error=lambda: None,
             auto_close_on_finish=True,
             wizard_view=types.SimpleNamespace(install_view=types.SimpleNamespace(on_finish_requested=None),
@@ -102,6 +146,7 @@ class LaunchSettingsTests(unittest.TestCase):
         )
         view.root_password_entry.get_text.return_value = ''
         view.host_dns_row.get_active.return_value = False
+        view.network_row.get_active.return_value = True
         view.backend_row.get_selected.return_value = 0
         view.cpus_row.get_value.return_value = 4
         view.memory_row.get_value.return_value = 8

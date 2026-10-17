@@ -90,6 +90,7 @@ struct Configuration: Decodable {
     let kernel: String?
     let initramfs: String?
     let directory: String
+    let network_enabled: Bool?
 }
 
 public typealias EventCallback = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?) -> Void
@@ -119,6 +120,7 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
     var serialPipe: Pipe?
     var serialOutput: Pipe?
     var keyboardMonitor: Any?
+    var pointerMonitor: Any?
     var inputCaptured = false
     var didReportKeyboardEvent = false
     var didReportWindowMismatch = false
@@ -184,9 +186,11 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
                 let attachment = try VZDiskImageStorageDeviceAttachment(url: disk, readOnly: false)
                 config.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: attachment)]
             }
-            let network = VZVirtioNetworkDeviceConfiguration()
-            network.attachment = VZNATNetworkDeviceAttachment()
-            config.networkDevices = [network]
+            if options.network_enabled ?? true {
+                let network = VZVirtioNetworkDeviceConfiguration()
+                network.attachment = VZNATNetworkDeviceAttachment()
+                config.networkDevices = [network]
+            }
             config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
             let graphics = VZVirtioGraphicsDeviceConfiguration()
             graphics.scanouts = [VZVirtioGraphicsScanoutConfiguration(widthInPixels: 1280, heightInPixels: 800)]
@@ -225,7 +229,11 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
                 report("LAUNCH: Disk source: \(options.disk!)")
                 report("LAUNCH: Writable VM disk: \(options.directory)/root.img (virtio block, read-write)")
             }
-            report("LAUNCH: Network: virtio NAT")
+            if options.network_enabled ?? true {
+                report("LAUNCH: Network: virtio NAT")
+            } else {
+                report("LAUNCH: Network: disabled")
+            }
             report("LAUNCH: Entropy: virtio RNG")
             report("LAUNCH: Graphics: virtio, 1280x800")
             report("LAUNCH: Input: USB keyboard and screen-coordinate pointing device")
@@ -233,10 +241,19 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
             vm = VZVirtualMachine(configuration: config)
             vm!.delegate = self
             let display = EmbeddedVMView()
-            display.onFocus = { [weak self] in self?.report("INPUT:captured") }
+            display.onFocus = { [weak self] in
+                self?.focus(true)
+                self?.report("INPUT:captured")
+            }
             display.virtualMachine = vm
+            // Keep the guest framebuffer in step with the embedded view while
+            // its GTK host window is resized instead of stretching a stale scanout.
+            if #available(macOS 14.0, *) {
+                display.automaticallyReconfiguresDisplay = true
+            }
             display.capturesSystemKeys = true
             view = display
+            installPointerMonitor()
             vm!.start { result in
                 switch result {
                 case .success:
@@ -253,13 +270,21 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
         guard let pointer = windowPointer, width > 0, height > 0 else { detach(); return }
         let window = Unmanaged<NSWindow>.fromOpaque(pointer).takeUnretainedValue()
         guard let parent = window.contentView else { detach(); return }
-        let frame = NSRect(x: x, y: parent.isFlipped ? y : parent.bounds.height - y - height,
-                           width: width, height: height)
+        let scale = Double(max(1, window.backingScaleFactor))
+        let pixelAligned: (Double) -> CGFloat = { CGFloat(($0 * scale).rounded() / scale) }
+        let frame = NSRect(x: pixelAligned(x),
+                           y: pixelAligned(parent.isFlipped ? y : parent.bounds.height - y - height),
+                           width: pixelAligned(width), height: pixelAligned(height))
         if view.superview !== parent {
             detach()
             parent.addSubview(view, positioned: .above, relativeTo: nil)
         }
         if view.frame != frame { view.frame = frame }
+        // GTK can request capture before the native view has a window. In
+        // that case focus() records the request but cannot make the AVF view
+        // first responder or install its event monitor. Apply it once the
+        // view has actually been embedded.
+        if inputCaptured, window.firstResponder !== view { focus(true) }
     }
     func detach() {
         guard let view = view else { return }
@@ -272,8 +297,11 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
     func focus(_ active: Bool) {
         inputCaptured = active
         if active, let view = view, let window = view.window {
+            let wasFirstResponder = window.firstResponder === view
             let accepted = window.makeFirstResponder(view)
-            report("INPUT: capture requested; first responder \(window.firstResponder === view ? "is" : "is not") AVF view")
+            if !wasFirstResponder {
+                report("INPUT: capture requested; first responder \(window.firstResponder === view ? "is" : "is not") AVF view")
+            }
             if !accepted || window.firstResponder !== view {
                 report("INPUT: AVF view did not retain keyboard focus")
             }
@@ -311,6 +339,38 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
             if let view = view, let window = view.window {
                 window.makeFirstResponder(view.superview)
             }
+        }
+    }
+    func installPointerMonitor() {
+        guard pointerMonitor == nil else { return }
+        let pointerEvents: NSEvent.EventTypeMask = [
+            .leftMouseDown, .leftMouseUp, .leftMouseDragged,
+            .rightMouseDown, .rightMouseUp, .rightMouseDragged,
+            .otherMouseDown, .otherMouseUp, .otherMouseDragged,
+            .mouseMoved, .scrollWheel
+        ]
+        pointerMonitor = NSEvent.addLocalMonitorForEvents(matching: pointerEvents) { [weak self] event in
+            guard let self = self, let view = self.view, let window = view.window,
+                  event.windowNumber == window.windowNumber else { return event }
+            let location = view.convert(event.locationInWindow, from: nil)
+            guard view.bounds.contains(location) else { return event }
+            switch event.type {
+            case .leftMouseDown: view.mouseDown(with: event)
+            case .leftMouseUp: view.mouseUp(with: event)
+            case .leftMouseDragged: view.mouseDragged(with: event)
+            case .rightMouseDown: view.rightMouseDown(with: event)
+            case .rightMouseUp: view.rightMouseUp(with: event)
+            case .rightMouseDragged: view.rightMouseDragged(with: event)
+            case .otherMouseDown: view.otherMouseDown(with: event)
+            case .otherMouseUp: view.otherMouseUp(with: event)
+            case .otherMouseDragged: view.otherMouseDragged(with: event)
+            case .mouseMoved: view.mouseMoved(with: event)
+            case .scrollWheel: view.scrollWheel(with: event)
+            default: return event
+            }
+            // Forward once through VZVirtualMachineView, then suppress AppKit's
+            // normal dispatch so an embedded GTK/native surface cannot duplicate it.
+            return nil
         }
     }
     func key(_ code: UInt16, _ pressed: Bool, _ isModifier: Bool, _ flags: UInt64,
@@ -373,6 +433,10 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
         guard !finished else { return }
         finished = true
         detach()
+        if let pointerMonitor = pointerMonitor {
+            NSEvent.removeMonitor(pointerMonitor)
+            self.pointerMonitor = nil
+        }
         serialOutput?.fileHandleForReading.readabilityHandler = nil
         view?.virtualMachine = nil
         view = nil

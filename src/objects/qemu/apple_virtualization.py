@@ -158,7 +158,8 @@ class AppleVirtualizationRun(QemuRun):
             memory = self.memory_mib * 1024 * 1024
             if not limits['min_cpus'] <= self.cpus <= limits['max_cpus'] or not limits['min_memory'] <= memory <= limits['max_memory']:
                 raise RuntimeError('CPU or memory allocation is outside the limits supported by this Mac')
-            options = dict(name=self.name, cpus=self.cpus, memory=memory, directory=self.directory)
+            options = dict(name=self.name, cpus=self.cpus, memory=memory, directory=self.directory,
+                           network_enabled=self.support.network_enabled)
             if self.support.kind == QemuBuildKind.ISO:
                 options['iso'] = self.build.artifact_path
             else:

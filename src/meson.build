@@ -41,6 +41,7 @@ configure_file(
 catalystlab_sources = [
   '__init__.py',
   'formatters.py',
+  'serial_console.py',
   'main.py',
   'extensions/navigation_view_extensions.py',
   'objects/global_objects/app_events.py',
