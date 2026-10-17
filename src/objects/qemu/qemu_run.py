@@ -894,10 +894,11 @@ class QemuImagePreparation(MultiStageProcess):
         super().__init__(title="Start virtual machine")
 
     def setup_stages(self):
-        self.stages.append(_StepImage("Prepare cached stage image", self, "cache"))
-        self.stages.append(_StepImage("Prepare writable VM image", self, "image"))
+        self.stages.append(_StepImage("Prepare build VM", self, "machine"))
+        self.stages.append(_StepImage("Prepare stage image", self, "cache"))
+        self.stages.append(_StepImage("Create writable VM image", self, "image"))
         if self.support.kernel_package:
-            self.stages.append(_StepImage("Build custom kernel", self, "kernel"))
+            self.stages.append(_StepImage("Build and install custom kernel", self, "kernel"))
 
     def name(self) -> str:
         return self.build.stage_name
@@ -947,9 +948,10 @@ class QemuImagePreparation(MultiStageProcess):
 class _StepImage(MultiStageProcessStage):
     def __init__(self, name, multistage_process, operation):
         descriptions = {
-            "cache": "Extracts the stage into a reusable base image when needed",
-            "image": "Creates this run's writable VM image",
-            "kernel": "Builds and installs the selected kernel package",
+            "machine": "Starts the machine used to prepare this run",
+            "cache": "Ensures a reusable base image is available for the selected stage",
+            "image": "Creates this run's writable image from the cached base",
+            "kernel": "Builds the selected package and installs its kernel, initramfs, and modules",
         }
         super().__init__(name=name, description=descriptions[operation], multistage_process=multistage_process)
         self.operation = operation
@@ -986,7 +988,9 @@ class _StepImage(MultiStageProcessStage):
                                            cancel_event=self._cancel_event):
                 raise RuntimeError(error)
             self._check_canceled()
-            if self.operation == "cache":
+            if self.operation == "machine":
+                self.log("Build machine is ready")
+            elif self.operation == "cache":
                 self._prepare_cached_image(connection)
             elif self.operation == "image":
                 self._prepare_writable_image()

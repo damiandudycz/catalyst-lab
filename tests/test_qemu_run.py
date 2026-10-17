@@ -30,11 +30,13 @@ class QemuRunTests(unittest.TestCase):
         namespace = {'_StepImage': lambda name, owner, operation: (name, operation)}
         exec(compile(ast.Module(body=[setup], type_ignores=[]), 'qemu_run.py', 'exec'), namespace)
 
-        for kernel_package, expected in ((None, [('Prepare cached stage image', 'cache'),
-                                                  ('Prepare writable VM image', 'image')]),
-                                         ('sys-kernel/gentoo-kernel', [('Prepare cached stage image', 'cache'),
-                                                                       ('Prepare writable VM image', 'image'),
-                                                                       ('Build custom kernel', 'kernel')])):
+        for kernel_package, expected in ((None, [('Prepare build VM', 'machine'),
+                                                  ('Prepare stage image', 'cache'),
+                                                  ('Create writable VM image', 'image')]),
+                                         ('sys-kernel/gentoo-kernel', [('Prepare build VM', 'machine'),
+                                                                       ('Prepare stage image', 'cache'),
+                                                                       ('Create writable VM image', 'image'),
+                                                                       ('Build and install custom kernel', 'kernel')])):
             with self.subTest(kernel_package=kernel_package):
                 view = types.SimpleNamespace(support=types.SimpleNamespace(kernel_package=kernel_package), stages=[])
                 namespace['setup_stages'](view)
