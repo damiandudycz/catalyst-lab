@@ -24,7 +24,9 @@ class LaunchSettingsTests(unittest.TestCase):
         exec(compile(ast.Module(body=[start], type_ignores=[]), str(path), 'exec'), namespace)
         view = types.SimpleNamespace(backends=[('QEMU', 'qemu')], backend_row=Mock(),
                                      cpus_row=Mock(), memory_row=Mock(), project_directory=object(), build=Mock(),
-                                     _launch_started=False)
+                                     _launch_started=False, support=types.SimpleNamespace(kind='iso'),
+                                     user_rows=[], root_password_entry=Mock(), _login_settings_error=lambda: None)
+        view.root_password_entry.get_text.return_value = ''
         view.kernel_required = False
         view.backend_row.get_selected.return_value = 0
         view.cpus_row.get_value.return_value = 8
@@ -86,8 +88,10 @@ class LaunchSettingsTests(unittest.TestCase):
             project_directory=object(), build=Mock(), kernel_required=False, _window=None,
             _launch_started=False,
             custom_kernel_row=Mock(), _selected_kernel_package=Mock(), _selected_snapshot=Mock(),
-            _selected_kernel_toolset=Mock(),
+            _selected_kernel_toolset=Mock(), support=types.SimpleNamespace(kind='stage'), user_rows=[],
+            root_password_entry=Mock(), _login_settings_error=lambda: None,
         )
+        view.root_password_entry.get_text.return_value = ''
         view.backend_row.get_selected.return_value = 0
         view.cpus_row.get_value.return_value = 4
         view.memory_row.get_value.return_value = 8
@@ -113,19 +117,20 @@ class LaunchSettingsTests(unittest.TestCase):
         exec(compile(ast.Module(body=[ready], type_ignores=[]), str(path), 'exec'), namespace)
         view = types.SimpleNamespace(backends=[('QEMU', 'qemu')], kernel_required=True,
             _custom_kernel_reason=None, custom_kernel_row=Mock(), _kernel_packages_loading=False,
-            _is_custom_kernel_selected=Mock(return_value=False), _valid_custom_kernel=Mock(return_value=True))
+            _is_custom_kernel_selected=Mock(return_value=False), _valid_custom_kernel=Mock(return_value=True),
+            vm_page=object(), kernel_page=object(), accounts_page=object())
         view._selected_kernel_toolset = Mock(return_value=types.SimpleNamespace(busy_reason=None))
         view.custom_kernel_row.get_active.return_value = False
-        self.assertFalse(namespace['_page_ready'](view, None, None))
+        self.assertFalse(namespace['_page_ready'](view, None, view.kernel_page))
         view.custom_kernel_row.get_active.return_value = True
-        self.assertTrue(namespace['_page_ready'](view, None, None))
+        self.assertTrue(namespace['_page_ready'](view, None, view.kernel_page))
         view._selected_kernel_toolset.return_value = None
-        self.assertFalse(namespace['_page_ready'](view, None, None))
+        self.assertFalse(namespace['_page_ready'](view, None, view.kernel_page))
         view._selected_kernel_toolset.return_value = types.SimpleNamespace(busy_reason='in use')
-        self.assertFalse(namespace['_page_ready'](view, None, None))
+        self.assertFalse(namespace['_page_ready'](view, None, view.kernel_page))
         view._selected_kernel_toolset.return_value = types.SimpleNamespace(busy_reason=None)
         view._custom_kernel_reason = 'Select a project toolset to build a custom kernel.'
-        self.assertFalse(namespace['_page_ready'](view, None, None))
+        self.assertFalse(namespace['_page_ready'](view, None, view.kernel_page))
 
 
 if __name__ == '__main__':

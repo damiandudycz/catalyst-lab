@@ -29,8 +29,10 @@ class DeployServiceTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.detect = load_function('src/objects/deploy/deploy_system.py', 'init_system_script')
         self.enable = load_function('src/objects/deploy/deploy_system.py', 'enable_service_script', init_system_script=self.detect)
+        accounts = load_function('src/objects/deploy/deploy_installation.py', 'user_accounts_script', quote=shlex.quote)
         self.configure = load_function('src/objects/deploy/deploy_installation.py', 'system_configuration_script',
-            quote=shlex.quote, init_system_script=self.detect, localization_script=lambda _: '', authorized_keys_script=lambda *args: '')
+            quote=shlex.quote, user_accounts_script=accounts, init_system_script=self.detect,
+            localization_script=lambda _: '', authorized_keys_script=lambda *args: '')
 
     def file(self, path, executable=False):
         file = self.root / path

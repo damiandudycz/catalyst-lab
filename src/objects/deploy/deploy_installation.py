@@ -35,7 +35,7 @@ class DeployRepository(Enum):
 @dataclass
 class DeployUser:
     name: str
-    password: str
+    password: str = field(repr=False)
     full_name: str = ""
     groups: list[str] = field(default_factory=list)
 
@@ -98,6 +98,21 @@ def tar_extract_command(artifact: str, root: str = MOUNT_POINT) -> str:
     # Timestamps in the future are not reported (clock of machine is set before, but warnings would fill the log).
     return f"tar -x -p {compression} --xattrs-include='*.*' --numeric-owner --warning=no-timestamp -C {quote(root)} -f -"
 
+def user_accounts_script(root_password: str | None, users: list[DeployUser]) -> list[str]:
+    """Set account passwords and create users in the system rooted at $ROOT."""
+    script = []
+    if root_password:
+        script += [f"printf '%s\\n' {quote('root:' + root_password)} | in_root chpasswd", 'echo "Root password set"']
+    for user in users:
+        groups = " ".join(quote(group) for group in user.groups)
+        script += [
+            f'GROUPS_LIST=""; for group in {groups}; do if grep -q "^$group:" "$ROOT/etc/group"; then GROUPS_LIST="$GROUPS_LIST${{GROUPS_LIST:+,}}$group"; else echo "Group $group doesn\'t exist, skipped"; fi; done',
+            f'in_root useradd -m -s /bin/bash -c {quote(user.gecos)} ${{GROUPS_LIST:+-G "$GROUPS_LIST"}} {quote(user.name)}',
+            *([f"printf '%s\\n' {quote(user.name + ':' + user.password)} | in_root chpasswd"] if user.password else []),
+            f'echo "User {user.name} created${{GROUPS_LIST:+, groups $GROUPS_LIST}}"',
+        ]
+    return script
+
 def system_configuration_script(settings: DeploySystemSettings) -> list[str]:
     """Lines of script configuring system in $ROOT (prepared with CHROOT_SETUP): hostname, root password, SSH server,
     localization, users and their SSH keys. Used for installed systems and live systems of ISO images."""
@@ -110,9 +125,7 @@ def system_configuration_script(settings: DeploySystemSettings) -> list[str]:
             f'[ -f "$ROOT/etc/conf.d/hostname" ] && sed -i "s/^hostname=.*/hostname=\\"$(cat "$ROOT/etc/hostname")\\"/" "$ROOT/etc/conf.d/hostname"',
             f'echo "Hostname set to {settings.hostname}"',
         ]
-    if settings.root_password:
-        # Password is sent in script (stdin of ssh), not as command argument.
-        script += [f"echo {quote('root:' + settings.root_password)} | chroot \"$ROOT\" chpasswd", 'echo "Root password set"']
+    script += user_accounts_script(settings.root_password, settings.users)
     if settings.enable_ssh:
         script += [
             init_system_script(),
@@ -134,15 +147,6 @@ def system_configuration_script(settings: DeploySystemSettings) -> list[str]:
             'fi',
         ]
     script.append(localization_script(settings.localization))
-    for user in settings.users:
-        # Groups missing in stage are skipped.
-        groups = " ".join(quote(group) for group in user.groups)
-        script += [
-            f'GROUPS_LIST=""; for group in {groups}; do if grep -q "^$group:" "$ROOT/etc/group"; then GROUPS_LIST="$GROUPS_LIST${{GROUPS_LIST:+,}}$group"; else echo "Group $group doesn\'t exist, skipped"; fi; done',
-            f'chroot "$ROOT" useradd -m -s /bin/bash -c {quote(user.gecos)} ${{GROUPS_LIST:+-G "$GROUPS_LIST"}} {quote(user.name)}',
-            *([f"echo {quote(user.name + ':' + user.password)} | chroot \"$ROOT\" chpasswd"] if user.password else []),
-            f'echo "User {user.name} created${{GROUPS_LIST:+, groups $GROUPS_LIST}}"',
-        ]
     if any("wheel" in user.groups for user in settings.users):
         # Gentoo doesn't allow wheel group to use sudo (or doas) by default, users added to it expect administration.
         script.append(r'''if [ -x "$ROOT/usr/bin/sudo" ]; then

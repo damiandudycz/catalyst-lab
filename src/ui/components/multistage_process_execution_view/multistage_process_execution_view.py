@@ -26,6 +26,7 @@ class MultistageProcessExecutionView(Gtk.Box):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.multistage_process: MultiStageProcess | None = None
+        self.on_finish_requested = None
         # Bottom bar is as high as progress bar, which is drawn over line.
         self.progress_overlay.set_measure_overlay(self.progress_bar, True)
         # Result of finished process is seen when this view shows it.
@@ -89,6 +90,10 @@ class MultistageProcessExecutionView(Gtk.Box):
     @Gtk.Template.Callback()
     def on_finish_pressed(self, _):
         self.multistage_process.clean_from_started_processes()
+        if self.on_finish_requested:
+            callback, self.on_finish_requested = self.on_finish_requested, None
+            if callback():
+                return
         if hasattr(self, "_window"):
             self._window.close()
         elif hasattr(self, "content_navigation_view"):

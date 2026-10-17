@@ -95,6 +95,7 @@ class CatalystlabWindow(Adw.ApplicationWindow):
                 _connect_wizard_back(view._page, view._header, wizard)
             return
         header = Adw.HeaderBar()
+        view._header = header
         for widget in getattr(view, "header_bar_end_widgets", lambda: [])():
             header.pack_end(widget)
         toolbar_view = Adw.ToolbarView()

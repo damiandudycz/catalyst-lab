@@ -17,7 +17,8 @@ if 'catalystlab' not in sys.modules:
     package.__path__ = [str(ROOT/'src')] + [str(path) for path in (ROOT/'src').rglob('*') if path.is_dir()]
     sys.modules['catalystlab'] = package
 
-from catalystlab.custom_kernel import (copy_kernel_outputs, kernel_package_build_command, portage_config_setup_command,
+from catalystlab.custom_kernel import (copy_kernel_outputs, kernel_package_build_command,
+                                       portage_config_setup_command,
                                        valid_kernel_package,
                                        KERNEL_OUTPUTS_MANIFEST)
 

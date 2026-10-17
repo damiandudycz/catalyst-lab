@@ -1,5 +1,6 @@
 """QEMU command construction and host measurements without launching a VM."""
 import ast
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -38,9 +39,51 @@ class QemuRunTests(unittest.TestCase):
                                                                        ('Create writable VM image', 'image'),
                                                                        ('Build and install custom kernel', 'kernel')])):
             with self.subTest(kernel_package=kernel_package):
-                view = types.SimpleNamespace(support=types.SimpleNamespace(kernel_package=kernel_package), stages=[])
+                view = types.SimpleNamespace(support=types.SimpleNamespace(
+                    kernel_package=kernel_package, local_users=[], root_password=None), stages=[])
                 namespace['setup_stages'](view)
                 self.assertEqual(view.stages, expected)
+
+        support = types.SimpleNamespace(kernel_package=None, local_users=[object()], root_password=None)
+        view = types.SimpleNamespace(support=support, stages=[])
+        namespace['setup_stages'](view)
+        self.assertEqual(view.stages[-1], ('Configure login accounts', 'accounts'))
+
+    def test_run_login_accounts_use_shared_deploy_configuration_in_run_image(self):
+        from catalystlab.deploy_installation import DeployUser
+        script = qemu.stage_image_configure_accounts_script(
+            '/library/Temporary/TestVMImages/stage-run', 'root-secret',
+            [DeployUser('tester', 'user-secret', groups=['users']),
+             DeployUser('tester2', 'other-secret', groups=['wheel'])])
+
+        self.assertIn("ROOT=/library/Temporary/TestVMImages/stage-run/rootfs", script)
+        self.assertIn('mount --types proc /proc "$ROOT/proc"', script)
+        self.assertIn('mount --rbind /dev "$ROOT/dev"', script)
+        self.assertIn("in_root useradd", script)
+        self.assertIn("tester:user-secret", script)
+        self.assertIn("tester2:other-secret", script)
+        self.assertIn("root:root-secret", script)
+        self.assertIn("Verified login account tester", script)
+        self.assertIn("Verified root password", script)
+        self.assertNotIn('/Cache/', script)
+
+    def test_qemu_copies_cached_base_before_configuring_run_accounts(self):
+        support = qemu.QemuSupport(qemu.QemuBuildKind.STAGE, qemu._MACHINES['arm64'],
+                                   kernel='Image', backend='qemu',
+                                   local_users=[object()], image_directory='/temporary/run')
+        process = types.SimpleNamespace(support=support)
+        step = object.__new__(qemu._StepImage)
+        step.multistage_process = process
+        step.log = Mock()
+        step.processes = []
+        step._cancel_event = threading.Event()
+        step._cache_directory = lambda: ('/cache/base', 8 << 30)
+
+        with patch.object(qemu, 'copy_stage_base_image', return_value=True) as copy:
+            step._prepare_writable_image()
+
+        copy.assert_called_once_with('/cache/base', '/temporary/run', 'Image', None, [], step._cancel_event)
+        self.assertIsNone(support.base_image_path)
 
     def test_kernel_stage_config_mount_does_not_include_merged_portage_mount(self):
         source = (ROOT / 'src/objects/qemu/qemu_run.py').read_text()
@@ -110,16 +153,15 @@ class QemuRunTests(unittest.TestCase):
 
     def test_custom_kernel_cache_resolves_tilde_in_library_location(self):
         settings = types.SimpleNamespace(cache_location='~/CatalystLab/Cache')
-        build = types.SimpleNamespace(id='build-one', artifact_path='/missing/stage.tar.xz')
         snapshot = types.SimpleNamespace(filename='gentoo.sqfs', file_path=lambda: '/missing/gentoo.sqfs')
         with patch.object(repository.Repository, 'Settings', types.SimpleNamespace(value=settings), create=True):
-            cache = qemu._kernel_output_cache_directory(build, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [])
+            cache = qemu._kernel_output_cache_directory(
+                None, None, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [])
 
         self.assertTrue(Path(cache).is_absolute())
         self.assertEqual(Path(cache).parts[-2], 'TestVMKernels')
 
     def test_custom_kernel_cache_is_separate_for_each_toolset(self):
-        build = types.SimpleNamespace(id='build-one', artifact_path='/missing/stage.tar.xz')
         snapshot = types.SimpleNamespace(filename='gentoo.sqfs', file_path=lambda: '/missing/gentoo.sqfs')
         first = types.SimpleNamespace(uuid='first')
         second = types.SimpleNamespace(uuid='second')
@@ -128,11 +170,68 @@ class QemuRunTests(unittest.TestCase):
                           types.SimpleNamespace(value=types.SimpleNamespace(cache_location='~/CatalystLab/Cache')),
                           create=True):
             first_cache = qemu._kernel_output_cache_directory(
-                build, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [], first)
+                None, None, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [], first)
             second_cache = qemu._kernel_output_cache_directory(
-                build, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [], second)
+                None, None, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [], second)
 
         self.assertNotEqual(first_cache, second_cache)
+
+    def test_custom_kernel_cache_is_shared_by_stages_with_identical_inputs(self):
+        from catalystlab.project_stage_portage_confdir import StagePortageConfdirSource
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = types.SimpleNamespace(cache_location=temporary)
+            project = types.SimpleNamespace(stage_directory_path=lambda name: os.path.join(temporary, name))
+            first_stage = types.SimpleNamespace(id='stage-a', name='stage-a', pkgcache_path=None,
+                                                portage_confdir=[StagePortageConfdirSource.STAGE_OVERLAY])
+            second_stage = types.SimpleNamespace(id='stage-b', name='stage-b', pkgcache_path=None,
+                                                 portage_confdir=[StagePortageConfdirSource.STAGE_OVERLAY])
+            first_config = Path(temporary, 'stage-a', 'portage', 'package.use')
+            second_config = Path(temporary, 'stage-b', 'portage', 'package.use')
+            first_config.mkdir(parents=True)
+            second_config.mkdir(parents=True)
+            first_config.joinpath('kernel').write_text('sys-kernel/gentoo-kernel dracut')
+            second_config.joinpath('kernel').write_text('sys-kernel/gentoo-kernel dracut')
+            snapshot = types.SimpleNamespace(filename='gentoo.sqfs', file_path=lambda: '/missing/gentoo.sqfs')
+
+            with patch.object(repository.Repository, 'Settings', types.SimpleNamespace(value=settings), create=True):
+                first_cache = qemu._kernel_output_cache_directory(
+                    project, first_stage, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [])
+                second_cache = qemu._kernel_output_cache_directory(
+                    project, second_stage, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [])
+                second_config.joinpath('kernel').write_text('sys-kernel/gentoo-kernel')
+                changed_cache = qemu._kernel_output_cache_directory(
+                    project, second_stage, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [])
+
+            self.assertEqual(first_cache, second_cache)
+            self.assertNotEqual(first_cache, changed_cache)
+
+    def test_custom_kernel_cache_tracks_only_matching_binary_package_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = types.SimpleNamespace(cache_location=temporary)
+            package_cache = Path(temporary, 'packages')
+            package_cache.mkdir()
+            index = package_cache / 'Packages'
+            index.write_text(
+                'CPV: sys-kernel/gentoo-kernel-6.12.8\nMD5: kernel-one\n\n'
+                'CPV: app-editors/vim-9.1\nMD5: unrelated-one\n\n')
+            stage = types.SimpleNamespace(pkgcache_path=str(package_cache), portage_confdir=None)
+            snapshot = types.SimpleNamespace(filename='gentoo.sqfs', file_path=lambda: '/missing/gentoo.sqfs')
+            with patch.object(repository.Repository, 'Settings', types.SimpleNamespace(value=settings), create=True):
+                original = qemu._kernel_output_cache_directory(
+                    None, stage, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [])
+                index.write_text(
+                    'CPV: sys-kernel/gentoo-kernel-6.12.8\nMD5: kernel-one\n\n'
+                    'CPV: app-editors/vim-9.1\nMD5: unrelated-two\n\n')
+                unrelated_change = qemu._kernel_output_cache_directory(
+                    None, stage, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [])
+                index.write_text(
+                    'CPV: sys-kernel/gentoo-kernel-6.12.8\nMD5: kernel-two\n\n'
+                    'CPV: app-editors/vim-9.1\nMD5: unrelated-two\n\n')
+                kernel_change = qemu._kernel_output_cache_directory(
+                    None, stage, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [])
+
+            self.assertEqual(original, unrelated_change)
+            self.assertNotEqual(original, kernel_change)
 
     def test_stage_image_workspace_is_created_and_cleaned_in_library_temporary(self):
         with tempfile.TemporaryDirectory() as temporary:

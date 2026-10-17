@@ -192,6 +192,8 @@ catalystlab_sources = [
   'ui/build_machine/build_machine_create_view.py',
   'ui/build_machine/build_machine_details_view.py',
   'ui/deploy/deploy_create_view.py',
+  'ui/user_row.py',
+  'ui/kernel_package_row.py',
   'ui/deploy/disk_selection.py',
   'ui/deploy/live_iso_deploy_view.py',
   'ui/qemu/vnc_view.py',

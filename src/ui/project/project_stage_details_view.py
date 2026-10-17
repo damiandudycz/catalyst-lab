@@ -12,7 +12,7 @@ from .project_stage_arguments import (
     visible_stage_argument_options,
 )
 from .cl_toggle_group import CLToggle, CLToggleGroup
-from .combo_row_popup import fit_popup_to_items
+from .kernel_package_row import KernelPackageRow
 from .project_manager import ProjectManager
 from .git_directory import GitDirectoryEvent
 from .repository_list_view import ItemRow
@@ -1464,7 +1464,7 @@ class StageKernelRow(Adw.ExpanderRow):
         for setting in KERNEL_SETTINGS:
             match setting.type:
                 case _ if setting.key == "sources":
-                    row = KernelPackageRow(setting, on_select=self._on_package_selected)
+                    row = KernelPackageRow(setting.title, on_select=self._on_package_selected)
                 case KernelSettingType.BOOLEAN:
                     row = Adw.SwitchRow(title=GLib.markup_escape_text(setting.title))
                     row.connect("notify::active", self._on_switch_toggled, setting)
@@ -1598,89 +1598,6 @@ class StageKernelRow(Adw.ExpanderRow):
         if value is None:
             return ""
         return " ".join(str(item) for item in value) if isinstance(value, list) else str(value)
-
-class KernelPackageRow(Adw.ComboRow):
-    """Package of kernel, chosen in popup from kernels of snapshot and overlays of stage which catalyst can build (with
-    package of releng template), or typed in entry shown under it when Custom package is chosen (eg. with version).
-    Packages are given by kernel row when they are read."""
-
-    _CUSTOM = object() # Option of custom package.
-    _NOT_SET = object() # Option shown when package isn't set (catalyst uses its default).
-
-    def __init__(self, setting, on_select):
-        super().__init__(title=GLib.markup_escape_text(setting.title), enable_search=True)
-        fit_popup_to_items(self)
-        self.on_select = on_select
-        self.packages = None
-        self.own = None
-        self.inherited = None
-        self.options = []
-        self._building = False
-        self._custom_chosen = False # Custom option chosen, entry is shown before package is typed.
-        self.custom_row = Adw.EntryRow(title="Custom package, eg. =sys-kernel/gentoo-kernel-6.12.8", show_apply_button=True, visible=False)
-        self.custom_row.connect("apply", self._on_custom_apply)
-        self.connect("notify::selected", self._on_selected)
-
-    def set_packages(self, packages):
-        self.packages = [package for package in packages if package.supported]
-        self._build()
-
-    def load(self, own, inherited):
-        self.own, self.inherited = own, inherited
-        self._build()
-
-    def _build(self):
-        """Options of popup and selected one, rebuilt only when they change (popup and page don't move)."""
-        known = {package.atom: package for package in self.packages or []}
-        options = []
-        if self.inherited:
-            options.append((None, f"From releng spec: {self.inherited}"))
-        elif not self.own:
-            options.append((self._NOT_SET, "Not set (catalyst default)"))
-        for atom, package in known.items():
-            overlays = [repository for repository in package.repositories if repository != "gentoo"]
-            options.append((atom, f"{atom} ({', '.join(overlays)})" if overlays else atom))
-        if self.packages is None and self.own and self.own not in known:
-            options.append((self.own, self.own)) # Until packages are read.
-        options.append((self._CUSTOM, "Custom package..."))
-        if self.own and self.own in known:
-            selected = self.own
-        elif self.own and self.packages is not None:
-            selected = self._CUSTOM
-        elif self.own:
-            selected = self.own
-        else:
-            selected = self._CUSTOM if self._custom_chosen else None if self.inherited else self._NOT_SET
-        self._building = True
-        if [label for _, label in options] != [label for _, label in self.options]:
-            self.options = options
-            self.set_model(Gtk.StringList.new([label for _, label in options]))
-        self.set_selected(next((index for index, (value, _) in enumerate(self.options) if value is selected or value == selected), 0))
-        self._building = False
-        custom = selected is self._CUSTOM
-        self.custom_row.set_visible(custom)
-        if custom and self.own and self.custom_row.get_text() != self.own:
-            self.custom_row.set_text(self.own)
-        package = known.get(self.own or self.inherited or "")
-        self.set_subtitle(GLib.markup_escape_text(
-            package.details if package else
-            "Custom package" if self.own else
-            "Catalyst uses sys-kernel/gentoo-kernel (distribution kernel) or sys-kernel/gentoo-sources" if not self.inherited else ""))
-
-    def _on_selected(self, row, _param):
-        if self._building or not 0 <= self.get_selected() < len(self.options):
-            return
-        value = self.options[self.get_selected()][0]
-        self._custom_chosen = value is self._CUSTOM
-        if value is self._CUSTOM:
-            self.custom_row.set_visible(True)
-            GLib.idle_add(lambda: self.custom_row.grab_focus() and False)
-        elif value is not self._NOT_SET:
-            GLib.idle_add(lambda: self.on_select(value, None) and False)
-
-    def _on_custom_apply(self, row):
-        if text := row.get_text().strip():
-            GLib.idle_add(lambda: self.on_select(text, None) and False)
 
 class KernelListRow(Adw.ExpanderRow):
     """List setting of kernel, edited one entry per line like list settings of stage. Empty list uses value of
