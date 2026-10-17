@@ -9,7 +9,7 @@ from .multistage_process import (
     MultiStageProcess, MultiStageProcessStage, MultiStageProcessStageState,
     MultiStageProcessEvent, MultiStageProcessState,
 )
-from .custom_kernel import KERNEL_OUTPUTS_MANIFEST, copy_kernel_outputs, is_arm64_linux_image
+from .custom_kernel import KERNEL_OUTPUTS_MANIFEST, copy_kernel_outputs
 
 # ------------------------------------------------------------------------------
 # Running builds in QEMU: live CD ISO images (booted by firmware of machine), and stages with generic kernel (stage
@@ -510,9 +510,9 @@ def stage_image_unmount_script(directory: str) -> str:
 def stage_image_add_modules_script(directory: str) -> str:
     """Install modules built with a custom kernel into the temporary VM root filesystem."""
     from .ssh_connection import quote
-    source = quote(os.path.join(directory, "custom-modules"))
+    source = quote(os.path.join(directory, "custom-modules.tar"))
     mount = quote(os.path.join(directory, "rootfs"))
-    return f"set -e\nmkdir -p {mount}/lib/modules\ncp -a --no-preserve=ownership {source}/. {mount}/lib/modules/\n"
+    return f"set -e\nmkdir -p {mount}/lib/modules\ntar -xf {source} -C {mount}/lib/modules/\n"
 
 # ------------------------------------------------------------------------------
 # Running machine.
@@ -837,7 +837,8 @@ def _kernel_output_cache_directory(build, architecture: str, package: str, snaps
     # they select the same kernel atom. Keep compiled outputs isolated by build identity.
     signature = [str(build.id), os.path.realpath(build.artifact_path or build.path),
                  architecture, package, snapshot.filename,
-                 str(getattr(toolset, "uuid", None) or getattr(toolset, "name", ""))]
+                 str(getattr(toolset, "uuid", None) or getattr(toolset, "name", "")),
+                 "raw-arm64-and-efi-zboot-image-v2"]
     for path in (build.artifact_path or build.path, snapshot.file_path()):
         try:
             stat = os.stat(path)
@@ -860,8 +861,7 @@ def _kernel_output_cache_directory(build, architecture: str, package: str, snaps
     return os.path.join(resolve_path(Repository.Settings.value.cache_location), "TestVMKernels", key)
 
 
-def _kernel_outputs_ready(directory: str, package: str, require_arm64_image: bool = False) -> bool:
-    modules = os.path.join(directory, "custom-modules")
+def _kernel_outputs_ready(directory: str, package: str) -> bool:
     try:
         kernel = os.path.join(directory, "custom-kernel")
         with open(os.path.join(directory, KERNEL_OUTPUTS_MANIFEST), encoding="utf-8") as manifest:
@@ -869,14 +869,10 @@ def _kernel_outputs_ready(directory: str, package: str, require_arm64_image: boo
         if package_name != package.strip() or not release or os.path.basename(release) != release:
             return False
         if (not os.path.isfile(kernel)
-                or (require_arm64_image and not is_arm64_linux_image(kernel))
                 or not os.path.isfile(os.path.join(directory, "custom-initramfs"))
-                or not os.path.isdir(modules)):
+                or not os.path.isfile(os.path.join(directory, "custom-modules.tar"))):
             return False
-        with os.scandir(modules) as entries:
-            module_trees = list(entries)
-        return (len(module_trees) == 1 and module_trees[0].name == release
-                and module_trees[0].is_dir(follow_symlinks=False))
+        return os.path.getsize(os.path.join(directory, "custom-modules.tar")) > 0
     except (OSError, ValueError):
         return False
 
@@ -1127,9 +1123,7 @@ class _StepImage(MultiStageProcessStage):
         cache_directory = _kernel_output_cache_directory(
             process.build, architecture.value if architecture else "unknown",
             process.support.kernel_package, snapshot, overlays, toolset)
-        require_arm64_image = (process.support.backend == "apple"
-                               and process.support.machine.binary == "qemu-system-aarch64")
-        if _kernel_outputs_ready(cache_directory, process.support.kernel_package, require_arm64_image):
+        if _kernel_outputs_ready(cache_directory, process.support.kernel_package):
             copy_kernel_outputs(cache_directory, directory)
             return
 
@@ -1211,8 +1205,7 @@ class _StepImage(MultiStageProcessStage):
             pkgdir_config = ('printf \'%s\\n\' \'PKGDIR="/var/cache/binpkgs"\' >> /etc/portage/make.conf; '
                              if use_binary_packages else "")
             command = ("set -e; " + portage_config_setup_command() + pkgdir_config
-                       + kernel_package_build_command(process.support.kernel_package, use_binary_packages,
-                                                      require_arm64_image))
+                       + kernel_package_build_command(process.support.kernel_package, use_binary_packages))
             response = []
             self._kernel_cancel_sent = False
             call = toolset.run_command(command=command, handler=self.log,
@@ -1228,7 +1221,7 @@ class _StepImage(MultiStageProcessStage):
                 output = call.get_output() if hasattr(call, "get_output") else getattr(call, "output", [])
                 details = "\n".join(output[-30:])
                 suffix = f":\n{details}" if details else ""
-                raise RuntimeError(f"Portage failed to emerge the custom kernel{suffix}")
+                raise RuntimeError(f"Custom kernel preparation failed{suffix}")
         finally:
             try:
                 if spawned:
@@ -1244,9 +1237,8 @@ class _StepImage(MultiStageProcessStage):
                     finally:
                         toolset.release()
                         shutil.rmtree(config_directory, ignore_errors=True)
-                        if not _kernel_outputs_ready(cache_directory, process.support.kernel_package,
-                                                     require_arm64_image):
+                        if not _kernel_outputs_ready(cache_directory, process.support.kernel_package):
                             shutil.rmtree(cache_directory, ignore_errors=True)
-        if not _kernel_outputs_ready(cache_directory, process.support.kernel_package, require_arm64_image):
+        if not _kernel_outputs_ready(cache_directory, process.support.kernel_package):
             raise RuntimeError("Kernel package did not produce reusable boot files")
         copy_kernel_outputs(cache_directory, directory)

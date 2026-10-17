@@ -343,6 +343,23 @@ class ExecutorTests(unittest.TestCase):
         self.assertIn('sudo umount -- /library/Temporary/Work/toolsets/mount_abc', script)
         self.assertIn('rmdir -- /library/Temporary/Work/toolsets/mount_abc', script)
 
+    def test_machine_squashfs_unmount_failure_reports_mounts_and_holders(self):
+        class MachineFakeExecutor(FakeExecutor):
+            is_machine = True
+
+        executor = MachineFakeExecutor(FakeProcess(output=('umount: target is busy',), code=1))
+        output = []
+        with self.assertRaisesRegex(RuntimeError, 'Failed to unmount read-only image'):
+            rootless.unmount_read_only_mount('/library/Temporary/Work/toolsets/mount_abc',
+                                             output.append, executor=executor)
+
+        script, namespace = executor.started[0]
+        self.assertFalse(namespace)
+        self.assertIn('umount_error=$(sudo umount --', script)
+        self.assertIn('findmnt --submounts --target', script)
+        self.assertIn('sudo fuser -vm --', script)
+        self.assertIn('Processes using the mount:', script)
+
     def test_machine_toolset_extraction_is_cached_in_ext4_and_mounted_read_only(self):
         class MachineFakeExecutor(FakeExecutor):
             is_machine = True

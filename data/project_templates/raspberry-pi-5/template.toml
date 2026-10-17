@@ -147,7 +147,6 @@ stage4_rm = ["/root/.bash_history"]
 [stages.arguments.boot_kernels.rpi]
 sources = "sys-kernel/raspberrypi-sources"
 config = "@STAGE_DIR@/kernel.config"
-gk_kernargs = "--kernname=rpi"
 
 [[stages]]
 id = "stage3-desktop"
@@ -176,7 +175,6 @@ stage4_rm = ["/root/.bash_history"]
 [stages.arguments.boot_kernels.rpi]
 sources = "sys-kernel/raspberrypi-sources"
 config = "@STAGE_DIR@/kernel.config"
-gk_kernargs = "--kernname=rpi"
 
 [[stages]]
 id = "stage4-gnome-extras"
@@ -208,7 +206,6 @@ stage4_rm = ["/root/.bash_history"]
 [stages.arguments.boot_kernels.rpi]
 sources = "sys-kernel/raspberrypi-sources"
 config = "@STAGE_DIR@/kernel.config"
-gk_kernargs = "--kernname=rpi"
 
 # Installation ISO (experimental): releng minimal installation CD (installcd specs) with its Raspberry Pi kernel
 # configured through Catalyst's boot/kernel settings and additional tools. Raspberry Pi firmware boots kernels from
@@ -238,7 +235,6 @@ livecd_rcadd = "{{ ['@releng'] + iso_services }}"
 [stages.arguments.boot_kernels.rpi]
 sources = "sys-kernel/raspberrypi-sources"
 config = "@STAGE_DIR@/kernel.config"
-gk_kernargs = "--kernname=rpi"
 
 # Live ISO with desktop (experimental): KDE Plasma live system like Gentoo LiveGUI (releng livegui specs), from
 # desktop stage3, with the same kernel as installation ISO.
@@ -275,7 +271,6 @@ livecd_empty = ["/var/db/repos", "/usr/src"]
 [stages.arguments.boot_kernels.rpi]
 sources = "sys-kernel/raspberrypi-sources"
 config = "@STAGE_DIR@/kernel.config"
-gk_kernargs = "--kernname=rpi"
 
 # CPU features and GPU of Raspberry Pi 5, inherited by all stages (parent overlay).
 [[files]]

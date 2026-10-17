@@ -15,31 +15,16 @@ def valid_kernel_package(value: str) -> bool:
 
 
 def copy_kernel_outputs(source: str, destination: str) -> None:
-    """Copy boot files and modules, preserving kernel-package symlinks.
+    """Copy boot files and the module archive into a VM workspace.
 
-    Kernel module trees commonly contain dangling ``build`` and ``source`` links
-    when exported from a disposable toolset. Following those links makes the
-    cache-to-temporary copy fail, even though the module files are usable.
+    The Library can live on a case-insensitive filesystem, while Linux module
+    trees contain filenames that differ only by case. Keep the tree archived
+    until it is extracted inside the VM's Linux filesystem.
     """
     os.makedirs(destination, exist_ok=True)
     shutil.copy2(os.path.join(source, "custom-kernel"), os.path.join(destination, "custom-kernel"))
     shutil.copy2(os.path.join(source, "custom-initramfs"), os.path.join(destination, "custom-initramfs"))
-    shutil.copytree(os.path.join(source, "custom-modules"), os.path.join(destination, "custom-modules"),
-                    dirs_exist_ok=True, symlinks=True)
-
-
-def is_arm64_linux_image(path: str) -> bool:
-    """Return whether path starts with the ARM64 Linux Image boot header.
-
-    Apple Virtualization's direct Linux loader needs the raw arm64 Image. EFI
-    executables such as Gentoo's ``vmlinuz.efi`` are PE files and are rejected.
-    """
-    try:
-        with open(path, "rb") as kernel:
-            kernel.seek(0x38)
-            return kernel.read(4) == b"ARM\x64"
-    except OSError:
-        return False
+    shutil.copy2(os.path.join(source, "custom-modules.tar"), os.path.join(destination, "custom-modules.tar"))
 
 
 def portage_config_setup_command() -> str:
@@ -51,22 +36,25 @@ def portage_config_setup_command() -> str:
             "cp -R /var/tmp/catalystlab-stage-portage/. /etc/portage/; ")
 
 
-def kernel_package_build_command(package: str, use_binary_packages: bool = False,
-                                 require_arm64_image: bool = False) -> str:
+def kernel_package_build_command(package: str, use_binary_packages: bool = False) -> str:
     """Emerge a kernel in the disposable toolset and export boot files and modules."""
     if not valid_kernel_package(package):
         raise ValueError("Enter a Portage package atom such as sys-kernel/gentoo-kernel")
     package = shlex.quote(package.strip())
     usepkg = " --usepkg" if use_binary_packages else ""
-    kernel_selection = '''kernel=$(find /boot -maxdepth 1 -type f -name 'Image*' -print | sort -V | tail -n 1)
-if [ -z "$kernel" ]; then
-    kernel=$(find /usr/src -type f -path '*/arch/arm64/boot/Image' -print 2>/dev/null | sort -V | tail -n 1)
+    kernel_selection = '''release=$(find /lib/modules -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -n 1)
+[ -n "$release" ] || { echo "Kernel package did not install modules"; exit 1; }
+kernel=""
+build_kernel="$release/build/arch/arm64/boot/Image"
+if [ -f "$build_kernel" ]; then
+    kernel="$build_kernel"
+    echo "Using raw ARM64 Linux Image from the matching kernel build tree: $kernel"
 fi
-[ -n "$kernel" ] || { echo "Apple Virtualization requires a raw ARM64 Image; this package only installed an EFI/PE kernel. Choose a source kernel package such as sys-kernel/gentoo-kernel instead of a -bin package."; exit 1; }
-'''
-    if not require_arm64_image:
-        kernel_selection = '''kernel=$(find /boot -maxdepth 1 -type f \\
+if [ -z "$kernel" ]; then
+    kernel=$(find /boot -maxdepth 1 -type f \\
     \\( -name 'vmlinuz*' -o -name 'vmlinux*' -o -name 'Image*' \\) -print | sort -V | tail -n 1)
+    [ -z "$kernel" ] || echo "No raw ARM64 Image found in the matching build tree; using /boot kernel: $kernel"
+fi
 '''
     return f'''set -e
 rm -f /var/tmp/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}
@@ -83,8 +71,6 @@ emerge --ask=n --oneshot --verbose{usepkg} {package}
 initramfs=$(find /boot -maxdepth 1 -type f \\
     \\( -name 'initramfs*' -o -name 'initrd*' \\) -print | sort -V | tail -n 1)
 [ -n "$kernel" ] || {{ echo "Kernel package did not install a supported image in /boot"; exit 1; }}
-release=$(find /lib/modules -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -n 1)
-[ -n "$release" ] || {{ echo "Kernel package did not install modules"; exit 1; }}
 if [ -z "$initramfs" ]; then
     echo "Kernel package did not install an initramfs; generating one with dracut"
     command -v dracut >/dev/null || emerge --ask=n --oneshot --verbose{usepkg} sys-kernel/dracut
@@ -93,10 +79,83 @@ if [ -z "$initramfs" ]; then
 else
     cp "$initramfs" /var/tmp/catalystlab-kernel-output/custom-initramfs
 fi
-cp "$kernel" /var/tmp/catalystlab-kernel-output/custom-kernel
-rm -rf /var/tmp/catalystlab-kernel-output/custom-modules
-mkdir -p /var/tmp/catalystlab-kernel-output/custom-modules
-cp -a "$release" /var/tmp/catalystlab-kernel-output/custom-modules/
+python3 - "$kernel" /var/tmp/catalystlab-kernel-output/custom-kernel <<'PY'
+import struct
+import subprocess
+import sys
+import zlib
+
+source, destination = sys.argv[1:]
+data = open(source, "rb").read()
+
+def is_arm64_image(image):
+    return len(image) >= 64 and image[56:60] == b"ARM\\x64"
+
+if is_arm64_image(data):
+    image = data
+else:
+    print("Extracting raw ARM64 Image from the EFI_ZBOOT kernel package")
+    # EFI_ZBOOT places the compressed Image in a PE section (usually .rodata).
+    # Read section bounds so bytes in the EFI stub are never mistaken for payload.
+    sections = []
+    try:
+        pe = struct.unpack_from("<I", data, 0x3c)[0]
+        if data[pe:pe + 4] == b"PE\\0\\0":
+            count = struct.unpack_from("<H", data, pe + 6)[0]
+            optional_size = struct.unpack_from("<H", data, pe + 20)[0]
+            table = pe + 24 + optional_size
+            for index in range(count):
+                offset = table + index * 40
+                size, start = struct.unpack_from("<II", data, offset + 16)
+                if size and start + size <= len(data):
+                    sections.append(data[start:start + size])
+    except (IndexError, struct.error):
+        pass
+    if not sections:
+        sections = [data]
+
+    image = None
+    for section in sections:
+        for magic, kind in ((b"\\x1f\\x8b\\x08", "gzip"),
+                            (b"\\x28\\xb5\\x2f\\xfd", "zstd")):
+            offset = 0
+            while True:
+                offset = section.find(magic, offset)
+                if offset < 0:
+                    break
+                payload = section[offset:]
+                try:
+                    if kind == "gzip":
+                        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                        candidate = decoder.decompress(payload)
+                        if not decoder.eof:
+                            raise ValueError("incomplete gzip stream")
+                    else:
+                        result = subprocess.run(["zstd", "-d", "-q", "-c"], input=payload,
+                                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                        candidate = result.stdout
+                    if is_arm64_image(candidate):
+                        image = candidate
+                        break
+                except (OSError, ValueError, zlib.error):
+                    pass
+                offset += len(magic)
+            if image is not None:
+                break
+        if image is not None:
+            break
+    if image is None:
+        raise SystemExit("Kernel image is neither a raw ARM64 Image nor a supported EFI_ZBOOT image")
+
+# The ARM64 header's image_size excludes any trailing package padding.
+size = struct.unpack_from("<Q", image, 16)[0]
+if 64 <= size <= len(image):
+    image = image[:size]
+with open(destination, "wb") as output:
+    output.write(image)
+PY
+rm -f /var/tmp/catalystlab-kernel-output/custom-modules.tar
+tar -cf /var/tmp/catalystlab-kernel-output/custom-modules.tar -C /lib/modules "$(basename "$release")"
 chmod a+r /var/tmp/catalystlab-kernel-output/custom-kernel /var/tmp/catalystlab-kernel-output/custom-initramfs
 printf '%s\\n' {package} "$(basename "$release")" > /var/tmp/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}
 echo "Prepared $(basename "$kernel") with initramfs and modules for $release"

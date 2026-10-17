@@ -77,6 +77,14 @@ class QemuRunTests(unittest.TestCase):
         self.assertIn('if mountpoint -q', script)
         self.assertIn('then umount', script)
 
+    def test_custom_modules_are_extracted_inside_linux_image_from_archive(self):
+        script = qemu.stage_image_add_modules_script('/temporary/image')
+
+        self.assertIn('/temporary/image/custom-modules.tar', script)
+        self.assertIn('tar -xf', script)
+        self.assertIn('/temporary/image/rootfs/lib/modules', script)
+        self.assertNotIn('cp -a', script)
+
     def test_kernel_build_lists_free_external_toolsets_after_project_toolset(self):
         from catalystlab.toolset import ToolsetEnv
         project_toolset = types.SimpleNamespace(busy_reason=None)

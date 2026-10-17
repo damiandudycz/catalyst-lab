@@ -506,7 +506,8 @@ class Toolset(Serializable):
         """Unmounts or deletes squashfs contents prepared by spawn, used when spawning fails."""
         if self.rootless:
             if (self.machine_cache_mounted or (self.squashfs_loop_mounted and self.machine)) and self.squashfs_binding_dir:
-                unmount_read_only_mount(self.squashfs_binding_dir, print, executor=self.executor)
+                mount_point = os.path.dirname(self.squashfs_binding_dir) if self.machine_cache_mounted else self.squashfs_binding_dir
+                unmount_read_only_mount(mount_point, print, executor=self.executor)
                 self.machine_cache_mounted = self.squashfs_loop_mounted = False
                 self.squashfs_binding_dir = None
                 return

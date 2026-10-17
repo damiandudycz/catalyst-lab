@@ -14,7 +14,6 @@ import sys
 from gi.repository import GLib
 
 from .qemu_run import QemuRun, QemuRunEvent, QemuBuildKind, QemuSupport, qemu_support
-from .custom_kernel import is_arm64_linux_image
 
 
 def apple_vm_library() -> str | None:
@@ -166,9 +165,6 @@ class AppleVirtualizationRun(QemuRun):
                 if not directory:
                     raise RuntimeError('Temporary VM image directory has not been allocated')
                 kernel_path = os.path.join(directory, self.support.boot_kernel)
-                if (self.support.kernel_package and self.support.machine.binary == 'qemu-system-aarch64'
-                        and not is_arm64_linux_image(kernel_path)):
-                    raise RuntimeError('Apple Virtualization needs a raw ARM64 Image kernel. Choose a source kernel package, such as sys-kernel/gentoo-kernel, instead of a -bin EFI kernel package.')
                 options.update(disk=os.path.join(directory, 'root.img'), kernel=kernel_path)
                 if self.support.boot_initramfs:
                     options['initramfs'] = os.path.join(directory, self.support.boot_initramfs)

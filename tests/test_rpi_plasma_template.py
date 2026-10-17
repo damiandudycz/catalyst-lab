@@ -42,7 +42,7 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
                     stage = stages[stage_id]
                     self.assertEqual(stage.arguments['boot_kernel'], ['rpi'])
                     self.assertEqual(stage.arguments['boot_kernels']['rpi']['sources'], 'sys-kernel/raspberrypi-sources')
-                    self.assertEqual(stage.arguments['boot_kernels']['rpi']['gk_kernargs'], '--kernname=rpi')
+                    self.assertNotIn('gk_kernargs', stage.arguments['boot_kernels']['rpi'])
                     packages = stages[stage_id].arguments['stage4_packages']
                     self.assertNotIn('sys-kernel/raspberrypi-image', packages)
                     self.assertNotIn('sys-kernel/raspberrypi-sources', packages)

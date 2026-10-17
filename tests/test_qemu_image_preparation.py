@@ -3,7 +3,6 @@ import sys
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if 'catalystlab' not in sys.modules:
@@ -21,11 +20,7 @@ class KernelOutputReadinessTests(unittest.TestCase):
         (self.output / "custom-kernel").write_bytes(b"kernel")
         (self.output / "custom-initramfs").write_bytes(b"initramfs")
         (self.output / qemu_run.KERNEL_OUTPUTS_MANIFEST).write_text("sys-kernel/gentoo-kernel\n6.18.57-gentoo\n")
-        modules = self.output / "custom-modules"
-        modules.mkdir()
-        release = modules / "6.18.57-gentoo"
-        release.mkdir()
-        (release / "module.ko").write_bytes(b"module")
+        (self.output / "custom-modules.tar").write_bytes(b"module archive")
 
     def tearDown(self):
         self.temporary_directory.cleanup()
@@ -37,8 +32,7 @@ class KernelOutputReadinessTests(unittest.TestCase):
         self.assertFalse(qemu_run._kernel_outputs_ready(str(self.output), "sys-kernel/other-kernel"))
 
     def test_modules_must_match_release_in_manifest(self):
-        modules = self.output / "custom-modules"
-        (modules / "6.18.57-gentoo").rename(modules / "other-release")
+        (self.output / "custom-modules.tar").unlink()
         self.assertFalse(qemu_run._kernel_outputs_ready(str(self.output), "sys-kernel/gentoo-kernel"))
 
     def test_missing_manifest_means_outputs_are_not_reusable(self):
@@ -49,11 +43,9 @@ class KernelOutputReadinessTests(unittest.TestCase):
         (self.output / "custom-initramfs").unlink()
         self.assertFalse(qemu_run._kernel_outputs_ready(str(self.output), "sys-kernel/gentoo-kernel"))
 
-    def test_arm64_kernel_is_required_only_when_requested(self):
-        with patch.object(qemu_run, "is_arm64_linux_image", return_value=False):
-            self.assertTrue(qemu_run._kernel_outputs_ready(str(self.output), "sys-kernel/gentoo-kernel"))
-            self.assertFalse(qemu_run._kernel_outputs_ready(str(self.output), "sys-kernel/gentoo-kernel",
-                                                           require_arm64_image=True))
+    def test_reusable_kernel_output_does_not_require_backend_specific_header(self):
+        (self.output / "custom-kernel").write_bytes(b"backend-neutral kernel output")
+        self.assertTrue(qemu_run._kernel_outputs_ready(str(self.output), "sys-kernel/gentoo-kernel"))
 
 
 if __name__ == "__main__":

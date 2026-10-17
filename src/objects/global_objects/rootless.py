@@ -538,11 +538,26 @@ def unmount_read_only_mount(mount_point: str, output_handler, process_holder: li
         raise RuntimeError("Direct SquashFS mounts are only supported in build machines")
     q = shlex.quote
     script = f"""
-set -euo pipefail
+set -uo pipefail
 if mountpoint -q {q(mount_point)}; then
-    sudo umount -- {q(mount_point)}
+    if ! umount_error=$(sudo umount -- {q(mount_point)} 2>&1); then
+        echo "Failed to unmount {q(mount_point)}: $umount_error"
+        echo "Mount and child-mount details:"
+        sudo findmnt --submounts --target {q(mount_point)} --output TARGET,SOURCE,FSTYPE,OPTIONS 2>&1 || true
+        if command -v fuser >/dev/null 2>&1; then
+            echo "Processes using the mount:"
+            sudo fuser -vm -- {q(mount_point)} 2>&1 || true
+        else
+            echo "fuser is unavailable; process-holder details were not collected"
+        fi
+        exit 1
+    fi
+else
+    echo "No mount remains at {q(mount_point)}"
 fi
-rmdir -- {q(mount_point)}
+if [ -d {q(mount_point)} ]; then
+    rmdir -- {q(mount_point)}
+fi
 """
     if not executor.run(script, output_handler, process_holder):
         raise RuntimeError(f"Failed to unmount read-only image at {mount_point}")

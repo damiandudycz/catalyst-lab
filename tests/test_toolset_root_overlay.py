@@ -36,7 +36,10 @@ class ToolsetRootOverlayTests(unittest.TestCase):
                 toolset.rootless = True
                 machine, executor = object(), Mock()
                 toolset.machine_id = uuid.uuid4()
-                toolset.squashfs_binding_dir = '/temporary/toolset'
+                toolset.squashfs_binding_dir = (
+                    '/temporary/cache/toolset.sqfs.d' if mounted_attribute == 'machine_cache_mounted'
+                    else '/temporary/toolset'
+                )
                 toolset.machine_cache_mounted = mounted_attribute == 'machine_cache_mounted'
                 toolset.squashfs_loop_mounted = mounted_attribute == 'squashfs_loop_mounted'
                 toolset.rootless_writable_copy = None
@@ -46,7 +49,11 @@ class ToolsetRootOverlayTests(unittest.TestCase):
                         patch('catalystlab.toolset.unmount_read_only_mount') as unmount:
                     toolset._release_squashfs_binding_dir()
 
-                unmount.assert_called_once_with('/temporary/toolset', print, executor=executor)
+                mount_point = (
+                    '/temporary/cache' if mounted_attribute == 'machine_cache_mounted'
+                    else '/temporary/toolset'
+                )
+                unmount.assert_called_once_with(mount_point, print, executor=executor)
                 self.assertFalse(toolset.machine_cache_mounted)
                 self.assertFalse(toolset.squashfs_loop_mounted)
                 self.assertIsNone(toolset.squashfs_binding_dir)

@@ -22,12 +22,11 @@ class PackagesSection(Gtk.Box):
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24, margin_start=24, margin_end=24, margin_bottom=24)
         scrolled_window.set_child(content)
         self.append(scrolled_window)
-        self.list_view = RepositoryListView()
-        for name, value in (("title", "Binary packages folders"), ("item_class_name", "PackagesDirectory"),
-                            ("add_button_title", "Add folder"), ("item_icon", "archive-minimalistic-svgrepo-com-symbolic"),
-                            ("item_title_property_name", "name"), ("item_subtitle_property_name", "short_details"),
-                            ("item_status_property_name", "status_indicator_values"), ("show_installations", False)):
-            self.list_view.set_property(name, value)
+        self.list_view = RepositoryListView(
+            title="Binary packages folders", item_class_name="PackagesDirectory", add_button_title="Add folder",
+            item_icon="archive-minimalistic-svgrepo-com-symbolic", item_title_property_name="name",
+            item_subtitle_property_name="short_details", item_status_property_name="status_indicator_values",
+            show_installations=False)
         self.list_view.connect("item-row-pressed", self._on_item_row_pressed)
         self.list_view.connect("add-new-item-pressed", self._on_add_pressed)
         content.append(self.list_view)
