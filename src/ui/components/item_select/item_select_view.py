@@ -73,7 +73,6 @@ class ItemSelectionView(Gtk.Box):
         self.items_list.set_title(GLib.markup_escape_text(self.title) if self.title else "")
         self.items_list.set_description(self.description or None)
         if self.item_class_name:
-            self.item_class = globals().get(self.item_class_name)
             self.repository = getattr(Repository, self.item_class_name)
             if hasattr(self, 'static_list'):
                 raise ValueError("Canno't use both static_list and item_class_name")

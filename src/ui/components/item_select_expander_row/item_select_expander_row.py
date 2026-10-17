@@ -50,7 +50,6 @@ class ItemSelectionExpanderRow(Adw.ExpanderRow):
     def on_realize(self, widget):
         self.set_title(self.title if self.title else "")
         if self.item_class_name:
-            self.item_class = globals().get(self.item_class_name)
             self.repository = getattr(Repository, self.item_class_name)
             if hasattr(self, 'static_list'):
                 raise ValueError("Canno't use both static_list and item_class_name")

@@ -1,6 +1,6 @@
 from gi.repository import Gtk, GObject, Adw
 from .repository import Repository, RepositoryEvent
-from .repositories import * # Needed to get all classes in Repositiries for self.item_class = globals().get(self.item_class_name)
+from . import repositories as _repositories  # Register repository types before resolving them by name.
 from .multistage_process import MultiStageProcess, MultiStageProcessEvent, MultiStageProcessState
 from .status_indicator import StatusIndicator
 from .event_bus import SharedEvent
@@ -52,7 +52,6 @@ class RepositoryListView(Gtk.Box):
         self.preference_group.set_title(self.title)
         self.add_item_container.set_visible(self.show_add_button)
         self.add_item_row.set_title(self.add_button_title)
-        self.item_class = globals().get(self.item_class_name)
         self.item_installation_class = globals().get(self.item_installation_class_name)
         self.repository = getattr(Repository, self.item_class_name)
         # Setup items entries
