@@ -1,15 +1,14 @@
 from __future__ import annotations
 import json, os
+from collections import deque
 from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessState, MultiStageProcessStageState
-from .project_build import project_builds_directory, stage_builds_directory, StageBuildStatus
+from .project_build import project_builds_directory, stage_builds_directory
 
 # ------------------------------------------------------------------------------
 # Record of build run (steps with their results), saved when run finishes, so its steps can be shown like build
 # progress later (also after app restart). Output of steps building stages is in build.log of their builds (only
 # reference is saved), other steps (eg. preparing toolset, getting snapshot) keep their output in record.
-# Runs made before records were saved are shown from builds of their stages.
 
-RECORD_FORMAT = 1
 _MAX_RECORDED_LINES = 2_000 # Output of other steps, last lines.
 _MAX_LOG_LINES = 5_000 # Shown lines of build.log, last lines (whole log is in build folder).
 
@@ -18,6 +17,13 @@ def build_records_directory(project_directory) -> str:
 
 def _record_path(project_directory, timestamp: str) -> str:
     return os.path.join(build_records_directory(project_directory), f"{timestamp}.json")
+
+def _read_build_record(project_directory, timestamp: str) -> dict | None:
+    try:
+        with open(_record_path(project_directory, timestamp), encoding="utf-8") as file:
+            return json.load(file)
+    except (OSError, ValueError):
+        return None
 
 def save_build_record(process):
     """Saves steps of build run (ProjectBuild). Saved while it runs too (when steps change), so runs interrupted by
@@ -34,10 +40,8 @@ def save_build_record(process):
             data["output"] = step.output_lines[-_MAX_RECORDED_LINES:]
         steps.append(data)
     stopped = getattr(process, "canceled", False)
-    from .multistage_process import MultiStageProcessState as State
-    status = "stopped" if stopped else "interrupted" if process.status == State.IN_PROGRESS else process.status.name.lower()
+    status = "stopped" if stopped else "interrupted" if process.status == MultiStageProcessState.IN_PROGRESS else process.status.name.lower()
     record = {
-        "format": RECORD_FORMAT,
         "timestamp": process.timestamp,
         "title": process.title,
         "status": status,
@@ -54,10 +58,8 @@ def save_build_record(process):
 def failed_steps(project_directory, timestamp: str) -> list[str]:
     """Names of failed steps of run that don't build stages (eg. seed download), stages depending on them were
     skipped. Empty for runs without record."""
-    try:
-        with open(_record_path(project_directory, timestamp), encoding="utf-8") as file:
-            record = json.load(file)
-    except (OSError, ValueError):
+    record = _read_build_record(project_directory, timestamp)
+    if record is None:
         return []
     return [step["name"] for step in record.get("steps", [])
             if "stage_name" not in step and step.get("state") == MultiStageProcessStageState.FAILED.name]
@@ -68,37 +70,24 @@ def delete_build_record(project_directory, timestamp: str):
     except OSError:
         pass
 
-def load_build_record(project_directory, timestamp: str, builds: list) -> RecordedBuild:
-    """Finished run with given timestamp, from its record, or from builds of its stages (runs without record)."""
+def load_build_record(project_directory, timestamp: str) -> RecordedBuild:
+    """Finished run with the given timestamp."""
     try:
-        with open(_record_path(project_directory, timestamp), encoding="utf-8") as file:
-            record = json.load(file)
+        record = _read_build_record(project_directory, timestamp)
+        if record is None:
+            raise ValueError("Build record is missing or invalid")
         steps = []
-        for data in record.get("steps", []):
+        for data in record["steps"]:
             output = data.get("output")
             if output is None:
                 stage_id = data.get("stage_id")
-                if stage_id is None:
-                    stage_id = next((str(build.stage_id) for build in builds
-                                     if build.timestamp == timestamp and build.stage_name == data.get("stage_name")), None)
                 output = _stage_log(project_directory, stage_id, timestamp) if data.get("started") and stage_id else []
-            steps.append((data["name"], data.get("description", ""), _step_state(data.get("state")), output, data.get("progress")))
-        return RecordedBuild(project_directory, record.get("title") or f"Building {project_directory.name}",
-                             record.get("status"), steps)
+            steps.append((data["name"], data["description"], _step_state(data["state"]), output, data["progress"]))
+        return RecordedBuild(project_directory, record["title"], record["status"], steps)
     except (OSError, ValueError, KeyError):
-        pass
-    ordered = sorted(builds, key=lambda build: (build.order is None, build.order or 0, build.date))
-    steps = []
-    for build in ordered:
-        started = build.status.is_attempt
-        state = (MultiStageProcessStageState.COMPLETED if build.status == StageBuildStatus.COMPLETED
-                 else MultiStageProcessStageState.FAILED if started else MultiStageProcessStageState.SCHEDULED)
-        output = _stage_log(project_directory, str(build.stage_id), timestamp) if started else []
-        steps.append((f"Build {build.stage_name}", "Builds stage with catalyst", state, output, None))
-    stopped = any(build.status in (StageBuildStatus.STOPPED, StageBuildStatus.CANCELED) for build in builds)
-    failed = any(step[2] == MultiStageProcessStageState.FAILED for step in steps)
-    status = "stopped" if stopped else "failed" if failed else "completed"
-    return RecordedBuild(project_directory, f"Building {project_directory.name}", status, steps)
+        return RecordedBuild(project_directory, f"Building {project_directory.name}", "failed",
+                             [("Run details unavailable", "No saved details are available for this run.",
+                               MultiStageProcessStageState.FAILED, [], None)])
 
 def _step_state(name: str | None) -> MultiStageProcessStageState:
     state = MultiStageProcessStageState.__members__.get(name or "", MultiStageProcessStageState.SCHEDULED)
@@ -112,12 +101,17 @@ def _stage_log(project_directory, stage_id: str | None, timestamp: str) -> list[
     path = os.path.join(stage_builds_directory(project_directory, uuid.UUID(stage_id)), timestamp, "build.log")
     try:
         with open(path, encoding="utf-8", errors="replace") as file:
-            lines = file.read().splitlines()
+            lines = deque(maxlen=_MAX_LOG_LINES)
+            line_count = 0
+            for line in file:
+                lines.append(line.rstrip("\r\n"))
+                line_count += 1
     except OSError:
         return ["Build log is not available."]
-    if len(lines) > _MAX_LOG_LINES:
-        return [f"… {len(lines) - _MAX_LOG_LINES} earlier lines are in {path}"] + lines[-_MAX_LOG_LINES:]
-    return lines
+    result = list(lines)
+    if line_count > _MAX_LOG_LINES:
+        return [f"… {line_count - _MAX_LOG_LINES} earlier lines are in {path}"] + result
+    return result
 
 class RecordedBuildStep(MultiStageProcessStage):
     """Step of finished build, with its saved result and output."""

@@ -71,11 +71,23 @@ esac
 
 # Keep the development launcher isolated from an installed Catalyst Lab instance.
 export CATALYSTLAB_APPLICATION_ID="com.damiandudycz.CatalystLab.Development"
+# Use this checkout's branch for official template checks and downloads.
+TEMPLATE_BRANCH=$(git -C "$ROOT" branch --show-current)
+if [ -n "$TEMPLATE_BRANCH" ]; then
+    export CATALYSTLAB_TEMPLATE_BRANCH="$TEMPLATE_BRANCH"
+fi
 
 BUILD="$WORK/build"
 PREFIX="$WORK/prefix"
 if [ ! -f "$BUILD/build.ninja" ]; then
     meson setup "$BUILD" "$ROOT" --prefix="$PREFIX"
+fi
+meson compile -C "$BUILD"
+# Meson installs changed files but leaves removed Python modules behind, and the
+# module scanner imports every file in this package. Keep the dev install in sync.
+PYTHON_PACKAGE="$PREFIX/share/catalystlab/catalystlab"
+if [ -d "$PYTHON_PACKAGE" ]; then
+    find "$PYTHON_PACKAGE" -type f -name '*.py' -delete
 fi
 meson install -C "$BUILD" --quiet
 

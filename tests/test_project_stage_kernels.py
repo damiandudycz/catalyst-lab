@@ -133,7 +133,8 @@ class KernelSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory, 'kernel.config')
             config.write_text('CONFIG_ISO9660_FS=m\n')
-            with patch.object(kernels, 'kernel_setting', side_effect=[('no', True), (str(config), True)]):
+            project.stage_directory_path = lambda **_: directory
+            with patch.object(kernels, 'kernel_setting', side_effect=[('no', True), ('@STAGE_DIR@/kernel.config', True)]):
                 self.assertIn('Media not found', kernels.live_cd_kernel_warning(project, stage, 'linux'))
         with patch.object(kernels, 'kernel_setting', return_value=('yes', True)):
             self.assertIsNone(kernels.live_cd_kernel_warning(project, stage, 'linux'))

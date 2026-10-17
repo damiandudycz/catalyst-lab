@@ -1,24 +1,15 @@
 from __future__ import annotations
-from gi.repository import Gtk, Adw, GLib
-from .multistage_process import MultiStageProcessState
+from gi.repository import Gtk, Adw
 from .project_installation import ProjectInstallation
-from .git_directory_create_config_view import GitDirectoryCreateConfigViewEvent
-from .git_directory_default_content_builder import DefaultDirContentBuilder
-from .git_installation import GitDirectorySetupConfiguration
-from .toolset_application import ToolsetApplication
-from .toolset import ToolsetEvents
+# Imported to register custom widgets referenced by this view's template.
 from .wizard_view import WizardView
+from .item_select_view import ItemSelectionView
 from .project_stage import stage_target_icon
-from .toolset import Toolset
-from .releng_directory import RelengDirectory
-from .snapshot import Snapshot
-from .project_stage import ProjectStage, load_catalyst_targets, load_releng_templates
+from .project_stage import load_catalyst_targets, load_releng_templates
 from .project_stage_installation import ProjectStageInstallation
 from .project_manager import ProjectManager
-from .item_select_view import ItemRow
 from .name_suggestion import unique_name
-from enum import Enum, auto
-import os, threading, uuid
+import os, uuid
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/project/project_stage_create_view.ui')
 class ProjectStageCreateView(Gtk.Box):

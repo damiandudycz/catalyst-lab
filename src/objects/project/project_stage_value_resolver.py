@@ -80,6 +80,19 @@ def parent_stage(project_directory, stage):
         return None
     return next((item for item in project_directory.stages if item.id == parent_id), None)
 
+def stage_argument_uses_option(project_directory, stage, argument_name: str,
+                               options: set[StageAutomaticOption], visited: frozenset = frozenset()) -> bool:
+    """Whether a stage argument uses one of the options, directly or through its parent stages."""
+    if stage is None or stage.id in visited:
+        return False
+    value = getattr(stage, argument_name, None)
+    if isinstance(value, list) and len(value) == 1:
+        value = value[0]
+    if value == StageAutomaticOption.INHERIT_FROM_PARENT:
+        return stage_argument_uses_option(
+            project_directory, parent_stage(project_directory, stage), argument_name, options, visited | {stage.id})
+    return value in options
+
 def _generate_source_subpath(project_directory, stage, visited: frozenset) -> str | None:
     """Output path of parent stage, as catalyst names it: rel_type/target-subarch-version_stamp."""
     parent = parent_stage(project_directory=project_directory, stage=stage)

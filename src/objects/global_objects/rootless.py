@@ -1,6 +1,6 @@
 from __future__ import annotations
-import base64, functools, json, os, re, shlex, shutil, signal, subprocess, tempfile, threading, time, uuid
-from .repository import Repository
+import base64, functools, json, os, re, shlex, shutil, signal, subprocess, tempfile, threading, uuid
+from .repository import Repository, resolve_path
 
 # ------------------------------------------------------------------------------
 # Working without root privileges.
@@ -18,8 +18,8 @@ from .repository import Repository
 MAPPED_IDS_COUNT = 65536
 MIN_BWRAP_VERSION = (0, 11, 0) # Toolset bindings use --overlay-src and --overlay.
 
-# Runs inner script (base64 in $1) in user namespace with mapped id range, in own mount, pid, uts and ipc namespaces.
-# Waits for mapping before starting it, as newuidmap is called from outside of namespace.
+# Runs the script at $1 in a user namespace with mapped ids and isolated mount, pid, uts and ipc namespaces. Waits for
+# uid/gid mapping before starting it because newuidmap is called from outside the namespace.
 _NAMESPACE_LAUNCHER = r'''
 set -u
 INNER=$(mktemp); FIFO=$(mktemp -u)
@@ -184,10 +184,10 @@ class LocalExecutor(Executor):
     """Runs commands on this computer."""
 
     def cache_directory(self) -> str:
-        return os.path.realpath(os.path.expanduser(Repository.Settings.value.cache_location))
+        return resolve_path(Repository.Settings.value.cache_location)
 
     def temporary_directory(self) -> str:
-        return os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
+        return resolve_path(Repository.Settings.value.temporary_location)
 
     def unsupported_reason(self) -> str | None:
         return rootless_unsupported_reason()
@@ -217,7 +217,7 @@ class MachineExecutor(Executor):
     # Reusable files are stored in the configured Library cache, which Lima shares at the same host path. Temporary
     # operation data remains in the machine's disposable working space.
     def cache_directory(self) -> str:
-        return os.path.realpath(os.path.expanduser(Repository.Settings.value.cache_location))
+        return resolve_path(Repository.Settings.value.cache_location)
 
     def temporary_directory(self) -> str:
         from .lima import MACHINE_DATA_DIRECTORY
@@ -238,6 +238,7 @@ for tool in unshare newuidmap newgidmap bwrap unsquashfs mksquashfs python3 moun
     command -v $tool > /dev/null || { echo "$tool is not installed in machine"; exit 1; }
 done
 grep -q "^$(id -un):" /etc/subuid || { echo "Machine user has no entries in /etc/subuid"; exit 1; }
+grep -q "^$(id -un):" /etc/subgid || { echo "Machine user has no entries in /etc/subgid"; exit 1; }
 unshare --user --map-root-user true || { echo "User namespaces are not available in machine"; exit 1; }
 echo "Machine is ready: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname -r), $(bwrap --version)"
 '''
@@ -261,7 +262,7 @@ echo "Machine is ready: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname 
         # "Message too long"). Put the script in the shared Library Temporary folder and pass only its short path.
         try:
             script_directory = os.path.join(
-                os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location)), "MachineCommands")
+                resolve_path(Repository.Settings.value.temporary_location), "MachineCommands")
             os.makedirs(script_directory, exist_ok=True)
             descriptor, script_path = tempfile.mkstemp(prefix=f"{token}-", suffix=".sh", dir=script_directory)
             with os.fdopen(descriptor, "w", encoding="utf-8") as file:
@@ -441,28 +442,24 @@ rmdir -- {q(mount_point)} 2>/dev/null || true
         raise RuntimeError(f"Failed to mount {os.path.basename(squashfs_path)} read-only")
     return mount_point
 
-def prepare_toolset_squashfs(squashfs_path: str, output_handler, process_holder: list | None = None,
-                             executor: Executor | None = None) -> tuple[str, bool]:
-    """Prepare a toolset lower layer, mounting it on build machines and extracting it locally if needed.
-
-    Stage builds create a writable OverlayFS upper layer over this read-only lower layer. Local rootless execution
-    cannot mount SquashFS, so it keeps using the extracted cache.
-    """
+def prepare_squashfs(squashfs_path: str, kind: str, check_path: str, output_handler,
+                     process_holder: list | None = None, executor: Executor | None = None) -> tuple[str, bool]:
+    """Prepare a read-only SquashFS lower layer: mount in a build machine, or use the extracted cache locally."""
     executor = executor or LOCAL_EXECUTOR
     if executor.is_machine:
-        return mount_squashfs_read_only(squashfs_path, output_handler, process_holder, executor), True
-    return extracted_squashfs(squashfs_path, "toolsets", output_handler, process_holder,
-                              check_path="bin/bash", executor=executor), False
+        return mount_squashfs_read_only(squashfs_path, output_handler, process_holder, executor, kind=kind), True
+    return extracted_squashfs(squashfs_path, kind, output_handler, process_holder,
+                              check_path=check_path, executor=executor), False
+
+def prepare_toolset_squashfs(squashfs_path: str, output_handler, process_holder: list | None = None,
+                             executor: Executor | None = None) -> tuple[str, bool]:
+    """Prepare a toolset layer; stage builds add a writable OverlayFS upper layer to it."""
+    return prepare_squashfs(squashfs_path, "toolsets", "bin/bash", output_handler, process_holder, executor)
 
 def prepare_snapshot_squashfs(squashfs_path: str, output_handler, process_holder: list | None = None,
                               executor: Executor | None = None) -> tuple[str, bool]:
-    """Prepare a read-only Gentoo repository layer, mounting on build machines and extracting locally if needed."""
-    executor = executor or LOCAL_EXECUTOR
-    if executor.is_machine:
-        return mount_squashfs_read_only(squashfs_path, output_handler, process_holder,
-                                        executor, kind="snapshots"), True
-    return extracted_squashfs(squashfs_path, "snapshots", output_handler, process_holder,
-                              check_path="profiles", executor=executor), False
+    """Prepare a Gentoo repository layer."""
+    return prepare_squashfs(squashfs_path, "snapshots", "profiles", output_handler, process_holder, executor)
 
 def unmount_squashfs(mount_point: str, output_handler, process_holder: list | None = None,
                      executor: Executor | None = None) -> None:
@@ -505,7 +502,6 @@ def remove_in_namespace(paths: list[str], output_handler, process_holder: list |
 # Cache/ToolsetStages         downloaded Gentoo stages used to create toolsets
 # Temporary/Sessions          builds and toolset environments
 # Temporary/Work              writable toolset copies, work directories and unfinished extractions
-# Temporary/Downloads         downloads of operations (this computer only)
 
 def extracted_directory(kind: str, executor: Executor | None = None) -> str:
     executor = executor or LOCAL_EXECUTOR
@@ -528,12 +524,6 @@ def sessions_directory(executor: Executor | None = None) -> str:
 
 def work_directory(executor: Executor | None = None) -> str:
     return os.path.join((executor or LOCAL_EXECUTOR).temporary_directory(), "Work")
-
-def downloads_directory() -> str:
-    """Downloads on this computer (shared with machines, which can use downloaded files)."""
-    path = os.path.join(LOCAL_EXECUTOR.temporary_directory(), "Downloads")
-    os.makedirs(path, exist_ok=True)
-    return path
 
 def clear_temporary_directory():
     """Removes data left in temporary directory of this computer by previous run of app (eg. after crash). Called

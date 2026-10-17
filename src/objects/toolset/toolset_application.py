@@ -1,7 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Tuple, ClassVar
-from pathlib import Path
 from collections import namedtuple
 from .architecture import Emulation
 from .root_helper_client import ServerCall
@@ -29,6 +28,31 @@ class ToolsetApplication:
 
 ToolsetApplicationSelection = namedtuple("ToolsetApplicationSelection", ["app", "version", "selected", "patches"])
 ToolsetApplicationInstall = namedtuple("ToolsetApplicationInstall", ["version", "variant", "patches"])
+
+def order_selected_applications(selections: list[ToolsetApplicationSelection] | None):
+    """Select required dependencies and put selected applications before their dependents."""
+    if selections is None:
+        return None
+    by_app = {id(selection.app): selection for selection in selections}
+    ordered, visited = [], set()
+    def add(app):
+        app_id = id(app)
+        if app_id in visited:
+            return
+        visited.add(app_id)
+        selection = by_app[app_id]
+        for dependency in app.dependencies:
+            dependency_id = id(dependency)
+            if dependency_id in by_app:
+                by_app[dependency_id] = by_app[dependency_id]._replace(selected=True)
+                add(dependency)
+        if selection.selected:
+            ordered.append(selection)
+
+    for selection in selections:
+        if selection.selected:
+            add(selection.app)
+    return ordered
 
 @dataclass(frozen=True)
 class PortageConfig:

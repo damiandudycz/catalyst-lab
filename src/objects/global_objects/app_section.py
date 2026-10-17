@@ -1,6 +1,5 @@
 import inspect
-import threading
-from typing import Type, ClassVar
+from typing import ClassVar, Type
 from dataclasses import dataclass
 from gi.repository import Adw
 
@@ -16,7 +15,6 @@ class AppSection:
 
     # Registry
     all_sections: ClassVar[list[Type]] = []
-    _lock: ClassVar[threading.Lock] = threading.Lock()
 
 def app_section(title: str, label: str | None = None, icon: str = "default-icon", show_in_side_bar: bool = True, show_side_bar: bool = True, order: int = 999_999_999):
     """app_section decorator."""
@@ -46,19 +44,10 @@ def app_section(title: str, label: str | None = None, icon: str = "default-icon"
         )
         cls.section_details = section
 
-        # Thread-safe update of registry
-        with AppSection._lock:
-            setattr(AppSection, cls.__name__, cls)
-            AppSection.all_sections.append(cls)
-            # Sort by order after appending
-            AppSection.all_sections.sort(key=lambda c: c.section_details.order)
+        setattr(AppSection, cls.__name__, cls)
+        AppSection.all_sections.append(cls)
+        AppSection.all_sections.sort(key=lambda item: item.section_details.order)
 
         return cls
     return decorator
-
-    # Dependencies example:
-    # AppSection.all_sections == [WelcomeSection, ...]
-    # AppSection.WelcomeSection == WelcomeSection
-    # WelcomeSection.section_details == AppSection
-    # WelcomeSection.section_details.cls = WelcomeSection
 

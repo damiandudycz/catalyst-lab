@@ -78,54 +78,9 @@ from catalyst.main import main
 main(sys.argv[1:])
 '''
 
-# Catalyst 4.1.1 calls Gemato's key refresh without forwarding Gentoo's configured keyserver, which makes GnuPG fail
-# with "No keyserver available" when WKD cannot update every key. That release also references GematoException and
-# asyncio in its error handler without importing them, masking the original failure with NameError. Keep signature
-# verification enabled, pass Gentoo's official keyserver, and repair the handler in this process only.
-CATALYST_SNAPSHOT_SCRIPT = '''import asyncio, importlib, subprocess, sys, time
-import gemato.exceptions, gemato.openpgp
-
-openpgp_environment = gemato.openpgp.OpenPGPEnvironment
-original_refresh_keys = openpgp_environment.refresh_keys
-def refresh_keys(self, allow_wkd=True, keyserver=None):
-    servers = [keyserver or "hkps://keys.gentoo.org", "hkps://keys.openpgp.org"]
-    for server in dict.fromkeys(servers):
-        for attempt in range(3):
-            try:
-                return original_refresh_keys(self, allow_wkd=allow_wkd and attempt == 0,
-                                             keyserver=server)
-            except gemato.exceptions.OpenPGPKeyRefreshError as error:
-                if attempt < 2:
-                    delay = 2 ** (attempt + 1)
-                    print(f"OpenPGP key refresh via {server} failed; retrying in {delay}s", file=sys.stderr)
-                    time.sleep(delay)
-                else:
-                    print(f"OpenPGP key refresh via {server} failed ({error})", file=sys.stderr)
-    print("WARNING: Gentoo OpenPGP keys could not be refreshed from either keyserver; "
-          "continuing with the bundled keyring, so revocation status may be out of date.", file=sys.stderr)
-    return None
-openpgp_environment.refresh_keys = refresh_keys
-
-snapshot_module = importlib.import_module("catalyst.targets.snapshot")
-snapshot_module.GematoException = gemato.exceptions.GematoException
-snapshot_module.asyncio = asyncio
-original_run = snapshot_module.subprocess.run
-def report_command_errors(*args, **kwargs):
-    try:
-        return original_run(*args, **kwargs)
-    except subprocess.CalledProcessError as error:
-        if error.stderr:
-            print(error.stderr, file=sys.stderr, end="" if error.stderr.endswith("\\n") else "\\n")
-        raise
-snapshot_module.subprocess.run = report_command_errors
-
-from catalyst.main import main
-main(["-s", "stable"])
-'''
-
 def catalyst_snapshot_command() -> str:
-    """Run Catalyst snapshot generation with a Gentoo keyserver and a working OpenPGP error handler."""
-    return f"python3 -c {shlex.quote(CATALYST_SNAPSHOT_SCRIPT)}"
+    """Generate a Gentoo snapshot using Catalyst's normal command."""
+    return "catalyst -s stable"
 
 def stage_build_session_script(executor, toolset_path: str, bindings: list[tuple[str, str]], command: str,
                                diagnostics_command: str | None = None, synced_caches: list[tuple[str, str]] | None = None,

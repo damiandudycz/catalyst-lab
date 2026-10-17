@@ -1,5 +1,6 @@
 from __future__ import annotations
 import socket, threading
+from .ssh_connection import _command_output
 from .root_function import root_function
 from .root_helper_client import RootHelperClient
 from .root_helper_server import ServerResponseStatusCode
@@ -70,10 +71,7 @@ class LocalDiskConnection:
 
     def output(self, script: str) -> str:
         """Output of script, raises when it fails."""
-        lines = []
-        if not self.run(script, lines.append):
-            raise RuntimeError(lines[-1] if lines else "Command failed")
-        return "\n".join(lines)
+        return _command_output(self.run, script, "Command failed")
 
     def stream_file(self, path: str, command: str, output_handler=print, progress_handler=None,
                     process_holder: list | None = None) -> bool:

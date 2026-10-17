@@ -10,6 +10,6 @@ class AppEvents(Enum):
     PUSH_SECTION = auto() # Like PUSH_VIEW but for pushing by AppSection enum. # Args: (section: AppSection)
     PRESENT_VIEW = auto() # Present as dialog over app window.
     PRESENT_SECTION = auto()
-    TOGGLE_SIDEBAR = auto
+    TOGGLE_SIDEBAR = auto()
 
 app_event_bus = EventBus[AppEvents]()

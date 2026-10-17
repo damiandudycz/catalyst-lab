@@ -91,16 +91,20 @@ class FilesystemOperationTests(unittest.TestCase):
 
 
 class ExecutorTests(unittest.TestCase):
-    def test_catalyst_snapshot_uses_gentoo_keyserver_and_repairs_upstream_error_handler(self):
-        command = project_build_rootless.catalyst_snapshot_command()
+    def test_interrupted_build_cache_changes_are_saved_before_sessions_are_removed(self):
+        executor = FakeExecutor()
+        with patch.object(project_build_rootless, 'sessions_directory', return_value='/library/Temporary/Sessions'):
+            saved = project_build_rootless.save_interrupted_caches(executor, lambda _line: None)
 
-        self.assertTrue(command.startswith('python3 -c '))
-        self.assertIn('hkps://keys.gentoo.org', command)
-        self.assertIn('hkps://keys.openpgp.org', command)
-        self.assertIn('for attempt in range(3)', command)
-        self.assertIn('snapshot_module.GematoException', command)
-        self.assertIn('snapshot_module.asyncio', command)
-        self.assertIn('main(["-s", "stable"])', command)
+        script, namespace = executor.started[0]
+        self.assertTrue(saved)
+        self.assertTrue(namespace)
+        self.assertIn('/library/Temporary/Sessions/build-*/caches/*/saved', script)
+        self.assertIn('save_cache_changes "$directory/upper" "$saved"', script)
+        self.assertIn('rm -rf --one-file-system /library/Temporary/Sessions/build-*', script)
+
+    def test_catalyst_snapshot_uses_the_normal_command_without_key_refresh_overrides(self):
+        self.assertEqual(project_build_rootless.catalyst_snapshot_command(), 'catalyst -s stable')
 
     def test_extracted_squashfs_stages_next_to_cache_for_same_filesystem_publish(self):
         executor = FakeExecutor()
@@ -162,7 +166,8 @@ class ExecutorTests(unittest.TestCase):
 
         self.assertEqual(path, '/workspace/toolsets/mount_abc')
         self.assertTrue(mounted)
-        mount.assert_called_once_with('/library/Toolsets/toolset.sqfs', unittest.mock.ANY, None, executor)
+        mount.assert_called_once_with('/library/Toolsets/toolset.sqfs', unittest.mock.ANY, None,
+                                      executor, kind='toolsets')
         extract.assert_not_called()
 
     def test_local_build_toolset_keeps_extracted_fallback(self):

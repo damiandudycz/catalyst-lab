@@ -1,5 +1,5 @@
 from __future__ import annotations
-from gi.repository import Gtk, GLib, Gio, Adw, GObject
+from gi.repository import Gtk, Adw, GObject
 from .multistage_process import MultiStageProcess, MultiStageProcessState
 from .multistage_process_execution_view import MultistageProcessExecutionView
 
@@ -46,7 +46,7 @@ class WizardView(Adw.Bin, Gtk.Buildable):
         self.welcome_page: Gtk.Widget = None
         # State:
         self.current_page = 0
-        self.pages: [Gtk.Widget] = []#[self.welcome_page] # More pages added later
+        self.pages: list[Gtk.Widget] = []
         self._all_pages: [Gtk.Widget] = [] # Also hidden pages, in order of adding (keeps them alive while hidden).
         # Signals:
         self.carousel.connect('page-changed', self.on_page_changed)

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Self, FrozenSet
+from typing import FrozenSet
 from dataclasses import dataclass
 from enum import Enum, auto
 from .project_stage_automatic_option import StageAutomaticOption

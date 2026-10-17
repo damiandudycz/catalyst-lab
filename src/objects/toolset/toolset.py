@@ -1,6 +1,5 @@
 from __future__ import annotations
-import os, uuid, shutil, threading, stat, re, json
-import re, copy
+import os, uuid, shutil, threading, re, json, copy
 from typing import final, Any
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -10,15 +9,13 @@ from .root_function import root_function, local_for_rootless_paths
 from .runtime_env import RuntimeEnv
 from .event_bus import EventBus, SharedEvent
 from .root_helper_server import ServerResponse, ServerResponseStatusCode
-from .hotfix_patching import HotFix, apply_patch_and_store_for_isolated_system
-from .repository import Serializable, Repository
+from .repository import Serializable, Repository, resolve_path
 from .toolset_application import ToolsetApplication, ToolsetApplicationInstall
 from .helper_functions import create_temp_workdir, delete_temp_workdir, mount_squashfs, umount_squashfs, create_squashfs, loop_mount_squashfs, loop_umount_squashfs
-from .status_indicator import StatusIndicatorState, StatusIndicatorValues, StatusDetail, item_status
 from .rootless import (
     rootless_toolset_unsupported_reason, run_in_namespace, extracted_squashfs, writable_squashfs_copy,
-    remove_in_namespace, squashfs_process, sessions_directory, executor_for_machine, LOCAL_EXECUTOR,
-    mount_squashfs_read_only, unmount_squashfs, _filesystem_operations
+    remove_in_namespace, squashfs_process, sessions_directory, executor_for_machine,
+    mount_squashfs_read_only, unmount_squashfs
 )
 
 class ToolsetEvents(Enum):
@@ -39,13 +36,8 @@ class Toolset(Serializable):
         self.machine_id = machine_id # Virtual machine where toolset runs, None for this computer.
         self.squashfs_binding_dir = squashfs_binding_dir # Directory used as toolset_root, mounted when setting up or spawning.
         self.squashfs_loop_mounted = False # squashfs_binding_dir is read only loop mount of squashfs file (not extracted copy).
-        match env:
-            case ToolsetEnv.SYSTEM:
-                pass
-            case ToolsetEnv.EXTERNAL:
-                pass
-            case _:
-                raise ValueError(f"Unknown env: {env}")
+        if not isinstance(env, ToolsetEnv):
+            raise ValueError(f"Unknown env: {env}")
         self.access_lock = threading.RLock()
         self.spawned = False # Spawned means that directories in /tmp are prepared to be used with bwrap.
         self.in_use = False # Is any bwrap instance currently running on this toolset.
@@ -55,7 +47,6 @@ class Toolset(Serializable):
         self.bind_options: list[str] | None = None # Binding options prepared in current spawn for bwrap command.
         self.current_bindings: list[BindMount] | None = None
         self.additional_bindings: list[BindMount] | None = None
-        self.hot_fixes: list[HotFix] | None = None
         self.work_dir: str | None = None
         # Rootless spawn runs bwrap in user namespace instead of root helper. Machine toolsets use a read-only
         # SquashFS mount; local rootless toolsets use an extracted copy. Writable copies are removed when unspawning.
@@ -81,6 +72,7 @@ class Toolset(Serializable):
     def status_indicator_values(self) -> StatusIndicatorValues:
         """Mounted (environment open, also with changes kept) is loaded. Missing file or virtual machine is error,
         missing Catalyst is warning (projects can't be built with toolset). Blinks while used by operation."""
+        from .status import StatusIndicatorState, StatusIndicatorValues, StatusDetail, item_status
         machine = self.machine
         details = []
         if not os.path.exists(self.file_path()):
@@ -109,14 +101,7 @@ class Toolset(Serializable):
             machine_id = uuid.UUID(data["machine_id"]) if data.get("machine_id") else None
         except KeyError:
             raise ValueError(f"Failed to parse {data}")
-        kwargs = {}
-        match env:
-            # Additional data only for given type (set as kwargs):
-            case ToolsetEnv.SYSTEM:
-                pass
-            case ToolsetEnv.EXTERNAL:
-                pass
-        return cls(env, uuid_value, name, metadata, None, machine_id=machine_id, **kwargs)
+        return cls(env, uuid_value, name, metadata, machine_id=machine_id)
 
     def serialize(self) -> dict:
         data = {
@@ -171,9 +156,6 @@ class Toolset(Serializable):
         """Create a Toolset with the EXTERNAL environment and a specified squashfs file."""
         return Toolset(ToolsetEnv.EXTERNAL, uuid.uuid4(), name)
 
-    def is_allowed_in_current_host() -> bool:
-        return self.env.is_running_in_gentoo_host()
-
     def toolset_root(self) -> str | None:
         match self.env:
             case ToolsetEnv.SYSTEM:
@@ -184,7 +166,7 @@ class Toolset(Serializable):
     # --------------------------------------------------------------------------
     # Spawning cycle:
 
-    def spawn(self, store_changes: bool = False, hot_fixes: list[HotFix] | None = None, additional_bindings: list[BindMount] | None = None):
+    def spawn(self, store_changes: bool = False, additional_bindings: list[BindMount] | None = None):
         """Prepare /tmp folders for bwrap calls. Toolsets of machines use working space of machine while spawned."""
         machine = self.machine
         if machine:
@@ -192,14 +174,14 @@ class Toolset(Serializable):
             machine.acquire_workspace(user=self._workspace_user)
             self._workspace_machine = machine
         try:
-            self._spawn(store_changes=store_changes, hot_fixes=hot_fixes, additional_bindings=additional_bindings)
+            self._spawn(store_changes=store_changes, additional_bindings=additional_bindings)
         finally:
             # Released by unspawn when spawning failed after toolset was spawned.
             if not self.spawned and getattr(self, "_workspace_machine", None):
                 self._workspace_machine.release_workspace(user=self._workspace_user)
                 self._workspace_machine = None
 
-    def _spawn(self, store_changes: bool = False, hot_fixes: list[HotFix] | None = None, additional_bindings: list[BindMount] | None = None):
+    def _spawn(self, store_changes: bool = False, additional_bindings: list[BindMount] | None = None):
         with self.access_lock:
             if not self.is_reserved:
                 raise RuntimeError(f"Please reserve before calling commands.")
@@ -211,8 +193,6 @@ class Toolset(Serializable):
             machine = self.machine
             if self.machine_id and machine is None:
                 raise RuntimeError("Virtual machine of toolset was removed")
-            if hot_fixes and machine:
-                raise RuntimeError("Hot fixes are not supported in virtual machines")
             # Toolsets of machines always run without root, in machine.
             self.rootless = machine is not None or (self.env == ToolsetEnv.EXTERNAL and rootless_toolset_unsupported_reason() is None)
             executor = self.executor
@@ -327,23 +307,12 @@ class Toolset(Serializable):
                 # Prepare work dirs:
                 fake_root = os.path.join(work_dir, "fake_root")
                 overlay_root = os.path.join(work_dir, "overlay")
-                hotfixes_workdir = os.path.join(work_dir, "hotfixes") # Stores patched files if needed
                 if machine:
                     make_directory(work_dir)
                 make_directory(fake_root)
                 make_directory(overlay_root)
                 for field in OverlayPaths._fields: # Creates upper and work subdirectories.
                     make_directory(os.path.join(overlay_root, field))
-                make_directory(hotfixes_workdir)
-
-                # Collect required hotfix patched files and add to bindings:
-                hotfix_patches = [fix.get_patch_spec for fix in (hot_fixes or [])]
-                for patch in hotfix_patches:
-                    patched_file_path = apply_patch_and_store_for_isolated_system(runtime_env, resolved_toolset_root, hotfixes_workdir, patch)
-                    if patched_file_path is not None:
-                        # Convert patch file to BindMount structure
-                        patched_file_binding = BindMount(mount_path=patch.source_path, host_path=patched_file_path, resolve_host_path=False)
-                        bindings.append(patched_file_binding)
 
                 # Name overlay entries using indexes to avoid overlaps.
                 mapping_index=0
@@ -447,7 +416,6 @@ class Toolset(Serializable):
                 raise error
 
             self.work_dir = work_dir
-            self.hot_fixes = hot_fixes
             self.current_bindings = bindings
             self.additional_bindings = additional_bindings
             self.store_changes = store_changes
@@ -551,7 +519,6 @@ class Toolset(Serializable):
                 self.squashfs_binding_dir = None
                 self.squashfs_loop_mounted = False
                 self.work_dir = None
-                self.hot_fixes = None
                 self.current_bindings = None
                 self.additional_bindings = None
                 self.store_changes = False
@@ -661,7 +628,7 @@ class Toolset(Serializable):
         """Performs various sanity checks on toolset and stores gathered results."""
         """Returns true if all checks succeeded, even if version is not found."""
         metadata_copy = copy.deepcopy(self.metadata) if self.metadata else {}
-        checks_succeded = True
+        checks_succeeded = True
         for app in ToolsetApplication.ALL:
             try:
                 self._perform_app_installed_version_check(app=app, metadata=metadata_copy)
@@ -673,9 +640,9 @@ class Toolset(Serializable):
             except Exception as e:
                 print(f"Error in additional checks: {e}")
                 checks_succeeded = False
-        if checks_succeded and save:
+        if checks_succeeded and save:
             self.replace_metadata(metadata_copy)
-        return metadata_copy if checks_succeded else None
+        return metadata_copy if checks_succeeded else None
 
     def replace_metadata(self, metadata: dict[str, Any] | None):
         """Updates whole metadata dictionary and emits event."""
@@ -776,13 +743,13 @@ class Toolset(Serializable):
 
     @staticmethod
     def directory_path_for_name(name: str) -> str:
-        return os.path.join(os.path.realpath(os.path.expanduser(Repository.Settings.value.toolsets_location)),
+        return os.path.join(resolve_path(Repository.Settings.value.toolsets_location),
                             Toolset.sanitized_name_for_name(name))
 
     @classmethod
     def load_all(cls):
         items = []
-        root = os.path.realpath(os.path.expanduser(Repository.Settings.value.toolsets_location))
+        root = resolve_path(Repository.Settings.value.toolsets_location)
         if not os.path.isdir(root):
             return items
         for entry in os.scandir(root):
@@ -792,7 +759,7 @@ class Toolset(Serializable):
             try:
                 with open(path, encoding="utf-8") as file:
                     items.append(cls.init_from(json.load(file)))
-            except (OSError, ValueError, json.JSONDecodeError) as error:
+            except (OSError, ValueError) as error:
                 if os.path.isfile(os.path.join(entry.path, "toolset.sqfs")):
                     print(f"Failed to load toolset metadata in {entry.path}: {error}")
         return items
@@ -906,14 +873,6 @@ def _start_toolset_command(work_dir: str, fake_root: str, bind_options: list[str
 class ToolsetEnv(Enum):
     SYSTEM   = auto() # Using tools from system, either through HOST or FLATPAK RuntimeEnv.
     EXTERNAL = auto() # Using tools from given .squashfs installation.
-
-    def is_allowed_in_current_host(self) -> bool:
-        """Can selected ToolsetEnv be used in current host. SYSTEM only allowed in gentoo, EXTERNAL allowed anywhere."""
-        match self:
-            case ToolsetEnv.SYSTEM:
-                return RuntimeEnv.is_running_in_gentoo_host()
-            case ToolsetEnv.EXTERNAL:
-                return True
 
 @root_function
 def write_metadata_to_json(toolset_root: str, metadata: dict[str, Any] | None):

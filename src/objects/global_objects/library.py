@@ -147,9 +147,7 @@ def _copy_library(source: str, destination: str, progress):
         if created:
             shutil.rmtree(destination, ignore_errors=True)
         else:
-            for name in os.listdir(destination):
-                path = os.path.join(destination, name)
-                shutil.rmtree(path, ignore_errors=True) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
+            _remove_hidden_files(destination)
         raise
 
 _CHUNK_SIZE = 8 * 1024 * 1024

@@ -41,6 +41,14 @@ class SnapshotCleanupTests(unittest.TestCase):
     def test_previous_build_and_import_do_not_retain_old_snapshots(self):
         self.assertEqual(self.manager.unused_snapshots(), [self.old, self.imported])
 
+    def test_refresh_reloads_snapshots_from_existing_library_folder(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(manager.Snapshot, 'base_location', return_value=directory), \
+                patch.object(manager.Snapshot, 'load_all', return_value=[self.latest]) as load_all:
+            self.manager.refresh()
+        load_all.assert_called_once_with()
+        self.assertEqual(self.repository.Snapshot.value, [self.latest])
+
     def test_running_operation_protects_snapshot_only_until_finished(self):
         process = types.SimpleNamespace(snapshot=self.old, status=MultiStageProcessState.IN_PROGRESS)
         MultiStageProcess.started_processes.append(process)

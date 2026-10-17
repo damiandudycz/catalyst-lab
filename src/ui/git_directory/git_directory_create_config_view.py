@@ -1,5 +1,5 @@
 from __future__ import annotations
-from gi.repository import Gtk, GLib, Gio, Adw, GObject
+from gi.repository import Gtk, GLib, Gio, GObject
 from enum import Enum, auto
 from .event_bus import EventBus
 from .git_installation import GitDirectorySetupConfiguration, GitDirectorySource
@@ -117,7 +117,7 @@ class GitDirectoryCreateConfigView(Gtk.Box):
         self.selected_source = sources[0]
         self.source_group.set_visible(len(sources) > 1)
         for index, source in enumerate(sources):
-            toggle = CLToggle(label=source.name())
+            toggle = CLToggle(label=source.display_name())
             toggle_group.add(toggle)
             if source == self.selected_source:
                 toggle_group.set_active(index)

@@ -20,11 +20,8 @@ class SnapshotManager:
         return cls._instance
 
     def refresh(self):
-        snapshots = Repository.Snapshot.value
-        snapshots_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.snapshots_location))
-        if not os.path.isdir(snapshots_location):
-            return
-        Repository.Snapshot.value = Repository.Snapshot._cls.load_all()
+        if os.path.isdir(Snapshot.base_location()):
+            Repository.Snapshot.value = Snapshot.load_all()
 
     def add_snapshot(self, snapshot: Snapshot):
         # Remove existing snapshot with the same filename

@@ -3,7 +3,7 @@ import os, json, uuid, shutil
 from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
-from .repository import Repository
+from .repository import Repository, resolve_path
 from .project_stage_arguments import StageArgumentDetails
 
 # ------------------------------------------------------------------------------
@@ -121,7 +121,7 @@ class StageBuild:
             os.rmdir(stage_directory)
 
 def builds_location() -> str:
-    return os.path.realpath(os.path.expanduser(Repository.Settings.value.builds_location))
+    return resolve_path(Repository.Settings.value.builds_location)
 
 def project_builds_directory(project_directory) -> str:
     return os.path.join(builds_location(), project_directory.id.hex)
@@ -164,17 +164,13 @@ class BuildRunResult(Enum):
     FAILED = "failed"   # Building of some stage failed.
     STOPPED = "stopped" # Canceled, or interrupted (app was closed).
 
-def last_build_run_result(project_directory, running_timestamp: str | None = None) -> BuildRunResult | None:
-    """Result of newest build run of project, None when project has no builds. Stages of run that is still running
-    (running_timestamp) are not interrupted."""
-    return last_build_run(project_directory, running_timestamp)[1]
-
 def last_build_run(project_directory, running_timestamp: str | None = None) -> tuple[str | None, BuildRunResult | None]:
     """Timestamp and result of newest build run of project, (None, None) when project has no builds."""
     builds = load_project_builds(project_directory)
     if not builds:
         return None, None
-    timestamp = max(builds, key=lambda build: build.date).timestamp
+    # load_project_builds already sorts newest first, so the first record is enough.
+    timestamp = builds[0].timestamp
     return timestamp, _build_run_result(builds, timestamp, running_timestamp)
 
 def _build_run_result(builds: list, timestamp: str, running_timestamp: str | None) -> BuildRunResult:
@@ -214,7 +210,8 @@ class StageBuildPlan:
 
     def __init__(self, project_directory, selected_stage_ids: set[uuid.UUID], builds: list[StageBuild] | None = None):
         self.project_directory = project_directory
-        self.builds = load_project_builds(project_directory) if builds is None else builds
+        self.builds = (load_project_builds(project_directory) if builds is None
+                       else sorted(builds, key=lambda build: build.date, reverse=True))
         self.entries: dict[uuid.UUID, StageBuildPlanEntry] = {
             stage.id: StageBuildPlanEntry(stage=stage, mode=StageBuildMode.BUILD if stage.id in selected_stage_ids else StageBuildMode.NONE)
             for stage in project_directory.stages

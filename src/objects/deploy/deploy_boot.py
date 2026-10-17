@@ -202,7 +202,6 @@ class StageContents:
 
     def _add_path(self, path: str, link_target: str | None = None):
         """Records what path of archive shows (bootloader, services, kernel, init system...)."""
-        contents = self
         if path in ("usr/sbin/sshd", "sbin/sshd", "usr/bin/sshd"):
             self.ssh_installed = True
         if re.fullmatch(r"etc/runlevels/[^/]+/sshd", path) and link_target != "/dev/null":
@@ -212,30 +211,30 @@ class StageContents:
         if path in ("sbin/init", "bin/init", "usr/sbin/init", "usr/bin/init") and link_target:
             target = link_target.rsplit("/", 1)[-1]
             if target in ("systemd", "openrc-init", "sysvinit", "busybox"):
-                contents.init = "systemd" if target == "systemd" else "openrc"
-                contents._init_from_link = True
+                self.init = "systemd" if target == "systemd" else "openrc"
+                self._init_from_link = True
         for bootloader, pattern in _BOOTLOADER_FILES.items():
             if pattern.match(path):
-                contents.bootloaders.add(bootloader)
+                self.bootloaders.add(bootloader)
         for service, pattern in NETWORK_SERVICE_FILES.items():
             if pattern.match(path):
-                contents.network_services.add(service)
-        if not contents.firmware and _FIRMWARE.match(path):
-            contents.firmware = True
-        if not contents.wpa_supplicant and WPA_SUPPLICANT_FILE.match(path):
-            contents.wpa_supplicant = True
+                self.network_services.add(service)
+        if not self.firmware and _FIRMWARE.match(path):
+            self.firmware = True
+        if not self.wpa_supplicant and WPA_SUPPLICANT_FILE.match(path):
+            self.wpa_supplicant = True
         if path.startswith("var/db/pkg/acct-group/") and (match := _ACCOUNT_GROUP.match(path)):
-            contents.account_groups.add(match.group(1))
-        if contents.firmware_conflict is None and (match := _FIRMWARE_CONFLICTS.match(path)):
-            contents.firmware_conflict = match.group(1)
+            self.account_groups.add(match.group(1))
+        if self.firmware_conflict is None and (match := _FIRMWARE_CONFLICTS.match(path)):
+            self.firmware_conflict = match.group(1)
         if _KERNEL.match(path):
-            contents.kernels.append(path.removeprefix("boot/"))
+            self.kernels.append(path.removeprefix("boot/"))
         elif _INITRAMFS.match(path):
-            contents.initramfs.append(path.removeprefix("boot/"))
-        elif path in ("sbin/openrc-run", "usr/sbin/openrc-run", "usr/bin/openrc-run") and contents.init is None:
-            contents.init = "openrc"
-        elif path in ("usr/lib/systemd/systemd", "lib/systemd/systemd") and not contents._init_from_link:
-            contents.init = "systemd"
+            self.initramfs.append(path.removeprefix("boot/"))
+        elif path in ("sbin/openrc-run", "usr/sbin/openrc-run", "usr/bin/openrc-run") and self.init is None:
+            self.init = "openrc"
+        elif path in ("usr/lib/systemd/systemd", "lib/systemd/systemd") and not self._init_from_link:
+            self.init = "systemd"
 
     @property
     def summary(self) -> str:

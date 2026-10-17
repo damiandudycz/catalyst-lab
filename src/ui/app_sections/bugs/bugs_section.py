@@ -176,15 +176,6 @@ class BugsSection(Gtk.Box):
     def _project_notes_path(cls, failure: PackageFailure, issue_key: str) -> str:
         return os.path.join(cls._project_notes_directory(failure), f"{issue_key}.json")
 
-    @staticmethod
-    def _legacy_project_notes_paths(failure: PackageFailure) -> list[str]:
-        from .repository import library_directory
-        project_id = f"{failure.project_directory.id}.json"
-        return [
-            os.path.join(BugsSection._project_notes_directory(failure), "notes.json"),
-            *(os.path.join(library_directory(), folder, project_id) for folder in ("BugsNotes", "Bugs")),
-        ]
-
     def _project_notes(self, failure: PackageFailure) -> dict[str, list[dict]]:
         project_key = str(failure.project_directory.id)
         if project_key not in self._issue_notes_cache:
@@ -193,7 +184,7 @@ class BugsSection(Gtk.Box):
             try:
                 with os.scandir(directory) as entries:
                     for entry in entries:
-                        if not entry.is_file(follow_symlinks=False) or not entry.name.endswith(".json") or entry.name == "notes.json":
+                        if not entry.is_file(follow_symlinks=False) or not entry.name.endswith(".json"):
                             continue
                         issue_key = entry.name[:-5]
                         try:
@@ -205,18 +196,11 @@ class BugsSection(Gtk.Box):
             except FileNotFoundError:
                 pass
             self._issue_notes_cache[project_key] = notes_by_issue
-            for migrate in (self._migrate_legacy_notes_file, self._migrate_project_metadata_notes):
-                try:
-                    migrate(failure)
-                except Exception as error:
-                    # A stale or malformed legacy note must not prevent current notes
-                    # and the issue page itself from being displayed.
-                    print(f"Failed to migrate legacy issue notes for {failure.atom}: {error}")
         return self._issue_notes_cache[project_key]
 
     @staticmethod
     def _validated_notes(data) -> dict[str, list[dict]]:
-        """Keep usable note records while ignoring malformed entries in old note files."""
+        """Keep well-formed issue notes and skip invalid records."""
         if not isinstance(data, dict):
             return {}
         result = {}
@@ -225,59 +209,11 @@ class BugsSection(Gtk.Box):
                 continue
             valid = []
             for note in notes:
-                if isinstance(note, str):
-                    valid.append({"id": str(uuid.uuid4()), "created_at": "", "text": note})
-                elif isinstance(note, dict) and isinstance(note.get("text"), str):
-                    valid.append({**note, "id": str(note.get("id") or uuid.uuid4()),
-                                  "created_at": str(note.get("created_at") or "")})
+                if (isinstance(note, dict) and isinstance(note.get("id"), str)
+                        and isinstance(note.get("created_at"), str) and isinstance(note.get("text"), str)):
+                    valid.append(note)
             result[key] = valid
         return result
-
-    def _migrate_legacy_notes_file(self, failure: PackageFailure):
-        current = self._issue_notes_cache[str(failure.project_directory.id)]
-        migrated_paths = []
-        for old_path in self._legacy_project_notes_paths(failure):
-            try:
-                with open(old_path, encoding="utf-8") as file:
-                    old_notes = json.load(file)
-            except FileNotFoundError:
-                continue
-            except (OSError, ValueError) as error:
-                print(f"Failed to read old issue notes from {old_path}: {error}")
-                continue
-            if not isinstance(old_notes, dict):
-                continue
-            for key, notes in self._validated_notes(old_notes).items():
-                existing = current.setdefault(key, [])
-                ids = {note.get("id") for note in existing if isinstance(note, dict)}
-                for note in notes:
-                    if isinstance(note, dict) and note.get("id") not in ids:
-                        existing.append(note)
-                        ids.add(note.get("id"))
-            migrated_paths.append(old_path)
-        if migrated_paths:
-            try:
-                self._write_project_notes(failure, current)
-                for old_path in migrated_paths:
-                    os.remove(old_path)
-            except OSError as error:
-                print(f"Failed to move issue notes into the project build directory: {error}")
-
-    def _migrate_project_metadata_notes(self, failure: PackageFailure):
-        """Move notes saved by earlier builds from project metadata into its build directory."""
-        metadata = failure.project_directory.initialize_metadata()
-        legacy = metadata.issue_notes or {}
-        if not legacy:
-            return
-        notes_by_issue = self._issue_notes_cache[str(failure.project_directory.id)]
-        for key, notes in self._validated_notes(legacy).items():
-            current = notes_by_issue.setdefault(key, [])
-            ids = {note.get("id") for note in current}
-            current.extend(note for note in notes if note.get("id") not in ids)
-        self._write_project_notes(failure, notes_by_issue)
-        metadata.issue_notes = None
-        from .repository import Repository
-        Repository.ProjectDirectory.save()
 
     def _write_project_notes(self, failure: PackageFailure, notes_by_issue: dict[str, list[dict]]):
         directory = self._project_notes_directory(failure)
@@ -292,12 +228,11 @@ class BugsSection(Gtk.Box):
                 file.write("\n")
             os.replace(temporary, path)
 
-        # Removing the last note for an issue removes only that issue's file.
-        # Leave the combined legacy file in place until its migration completes.
+        # Removing the last note for an issue removes its file.
         with os.scandir(directory) as entries:
             for entry in entries:
                 if (entry.is_file(follow_symlinks=False) and entry.name.endswith(".json")
-                        and entry.name != "notes.json" and entry.name[:-5] not in notes_by_issue):
+                        and entry.name[:-5] not in notes_by_issue):
                     os.remove(entry.path)
 
     def _issue_notes_button(self, failure: PackageFailure) -> Gtk.Button:
@@ -386,9 +321,7 @@ class BugsSection(Gtk.Box):
             print("Cannot open issue notes: content navigation view is unavailable")
             return
         try:
-            # Push first. Loading/migrating notes previously happened before the
-            # navigation call, so an I/O or metadata error could make the click
-            # appear to do nothing.
+            # Push before loading so an I/O error cannot make the click appear to do nothing.
             self.content_navigation_view.push_view(page, title=f"{failure.atom} notes")
         except Exception:
             traceback.print_exc()

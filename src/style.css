@@ -46,11 +46,14 @@
   border-bottom: 1px solid alpha(@accent_fg_color, 0.3);
 }
 
-/* Stage in project stages tree: opaque base under its translucent card, so node expanded while hovered covers other
-   nodes and lines. Radius of boxed lists. */
+/* Stage tree cards become opaque only while hovered over another node. */
 .stages-tree-node {
   background-color: var(--window-bg-color);
   border-radius: 12px;
+}
+.stages-tree-node > list.boxed-list > row.stage-tree-card-row:hover {
+  background-color: @card_bg_color;
+  background-image: none;
 }
 .stages-tree-node row.warning,
 .stages-tree-node row.warning image {

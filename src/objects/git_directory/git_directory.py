@@ -8,7 +8,6 @@ from enum import Enum, auto
 from datetime import datetime
 from .repository import Serializable
 from .event_bus import EventBus, SharedEvent
-from .status_indicator import StatusIndicatorState, StatusIndicatorValues, StatusDetail, item_status
 from abc import ABC, abstractmethod
 
 class GitDirectoryEvent(Enum):
@@ -30,6 +29,11 @@ _CONFLICT_STATUS_CODES = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
 class GitDirectory(Serializable, ABC):
 
     APP_METADATA_FILE = "catalystlab.json"
+
+    @staticmethod
+    def is_git_directory(directory: str) -> bool:
+        git_path = os.path.join(directory, ".git")
+        return os.path.isdir(directory) and (os.path.isdir(git_path) or os.path.isfile(git_path))
 
     @classmethod
     def _app_metadata_path(cls, directory: str) -> str:
@@ -54,9 +58,9 @@ class GitDirectory(Serializable, ABC):
                 path = cls._app_metadata_path(entry.path)
                 with open(path, encoding="utf-8") as file:
                     items.append(cls.init_from(json.load(file)))
-            except (OSError, ValueError, json.JSONDecodeError) as error:
+            except (OSError, ValueError) as error:
                 # Non-Git folders are not entries in these collections.
-                if os.path.isdir(os.path.join(entry.path, ".git")) or os.path.isfile(os.path.join(entry.path, ".git")):
+                if cls.is_git_directory(entry.path):
                     print(f"Failed to load {cls.__name__} metadata in {entry.path}: {error}")
         return items
 
@@ -130,10 +134,12 @@ class GitDirectory(Serializable, ABC):
     @property
     def status_indicator_values(self) -> StatusIndicatorValues:
         # TODO: Show updates available (has_remote_changes) too.
+        from .status import StatusIndicatorValues, item_status
         return item_status(self.status_details(), blinking=self.is_busy)
 
     def status_details(self) -> list[StatusDetail]:
         """States of directory (Git status, running operation)."""
+        from .status import StatusIndicatorState, StatusDetail
         match self.status:
             case GitDirectoryStatus.CHANGED:
                 detail = StatusDetail(StatusIndicatorState.CHANGED, "Not saved changes")
@@ -188,12 +194,13 @@ class GitDirectory(Serializable, ABC):
             return False
         self._status_update_id = GLib.timeout_add(300, update)
 
+    def _run_git(self, *args, **kwargs):
+        return subprocess.run(["git", *args], cwd=self.directory_path(), **kwargs)
+
     def update_status(self, wait: bool = False):
         def worker():
             directory = self.directory_path()
-            if not os.path.isdir(directory) or not os.path.isdir(
-                os.path.join(directory, ".git")
-            ):
+            if not self.is_git_directory(directory):
                 self.status = GitDirectoryStatus.ERROR
                 self.last_commit_date = None
                 self.branch_name = None
@@ -201,29 +208,18 @@ class GitDirectory(Serializable, ABC):
                 return
             try:
                 # Get git status porcelain
-                process = subprocess.Popen(
-                    ["git", "status", "--porcelain"],
-                    cwd=directory,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True
-                )
-                stdout, _ = process.communicate()
-                if process.returncode != 0:
+                result = self._run_git("status", "--porcelain", stdout=subprocess.PIPE,
+                                       stderr=subprocess.DEVNULL, text=True)
+                if result.returncode != 0:
                     self.status = GitDirectoryStatus.ERROR
-                elif any(line[:2] in _CONFLICT_STATUS_CODES for line in stdout.splitlines()):
+                elif any(line[:2] in _CONFLICT_STATUS_CODES for line in result.stdout.splitlines()):
                     self.status = GitDirectoryStatus.CONFLICTED
                 else:
-                    self.status = GitDirectoryStatus.CHANGED if stdout.strip() else GitDirectoryStatus.UNCHANGED
+                    self.status = GitDirectoryStatus.CHANGED if result.stdout.strip() else GitDirectoryStatus.UNCHANGED
                 # Get last commit date (ISO 8601)
-                process_date = subprocess.Popen(
-                    ["git", "log", "-1", "--format=%cI"],
-                    cwd=directory,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True
-                )
-                last_commit_date, _ = process_date.communicate()
+                result = self._run_git("log", "-1", "--format=%cI", stdout=subprocess.PIPE,
+                                       stderr=subprocess.DEVNULL, text=True)
+                last_commit_date = result.stdout
                 if last_commit_date:
                     self.last_commit_date = datetime.fromisoformat(
                         last_commit_date.strip()
@@ -231,52 +227,22 @@ class GitDirectory(Serializable, ABC):
                 else:
                     self.last_commit_date = None
                 # Get current branch name
-                process_branch = subprocess.Popen(
-                    ["git", "symbolic-ref", "--short", "HEAD"],
-                    cwd=directory,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True
-                )
-                branch_name, _ = process_branch.communicate()
-                self.branch_name = branch_name.strip() if process_branch.returncode == 0 else None
+                result = self._run_git("symbolic-ref", "--short", "HEAD", stdout=subprocess.PIPE,
+                                       stderr=subprocess.DEVNULL, text=True)
+                self.branch_name = result.stdout.strip() if result.returncode == 0 else None
                 # Get remote URL
-                process_remote = subprocess.Popen(
-                    ["git", "remote", "get-url", "origin"],
-                    cwd=directory,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True
-                )
-                remote_url, _ = process_remote.communicate()
-                self.remote_url = remote_url.strip() if process_remote.returncode == 0 else None
+                result = self._run_git("remote", "get-url", "origin", stdout=subprocess.PIPE,
+                                       stderr=subprocess.DEVNULL, text=True)
+                self.remote_url = result.stdout.strip() if result.returncode == 0 else None
                 # Check if there are remote changes
                 try:
-                    process_fetch = subprocess.Popen(
-                        ["git", "fetch"],
-                        cwd=directory,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
-                    )
-                    process_fetch.wait()
-                    if process_fetch.returncode != 0:
+                    fetch = self._run_git("fetch", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if fetch.returncode != 0:
                         raise RuntimeError("git fetch failed")
-                    process_diff = subprocess.Popen(
-                        [
-                            "git",
-                            "rev-list",
-                            "--count",
-                            "--left-only",
-                            "@{u}...HEAD"
-                        ],
-                        cwd=directory,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True
-                    )
-                    output, error = process_diff.communicate()
-                    if process_diff.returncode == 0:
-                        behind_count = int(output.strip())
+                    diff = self._run_git("rev-list", "--count", "--left-only", "@{u}...HEAD",
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    if diff.returncode == 0:
+                        behind_count = int(diff.stdout.strip())
                         self.has_remote_changes = behind_count > 0
                     else:
                         self.has_remote_changes = False
@@ -298,28 +264,16 @@ class GitDirectory(Serializable, ABC):
         def worker():
             directory = self.directory_path()
             logs = []
-            if not os.path.isdir(directory) or not os.path.isdir(
-                os.path.join(directory, ".git")
-            ):
+            if not self.is_git_directory(directory):
                 self.logs = []
                 self.event_bus.emit(GitDirectoryEvent.LOGS_CHANGED, self.logs)
                 return
             try:
                 # Use a custom format to make parsing easier
                 log_format = "%H%x1f%an%x1f%aI%x1f%s"
-                process = subprocess.Popen(
-                    [
-                        "git",
-                        "log",
-                        f"--format={log_format}"
-                    ],
-                    cwd=directory,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True
-                )
-                stdout, _ = process.communicate()
-                for line in stdout.strip().splitlines():
+                result = self._run_git("log", f"--format={log_format}", stdout=subprocess.PIPE,
+                                       stderr=subprocess.DEVNULL, text=True)
+                for line in result.stdout.strip().splitlines():
                     parts = line.strip().split('\x1f')
                     if len(parts) == 4:
                         commit_hash, author, date_str, message = parts
@@ -347,16 +301,8 @@ class GitDirectory(Serializable, ABC):
         def worker():
             with self.operation():
                 try:
-                    subprocess.run(
-                        ["git", "reset", "--hard"],
-                        cwd=self.directory_path(),
-                        check=True
-                    )
-                    subprocess.run(
-                        ["git", "clean", "-fdx"],
-                        cwd=self.directory_path(),
-                        check=True
-                    )
+                    self._run_git("reset", "--hard", check=True)
+                    self._run_git("clean", "-fdx", check=True)
                 except Exception as e:
                     print(f"DISCARD EXCEPTION: {e}")
                 finally:
@@ -376,19 +322,11 @@ class GitDirectory(Serializable, ABC):
         def worker():
             with self.operation():
                 try:
-                    subprocess.run(
-                        ["git", "add", "-A"],
-                        cwd=self.directory_path(),
-                        check=True
-                    )
+                    self._run_git("add", "-A", check=True)
                     # Nothing to commit when changes were reverted outside of app (status shown was outdated).
-                    staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=self.directory_path())
+                    staged = self._run_git("diff", "--cached", "--quiet")
                     if staged.returncode != 0:
-                        subprocess.run(
-                            ["git", "commit", "-m", message],
-                            cwd=self.directory_path(),
-                            check=True
-                        )
+                        self._run_git("commit", "-m", message, check=True)
                 except Exception as e:
                     print(f"COMMIT EXCEPTION: {e}")
                 finally:

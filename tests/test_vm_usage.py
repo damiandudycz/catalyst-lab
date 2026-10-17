@@ -12,7 +12,7 @@ class VMUsageTests(unittest.TestCase):
         tree = ast.parse(path.read_text())
         view = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'QemuRunView')
         methods = [n for n in view.body if isinstance(n, ast.FunctionDef) and n.name in ('_show_usage', '_clear_usage')]
-        namespace = dict(QemuBuildKind=types.SimpleNamespace(STAGE='stage'), _gib=lambda size: f'{size / 1024 ** 3:.1f} GiB')
+        namespace = dict(QemuBuildKind=types.SimpleNamespace(STAGE='stage'), format_gib=lambda size: f'{size / 1024 ** 3:.1f} GiB')
         module = ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0)] + methods, type_ignores=[])
         exec(compile(ast.fix_missing_locations(module), str(path), 'exec'), namespace)
         self.show = namespace['_show_usage']

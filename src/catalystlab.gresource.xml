@@ -2,8 +2,6 @@
 <gresources>
   <gresource prefix="/com/damiandudycz/CatalystLab">
     <file>style.css</file>
-    <file>patches/namespaces.patch</file>
-    <file>patches/default-resolv-conf.patch</file>
     <file>objects/root_helper/root_helper_server.py</file>
     <file preprocess="xml-stripblanks">gtk/help-overlay.ui</file>
     <file preprocess="xml-stripblanks">ui/app_sections/environments/environments_section.ui</file>

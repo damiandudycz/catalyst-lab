@@ -1,7 +1,7 @@
 from __future__ import annotations
 import base64, os, shlex, sys, uuid
 from datetime import datetime
-from .ssh_connection import quote
+from .ssh_connection import quote, _command_output
 from .deploy_system import init_system_script
 
 # ------------------------------------------------------------------------------
@@ -51,8 +51,8 @@ def initial_image_size(archive_size: int) -> int:
 
 def image_path(build) -> str:
     """Unique working image in the library Temporary folder."""
-    from .repository import Repository
-    temporary = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
+    from .repository import Repository, resolve_path
+    temporary = resolve_path(Repository.Settings.value.temporary_location)
     name = (build.stage_name or "image").replace("/", "_")
     return os.path.join(temporary, f"deploy-{uuid.uuid4().hex}", f"{name}-{datetime.now().strftime('%Y%m%dT%H%M%S')}.img")
 
@@ -104,10 +104,7 @@ class MachineRootConnection:
         return self._executor().run(command, output_handler, process_holder)
 
     def output(self, script: str) -> str:
-        lines = []
-        if not self.run(script, lines.append):
-            raise RuntimeError(lines[-1] if lines else "Command failed")
-        return "\n".join(lines)
+        return _command_output(self.run, script, "Command failed")
 
     def stream_file(self, path: str, command: str, output_handler=print, progress_handler=None,
                     process_holder: list | None = None) -> bool:

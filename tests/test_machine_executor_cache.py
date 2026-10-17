@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,17 @@ class MachineExecutorCacheTests(unittest.TestCase):
             self.assertEqual(executor.cache_directory(), configured_cache)
             self.assertEqual(extracted_directory('toolsets', executor),
                              '/var/lib/catalystlab/Temporary/Work/Extracted/Toolsets')
+
+    def test_machine_preflight_checks_both_subordinate_id_files(self):
+        machine = SimpleNamespace(status='running', STATUS_MISSING='missing', name='builder')
+        executor = MachineExecutor(machine)
+        scripts = []
+        with patch('catalystlab.lima.lima_unavailable_reason', return_value=None), \
+             patch.object(executor, 'run', side_effect=lambda script, _handler: scripts.append(script) or True):
+            self.assertIsNone(executor.toolset_unsupported_reason())
+        self.assertIn('/etc/subuid', scripts[0])
+        self.assertIn('/etc/subgid', scripts[0])
+        self.assertIn('Machine user has no entries in /etc/subgid', scripts[0])
 
 if __name__ == '__main__':
     unittest.main()

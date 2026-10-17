@@ -19,6 +19,16 @@ from catalystlab import repository
 
 
 class QemuRunTests(unittest.TestCase):
+    def test_custom_kernel_cache_resolves_tilde_in_library_location(self):
+        settings = types.SimpleNamespace(cache_location='~/CatalystLab/Cache')
+        build = types.SimpleNamespace(id='build-one', artifact_path='/missing/stage.tar.xz')
+        snapshot = types.SimpleNamespace(filename='gentoo.sqfs', file_path=lambda: '/missing/gentoo.sqfs')
+        with patch.object(repository.Repository, 'Settings', types.SimpleNamespace(value=settings), create=True):
+            cache = qemu._kernel_output_cache_directory(build, 'arm64', 'sys-kernel/gentoo-kernel', snapshot, [])
+
+        self.assertTrue(Path(cache).is_absolute())
+        self.assertEqual(Path(cache).parts[-2], 'TestVMKernels')
+
     def test_stage_image_workspace_is_created_and_cleaned_in_library_temporary(self):
         with tempfile.TemporaryDirectory() as temporary:
             settings = types.SimpleNamespace(temporary_location=temporary)
@@ -87,7 +97,8 @@ class QemuRunTests(unittest.TestCase):
 
     def make_run(self, kind=qemu.QemuBuildKind.STAGE, architecture='arm64', kernel='Image', initramfs='initramfs'):
         machine = qemu._MACHINES[architecture]
-        support = qemu.QemuSupport(kind, machine, kernel=kernel, initramfs=initramfs)
+        support = qemu.QemuSupport(kind, machine, kernel=kernel, initramfs=initramfs,
+                                   image_directory='/cache/TestVM/stage')
         build = types.SimpleNamespace(id='build', stage_name='stage4', artifact_path='/build/stage.tar.xz', path='/build')
         with patch.object(qemu, '_free_port', return_value=2222):
             run = qemu.QemuRun(types.SimpleNamespace(id='project'), build, support, memory_mib=8192, cpus=6)
@@ -99,7 +110,6 @@ class QemuRunTests(unittest.TestCase):
         run = self.make_run()
         with patch.object(qemu, 'qemu_binary', side_effect=lambda name: '/qemu/' + name), \
              patch.object(qemu, '_firmware_path', return_value='/firmware/uefi.fd'), \
-             patch.object(qemu, 'stage_image_directory', return_value='/cache/TestVM/stage'), \
              patch.object(qemu, 'accelerated', return_value=None):
             command = run.command()
         self.assertIn('-m', command)
@@ -122,7 +132,6 @@ class QemuRunTests(unittest.TestCase):
         run.support.base_initramfs_path = '/library/Cache/TestVMImages/build/initramfs'
         with patch.object(qemu, 'qemu_binary', side_effect=lambda name: '/qemu/' + name), \
              patch.object(qemu, '_firmware_path', return_value='/firmware/uefi.fd'), \
-             patch.object(qemu, 'stage_image_directory', return_value='/library/Temporary/run'), \
              patch.object(qemu, 'accelerated', return_value=None):
             command = run.command()
         self.assertEqual(command[command.index('-kernel') + 1], run.support.base_kernel_path)
@@ -137,8 +146,7 @@ class QemuRunTests(unittest.TestCase):
                                        initramfs='initramfs', backend='qemu', image_directory=temporary,
                                        base_image_path=str(image), base_kernel_path=str(kernel),
                                        base_initramfs_path=str(initramfs))
-            build = types.SimpleNamespace(id='build', artifact_path='/build/stage.tar.xz', path='/build')
-            self.assertTrue(qemu.stage_image_ready(build, support))
+            self.assertTrue(qemu.stage_image_ready(support))
 
     def test_iso_command_attaches_read_only_cd_and_omits_stage_boot_flags(self):
         run = self.make_run(kind=qemu.QemuBuildKind.ISO, architecture='amd64', kernel=None, initramfs=None)
@@ -157,7 +165,6 @@ class QemuRunTests(unittest.TestCase):
     def test_s390x_uses_ccw_disk_device_and_omits_usb_controller(self):
         run = self.make_run(architecture='s390x')
         with patch.object(qemu, 'qemu_binary', side_effect=lambda name: '/qemu/' + name), \
-             patch.object(qemu, 'stage_image_directory', return_value='/cache/TestVM/stage'), \
              patch.object(qemu, 'accelerated', return_value=None):
             command = run.command()
         self.assertIn(f'file={run.overlay},format=qcow2,if=none,id=disk', command)
@@ -175,8 +182,7 @@ class QemuRunTests(unittest.TestCase):
         run = self.make_run()
         process = Mock()
         process.poll.return_value = None
-        with patch.object(qemu, 'stage_image_directory', return_value='/cache/TestVM/stage'), \
-             patch.object(qemu, 'qemu_binary', side_effect=lambda name: '/qemu/' + name), \
+        with patch.object(qemu, 'qemu_binary', side_effect=lambda name: '/qemu/' + name), \
              patch.object(run, 'command', return_value=['/qemu/qemu-system-aarch64']), \
              patch.object(qemu.subprocess, 'run') as image_create, \
              patch.object(qemu.subprocess, 'Popen', return_value=process), \
@@ -225,8 +231,8 @@ class QemuRunTests(unittest.TestCase):
             base.write_bytes(b'x' * 4096)
             overlay = Path(run.overlay)
             overlay.write_bytes(b'y' * 128)
-            with patch.object(qemu, 'stage_image_directory', return_value=directory):
-                usage = run.read_disk_usage()
+            run.support.image_directory = directory
+            usage = run.read_disk_usage()
         self.assertEqual(usage[1], 4096)
         self.assertGreater(usage[0], 0)
 

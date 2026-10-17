@@ -82,3 +82,14 @@ class UsageGraph(Gtk.DrawingArea):
         context.set_source_rgba(red, green, blue, 1)
         context.set_line_width(1.5)
         context.stroke()
+
+
+def usage_row(title: str, subtitle: str = "Waiting for sample…") -> Adw.ActionRow:
+    row = Adw.ActionRow(title=title, subtitle=subtitle)
+    row.graph = UsageGraph()
+    row.add_suffix(row.graph)
+    return row
+
+
+def format_gib(size: int) -> str:
+    return f"{size / 1024 ** 3:.1f} GiB"

@@ -1,6 +1,6 @@
-from .repository import Repository
+from .repository import Repository, resolve_path
 import os, shutil
-from .toolset import Toolset, ToolsetEnv
+from .toolset import Toolset
 
 class ToolsetManager:
     _instance = None
@@ -16,7 +16,7 @@ class ToolsetManager:
     def refresh(self):
         toolsets = Repository.Toolset.value
         # Detect missing toolsets and add them to repository
-        toolsets_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.toolsets_location))
+        toolsets_location = resolve_path(Repository.Settings.value.toolsets_location)
         if not os.path.isdir(toolsets_location):
             return
         found_names = {entry.name for entry in os.scandir(toolsets_location)
@@ -27,9 +27,9 @@ class ToolsetManager:
             self.remove_toolset(toolset)
 
     def add_toolset(self, toolset: Toolset):
-        # Remove existing toolset before adding.
-        Repository.Toolset.value = [s for s in Repository.Toolset.value if s.uuid != toolset.uuid]
-        Repository.Toolset.value.append(toolset)
+        Repository.Toolset.value = [
+            item for item in Repository.Toolset.value if item.uuid != toolset.uuid
+        ] + [toolset]
 
     def remove_toolset(self, toolset: Toolset):
         from .rootless import remove_extracted_squashfs

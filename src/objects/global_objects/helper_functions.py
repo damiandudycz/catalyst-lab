@@ -1,6 +1,7 @@
 from .root_function import root_function
-import subprocess, os, re
-from datetime import datetime, timezone, timedelta
+import os, re, shutil, signal, subprocess, tarfile, tempfile, threading
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 
 # ------------------------------------------------------------------------------
 # Global helper functions:
@@ -8,10 +9,10 @@ from datetime import datetime, timezone, timedelta
 
 @root_function
 def create_temp_workdir(prefix: str) -> str:
+    import os
+    import tempfile
     """Creates temp directory in /var/tmp/catalystlab, owned by the user.
     Supports subdirectories inside prefix, e.g. 'toolset/tmp_'."""
-    import tempfile
-    import os
     base_dir = "/var/tmp/catalystlab"
     # Split prefix into path components
     if '/' in prefix:
@@ -47,7 +48,6 @@ def delete_temp_workdir(path: str) -> bool:
 
 @root_function
 def mount_squashfs(squashfs_path: str, prefix: str) -> str:
-    import os
     import subprocess
     """Creates tmp directory and extracts squashfs file to it"""
     mount_point = create_temp_workdir(prefix=prefix)
@@ -85,8 +85,9 @@ def loop_umount_squashfs(mount_point: str):
 
 @root_function
 def extract(tarball: str, directory: str):
-    import tarfile
+    import os
     import signal
+    import tarfile
     import threading
     _cancel_event = threading.Event()
     def handle_sigterm(signum, frame):
@@ -94,7 +95,6 @@ def extract(tarball: str, directory: str):
     signal.signal(signal.SIGTERM, handle_sigterm)
 
     """Extracts an .xz tarball as root to preserve special files and ownership."""
-    import os
     destination = os.path.abspath(directory)
     def stage_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo:
         # Stage tarballs contain device nodes, absolute symlinks (resolved later inside chroot),
@@ -107,9 +107,10 @@ def extract(tarball: str, directory: str):
                 raise tarfile.OutsideDestinationError(member, target)
         return member
     with tarfile.open(tarball, mode='r:xz') as tar:
-        total_size = sum(member.size for member in tar.getmembers())
+        members = tar.getmembers()
+        total_size = sum(member.size for member in members)
         extracted_size = 0
-        for member in tar.getmembers():
+        for member in members:
             if _cancel_event.is_set():
                 return
             tar.extract(member, path=directory, filter=stage_filter)
@@ -162,26 +163,8 @@ def get_file_size_string(path: str) -> str | None:
         return None
 
 def parse_strict_rfc_datetime(s: str) -> datetime:
-    import locale
-    match = re.search(r'([+-]\d{4})$', s.strip())
-    if not match:
-        raise ValueError("No timezone offset found")
-    tz_str = match.group(1)
-    s_no_tz = s.replace(tz_str, '').strip()
-    # Save the current locale
-    current_locale = locale.setlocale(locale.LC_TIME)
-    try:
-        # Temporarily set locale to "C" for strptime to parse English weekday/month
-        locale.setlocale(locale.LC_TIME, "C")
-        dt = datetime.strptime(s_no_tz, "%a, %d %b %Y %H:%M:%S")
-    finally:
-        # Restore the original locale no matter what happens
-        locale.setlocale(locale.LC_TIME, current_locale)
-    # Convert timezone offset to tzinfo
-    hours = int(tz_str[1:3])
-    minutes = int(tz_str[3:5])
-    delta = timedelta(hours=hours, minutes=minutes)
-    if tz_str.startswith('-'):
-        delta = -delta
-    return dt.replace(tzinfo=timezone(delta))
+    value = s.strip()
+    if not re.fullmatch(r"[A-Za-z]{3}, \d{1,2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} [+-]\d{4}", value):
+        raise ValueError("Invalid RFC datetime")
+    return parsedate_to_datetime(value)
 

@@ -1,6 +1,12 @@
 from __future__ import annotations
 import os, shlex, stat, subprocess, threading, time, uuid
 
+def _command_output(run, script: str, failure_message: str) -> str:
+    lines = []
+    if not run(script, lines.append):
+        raise RuntimeError(lines[-1] if lines else failure_message)
+    return "\n".join(lines)
+
 # ------------------------------------------------------------------------------
 # SSH connection to machine where build is deployed (usually booted from Gentoo LiveCD).
 # Uses ssh of this computer with shared master connection: password is used once when connecting (passed to ssh
@@ -116,10 +122,7 @@ class SSHConnection:
 
     def output(self, script: str) -> str:
         """Output of script, raises when it fails."""
-        lines = []
-        if not self.run(script, lines.append):
-            raise RuntimeError(lines[-1] if lines else "Command failed on remote machine")
-        return "\n".join(lines)
+        return _command_output(self.run, script, "Command failed on remote machine")
 
     def stream_file(self, path: str, command: str, output_handler=print, progress_handler=None,
                     process_holder: list | None = None) -> bool:

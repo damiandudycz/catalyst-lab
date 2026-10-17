@@ -3,7 +3,6 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import Callable
 from gi.repository import GLib
 from .event_bus import EventBus
 from .multistage_process import MultiStageProcess, MultiStageProcessEvent, MultiStageProcessState

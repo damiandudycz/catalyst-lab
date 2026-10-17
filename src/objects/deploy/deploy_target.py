@@ -89,14 +89,7 @@ echo "dns=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | tr '\n' ' ')"
         for device in json.loads(values.get("disks") or "{}").get("blockdevices", []):
             if device.get("type") != "disk" or _flag(device.get("ro")) or int(device.get("size") or 0) == 0:
                 continue
-            machine.disks.append(TargetDisk(
-                path=device.get("path") or f"/dev/{device['name']}",
-                size=int(device["size"]),
-                model=(device.get("model") or "").strip() or None,
-                transport=device.get("tran"),
-                removable=_flag(device.get("rm")),
-                in_use=_has_mountpoints(device),
-            ))
+            machine.disks.append(_target_disk(device, in_use=_has_mountpoints(device)))
         return machine
 
     @classmethod
@@ -112,12 +105,8 @@ echo "dns=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | tr '\n' ' ')"
                     or (device.get("name") or "").startswith(("zram", "ram", "nbd"))):
                 continue
             reason = _local_in_use_reason(device)
-            disk = TargetDisk(
-                path=device.get("path") or f"/dev/{device['name']}",
-                size=int(device["size"]),
-                model=(device.get("model") or "").strip() or None,
-                transport=device.get("tran"),
-                removable=_flag(device.get("rm")),
+            disk = _target_disk(
+                device,
                 in_use=reason is not None,
                 in_use_reason=reason,
                 automounted=_has_mountpoints(device),
@@ -138,9 +127,9 @@ echo "dns=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | tr '\n' ' ')"
     @property
     def description(self) -> str:
         if self.image:
-            return f"Image boots on {self.architecture} machine with {self.firmware.display_name(self.architecture)} firmware"
+            return f"Image boots on {self.architecture} machine with {self.firmware.display_name()} firmware"
         if self.local:
-            return f"Installed system runs on {self.architecture} machine with {self.firmware.display_name(self.architecture)} firmware"
+            return f"Installed system runs on {self.architecture} machine with {self.firmware.display_name()} firmware"
         firmware = "Raspberry Pi" if self.raspberry_pi else "UEFI" if self.uefi else "BIOS"
         model = f"{self.model}, " if self.model else ""
         return f"{model}{self.architecture}, {firmware} firmware, {format_size(self.memory)} memory"
@@ -166,7 +155,7 @@ class TargetFirmware(Enum):
     RASPBERRY_PI = "raspberry-pi"
     OTHER = "other"
 
-    def display_name(self, architecture: str) -> str:
+    def display_name(self) -> str:
         return {
             TargetFirmware.UEFI: "UEFI",
             TargetFirmware.BIOS: "BIOS (legacy boot)",
@@ -212,6 +201,16 @@ def _local_in_use_reason(device: dict) -> str | None:
 
 def _flag(value) -> bool:
     return value in (True, 1, "1", "true")
+
+def _target_disk(device: dict, **state) -> TargetDisk:
+    return TargetDisk(
+        path=device.get("path") or f"/dev/{device['name']}",
+        size=int(device["size"]),
+        model=(device.get("model") or "").strip() or None,
+        transport=device.get("tran"),
+        removable=_flag(device.get("rm")),
+        **state,
+    )
 
 def _has_mountpoints(device: dict) -> bool:
     if any(device.get("mountpoints") or []):

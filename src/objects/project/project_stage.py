@@ -3,21 +3,18 @@ import os, subprocess, ast, uuid, tomllib
 from functools import lru_cache
 from .repository import Serializable
 from .toolset import Toolset, ToolsetApplication, ToolsetEnv
-from .root_helper_client import RootHelperClient
 from .releng_directory import RelengDirectory
-from .event_bus import EventBus, SharedEvent
+from .event_bus import EventBus
 from .architecture import Architecture
 from .snapshot import PortageProfile
-from .snapshot import Snapshot
 from .repository import Repository
 from typing import Any
 from dataclasses import dataclass
-from typing import Self, FrozenSet
+from typing import Self
 from enum import Enum, auto
-from collections.abc import Iterable
 from .project_stage_arguments import (
     StageArguments, StageArgumentTargetDetails, StageArgumentOption,
-    StageArgumentType, StageArgumentDetails
+    StageArgumentDetails
 )
 from .project_stage_compression_mode import StageCompressionMode
 from .project_stage_argument_serialization import ProjectStageArgumentSerialization
@@ -591,14 +588,8 @@ def load_stage_possible_seeds(stage: ProjectStage, project_directory: ProjectDir
             return []
         return collect_ids(root_node)
     child_ids = _get_descendant_ids(stage=stage, project_directory=project_directory)
-    available_stages = project_directory.stages[:]
-    values = [
-        s for s in available_stages
+    return [
+        s for s in project_directory.stages
         if s.id not in child_ids and s.id != stage.id
     ]
-    selected = next(
-        (stage for stage in available_stages if stage.id == stage.parent),
-        None
-    )
-    return values
 

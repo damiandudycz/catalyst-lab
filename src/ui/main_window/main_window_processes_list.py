@@ -74,6 +74,15 @@ def _entries(process: MultiStageProcess) -> list:
             return [(process, step) for step in steps]
     return [(process, None)]
 
+def _labels(title: str, subtitle: str = "") -> tuple[Gtk.Box, Gtk.Label]:
+    labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
+    labels.append(Gtk.Label(label=title, xalign=0, ellipsize=Pango.EllipsizeMode.END))
+    subtitle_label = Gtk.Label(label=subtitle, xalign=0, ellipsize=Pango.EllipsizeMode.END)
+    subtitle_label.add_css_class("caption")
+    subtitle_label.add_css_class("dim-label")
+    labels.append(subtitle_label)
+    return labels, subtitle_label
+
 class ProcessesList(Gtk.Box):
     """Running steps of processes, and finished processes until their result is seen. Hidden when there are none."""
 
@@ -129,6 +138,7 @@ class ProcessesList(Gtk.Box):
         from .build_queue import BuildQueue
         queue = BuildQueue.shared()
         queued = {("queue", item.id): item for item in queue.entries}
+        queued_positions = {entry: position for position, entry in enumerate(queued, 1)}
         entries += list(queued)
         from .qemu_run import QemuRun
         qemu_entries = [("qemu", run) for run in QemuRun.running_runs if run.is_running]
@@ -148,9 +158,7 @@ class ProcessesList(Gtk.Box):
                 self.list_box.insert(self._rows[entry], index)
             row = self._rows[entry]
             if isinstance(row, QueuedBuildRow):
-                row.update(position=list(queued).index(entry) + 1, paused=queue.paused)
-            elif isinstance(row, QemuRunRow):
-                row.update()
+                row.update(position=queued_positions[entry], paused=queue.paused)
             else:
                 row.update()
         self.set_visible(bool(entries))
@@ -181,12 +189,7 @@ class QueuedBuildRow(Gtk.ListBoxRow):
         icon = Gtk.Image(icon_name="clock-square-svgrepo-com-symbolic", valign=Gtk.Align.CENTER)
         icon.add_css_class("dimmed")
         box.append(icon)
-        labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
-        labels.append(Gtk.Label(label=project.name if project else "Removed project", xalign=0, ellipsize=Pango.EllipsizeMode.END))
-        self.subtitle = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)
-        self.subtitle.add_css_class("caption")
-        self.subtitle.add_css_class("dim-label")
-        labels.append(self.subtitle)
+        labels, self.subtitle = _labels(project.name if project else "Removed project")
         box.append(labels)
         self.set_child(box)
 
@@ -206,12 +209,7 @@ class QemuRunRow(Gtk.ListBoxRow):
         box = Gtk.Box(spacing=10, margin_start=6, margin_end=6, margin_top=4, margin_bottom=4)
         icon = Gtk.Image(icon_name="computer-symbolic", valign=Gtk.Align.CENTER)
         box.append(icon)
-        labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
-        labels.append(Gtk.Label(label=run.name, xalign=0, ellipsize=Pango.EllipsizeMode.END))
-        self.subtitle = Gtk.Label(label=f"Running with {run.backend_name}", xalign=0)
-        self.subtitle.add_css_class("caption")
-        self.subtitle.add_css_class("dim-label")
-        labels.append(self.subtitle)
+        labels, self.subtitle = _labels(run.name, f"Running with {run.backend_name}")
         box.append(labels)
         self.set_child(box)
 
@@ -237,16 +235,11 @@ class ProcessRow(Gtk.ListBoxRow):
         # Status icon like in rows of installation steps.
         self.status_icon = Gtk.Image(valign=Gtk.Align.CENTER)
         box.append(self.status_icon)
-        labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
         try:
             self.process_name = process.name()
         except Exception:
             self.process_name = process.title
-        labels.append(Gtk.Label(label=step.name if step else self.process_name, xalign=0, ellipsize=Pango.EllipsizeMode.END))
-        self.subtitle = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)
-        self.subtitle.add_css_class("caption")
-        self.subtitle.add_css_class("dim-label")
-        labels.append(self.subtitle)
+        labels, self.subtitle = _labels(step.name if step else self.process_name)
         box.append(labels)
         self.progress_label = Gtk.Label(valign=Gtk.Align.CENTER)
         self.progress_label.add_css_class("caption")

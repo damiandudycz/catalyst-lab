@@ -320,14 +320,11 @@ class RootHelperClient:
         token: str | None = None
     ) -> ServerResponse | ServerCall: # For async always returns ServerCall or throws.
         """Send a command to the root helper server."""
-        if request != ServerCommand.EXIT and not self.ensure_server_ready():
+        if not self.ensure_server_ready():
             print("Server not responding")
-            if request != ServerCommand.HANDSHAKE and self.is_server_process_running:
+            if request not in (ServerCommand.EXIT, ServerCommand.HANDSHAKE) and self.is_server_process_running:
                 print("[Server process] Server communication broke.")
                 self.stop_root_helper(instant=True) # This should never happen.
-            raise ServerCallError.SERVER_NOT_RESPONDING
-        if request == ServerCommand.EXIT and not self.ensure_server_ready():
-            print("Server not responding")
             raise ServerCallError.SERVER_NOT_RESPONDING
 
         # Prepare message and type
@@ -368,15 +365,7 @@ class RootHelperClient:
                     match message_type:
                         case StreamPipe.RETURN:
                             response_string = content
-                        case StreamPipe.STDIN:
-                            call.output_append(content)
-                            if handler:
-                                handler(content)
-                        case StreamPipe.STDOUT:
-                            call.output_append(content)
-                            if handler:
-                                handler(content)
-                        case StreamPipe.STDERR:
+                        case StreamPipe.STDIN | StreamPipe.STDOUT | StreamPipe.STDERR:
                             call.output_append(content)
                             if handler:
                                 handler(content)

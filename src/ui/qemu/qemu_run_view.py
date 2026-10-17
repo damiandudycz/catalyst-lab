@@ -1,20 +1,15 @@
 from __future__ import annotations
-import hashlib, os, re, shutil, tempfile, threading
-from pathlib import Path
+import re, threading
 from dataclasses import replace
 from gi.repository import Gtk, Gdk, Adw, GLib, Pango
 from .qemu_run import (QemuRun, QemuRunEvent, QemuBuildKind, qemu_support, stage_image_ready,
-                       stage_image_directory, stage_image_cache_directory, stage_base_image_ready,
-                       stage_image_script, copy_stage_base_image, stage_image_mount_script,
-                       stage_image_unmount_script, stage_image_add_modules_script,
                        create_stage_image_directory, cleanup_stage_image_directory)
-from .custom_kernel import copy_kernel_outputs, is_arm64_linux_image
 from .apple_virtualization import AppleVirtualizationRun, apple_support
 from .vnc_view import VncView
 from .cl_toggle_group import CLToggle, CLToggleGroup
-from .usage_graph import UsageGraph, USAGE_INTERVAL_SECONDS
-from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessStageState, MultiStageProcessEvent, MultiStageProcessState
+from .usage_graph import USAGE_INTERVAL_SECONDS, usage_row, format_gib
 from .app_events import AppEvents, app_event_bus
+from .qemu_run import QemuImagePreparation
 
 # ------------------------------------------------------------------------------
 # Build running in QEMU: screen of machine (VNC), its serial console and QEMU log, with power controls. A pristine stage
@@ -26,50 +21,6 @@ _ANSI = re.compile(r"\x1b\[[0-9;?=<>:]*[A-Za-z]|\x1b[()][A-Za-z0-9]|\x1b[=>78]|\
 def _visible_serial_text(text: str) -> str:
     text = _ANSI.sub("", text)
     return "".join(char for char in text if char in "\n\t" or char.isprintable())
-
-def _gib(size: int) -> str:
-    return f"{size / 1024 ** 3:.1f} GiB"
-
-
-def _kernel_output_cache_directory(build, architecture: str, package: str, snapshot, overlays) -> str:
-    from .repository import Repository
-    # Portage configuration and the resulting stage can differ between builds even when
-    # they select the same kernel atom. Keep compiled outputs isolated by build identity.
-    signature = [str(build.id), os.path.realpath(build.artifact_path or build.path),
-                 architecture, package, snapshot.filename]
-    for path in (build.artifact_path or build.path, snapshot.file_path()):
-        try:
-            stat = os.stat(path)
-            signature.append(f"{stat.st_size}:{stat.st_mtime_ns}")
-        except OSError:
-            signature.append("missing")
-    for name, path in overlays:
-        signature.append(f"overlay:{name}:{os.path.realpath(path)}")
-        category = os.path.join(path, "sys-kernel")
-        try:
-            for root, directories, files in os.walk(category):
-                for filename in sorted(files):
-                    if filename.endswith(".ebuild"):
-                        ebuild = os.path.join(root, filename)
-                        stat = os.stat(ebuild)
-                        signature.append(f"{ebuild}:{stat.st_size}:{stat.st_mtime_ns}")
-        except OSError:
-            continue
-    key = hashlib.sha256("\n".join(signature).encode()).hexdigest()[:24]
-    return os.path.join(Repository.Settings.value.cache_location, "TestVMKernels", key)
-
-
-def _kernel_outputs_ready(directory: str, require_arm64_image: bool = False) -> bool:
-    modules = os.path.join(directory, "custom-modules")
-    try:
-        kernel = os.path.join(directory, "custom-kernel")
-        return (os.path.isfile(kernel)
-                and (not require_arm64_image or is_arm64_linux_image(kernel))
-                and os.path.isfile(os.path.join(directory, "custom-initramfs"))
-                and os.path.isdir(modules) and any(os.scandir(modules)))
-    except OSError:
-        return False
-
 
 def present_qemu_run(run: QemuRun):
     """Show an existing VM view, or create a fresh view attached to the running machine."""
@@ -91,344 +42,6 @@ def present_qemu_run(run: QemuRun):
         present_qemu_run(run)
     elif window is not None:
         window.present()
-
-class QemuImagePreparation(MultiStageProcess):
-    """Creates disk image of stage for QEMU (in virtual machine on macOS, as root on Linux)."""
-
-    def __init__(self, project_directory, build, support):
-        self.project_directory = project_directory
-        self.project_id = project_directory.id if project_directory else None
-        self.build = build
-        self.support = support
-        self.failure_reason: str | None = None
-        self.canceled = False
-        self.on_completed = None
-        self._completion_notified = False
-        self._canceling = False
-        super().__init__(title="Start virtual machine")
-
-    def setup_stages(self):
-        self.stages.append(_StepImage(multistage_process=self))
-
-    def name(self) -> str:
-        return self.build.stage_name
-
-    def complete_process(self, success: bool):
-        if self._completion_notified:
-            return
-        self._completion_notified = True
-        success = success and not self.canceled
-        if not success:
-            cleanup_stage_image_directory(self.support.image_directory)
-        if self.on_completed:
-            self.on_completed(success)
-
-    def cancel(self):
-        self.cancel_async()
-
-    def cancel_async(self):
-        if self._canceling or self.status not in (MultiStageProcessState.SETUP, MultiStageProcessState.IN_PROGRESS,
-                                                   MultiStageProcessState.COMPLETED):
-            return
-        self.canceled = True
-        self._canceling = True
-        active = next((stage for stage in self.stages
-                       if stage.state == MultiStageProcessStageState.IN_PROGRESS), None)
-        if active is not None:
-            active.request_cancel()
-
-        def stop_work():
-            if active is not None:
-                active.cancel_work()
-            GLib.idle_add(self._finish_cancel)
-        threading.Thread(target=stop_work, daemon=True).start()
-
-    def _finish_cancel(self):
-        if self.status != MultiStageProcessState.FAILED:
-            self.status = MultiStageProcessState.FAILED
-            self.event_bus.emit(MultiStageProcessEvent.STATE_CHANGED, self.status)
-        for stage in self.stages:
-            if stage.state in (MultiStageProcessStageState.IN_PROGRESS, MultiStageProcessStageState.SCHEDULED):
-                stage._update_state(MultiStageProcessStageState.FAILED)
-        self._cleanup()
-        self.clean_from_started_processes()
-        self.complete_process(success=False)
-        return False
-
-class _StepImage(MultiStageProcessStage):
-    def __init__(self, multistage_process):
-        super().__init__(name="Prepare VM image and kernel", description="Creates the writable VM image and builds the selected kernel",
-                         multistage_process=multistage_process)
-
-    def log(self, line: str):
-        if line.startswith("@@extract-progress "):
-            try:
-                percent = max(0, min(100, int(line.split()[-1])))
-            except ValueError:
-                return
-            self._update_progress(percent / 100)
-            line = f"Extracting stage · {percent}%"
-        super().log(line)
-
-    def start(self):
-        if self.multistage_process.canceled:
-            self._cancel_event.set()
-            self._update_state(MultiStageProcessStageState.FAILED)
-            return
-        self.processes = []
-        self._kernel_call = None
-        self._worker_thread = threading.current_thread()
-        super().start()
-        process = self.multistage_process
-        connection = None
-        try:
-            from .deploy_image import image_connection
-            build = process.build
-            if not process.support.boot_kernel:
-                raise RuntimeError("Stage has no boot kernel; select a custom kernel package to run it")
-            directory = stage_image_directory(build, process.support.backend, process.support.kernel_package,
-                                              process.support.kernel_snapshot, process.support.image_directory)
-            os.makedirs(directory, exist_ok=True)
-            connection = image_connection(process.project_directory)
-            if error := connection.connect(process_holder=self.processes, output_handler=self.log,
-                                           cancel_event=self._cancel_event):
-                raise RuntimeError(error)
-            self._check_canceled()
-            # Size: stage unpacked (about 4 times its archive) and free space, sparse file takes only used space.
-            size = max(8 << 30, (os.path.getsize(build.artifact_path) * 5 // (1 << 30) + 4) << 30)
-            cache_directory = stage_image_cache_directory(build, process.support, size)
-            if not stage_base_image_ready(cache_directory, process.support.kernel, process.support.initramfs):
-                # Incomplete cache entries are discarded so a failed extraction cannot be reused.
-                shutil.rmtree(cache_directory, ignore_errors=True)
-                os.makedirs(cache_directory, exist_ok=True)
-                self.log("Extracting stage into reusable cache image")
-                script = stage_image_script(build.artifact_path, cache_directory, size, process.support.kernel,
-                                            process.support.initramfs)
-                if not connection.run(script, self.log, self.processes):
-                    shutil.rmtree(cache_directory, ignore_errors=True)
-                    raise RuntimeError("Failed to create cached base disk image")
-                Path(cache_directory, ".ready").write_text("ready\n", encoding="utf-8")
-            self._check_canceled()
-            if process.support.backend == "qemu" and not process.support.kernel_package:
-                # QEMU's writable qcow2 overlay can use the cached raw disk directly as its backing.
-                # This avoids copying a multi-GiB image even when Cache and Temporary are on
-                # different filesystems or the library volume does not support reflinks.
-                process.support.base_image_path = os.path.join(cache_directory, "root.img")
-                process.support.base_kernel_path = os.path.join(cache_directory, process.support.kernel)
-                process.support.base_initramfs_path = (os.path.join(cache_directory, process.support.initramfs)
-                                                       if process.support.initramfs else None)
-                self.log("Using cached base image directly with a disposable QEMU overlay")
-            else:
-                cloned = copy_stage_base_image(cache_directory, directory, process.support.kernel,
-                                               process.support.initramfs, self.processes, self._cancel_event)
-                self.log("Created copy-on-write clone of cached base image" if cloned else
-                         "Copied cached base image; this filesystem does not support instant clones")
-            self._check_canceled()
-            if process.support.kernel_package:
-                if not connection.run(stage_image_mount_script(directory), self.log, self.processes):
-                    raise RuntimeError("Failed to mount the temporary VM image for kernel preparation")
-                self._check_canceled()
-                try:
-                    self._emerge_kernel_package(directory)
-                    self._check_canceled()
-                    if not connection.run(stage_image_add_modules_script(directory), self.log, self.processes):
-                        raise RuntimeError("Failed to add custom kernel modules to the temporary VM image")
-                finally:
-                    if not connection.run(stage_image_unmount_script(directory), self.log, self.processes):
-                        raise RuntimeError("Failed to unmount the temporary VM image")
-            self._check_canceled()
-            self.complete(MultiStageProcessStageState.COMPLETED)
-        except Exception as e:
-            if self._cancel_event.is_set():
-                return
-            self.multistage_process.failure_reason = str(e)
-            self.log(f"Failed to prepare VM disk image: {e}")
-            print(f"Failed to create QEMU image: {e}")
-            self.complete(MultiStageProcessStageState.FAILED)
-        finally:
-            if connection is not None:
-                try:
-                    connection.close()
-                except Exception:
-                    pass
-
-    def _check_canceled(self):
-        if self._cancel_event.is_set():
-            raise RuntimeError("VM startup canceled")
-
-    def cancel(self):
-        if self.state != MultiStageProcessStageState.IN_PROGRESS:
-            return
-        self.request_cancel()
-        self.cancel_work()
-
-    def request_cancel(self):
-        self._cancel_event.set()
-
-    def cancel_work(self):
-        call = getattr(self, "_kernel_call", None)
-        if call is not None:
-            if not getattr(self, "_kernel_cancel_sent", False):
-                self._kernel_cancel_sent = True
-                call.cancel()
-        for running in getattr(self, "processes", []):
-            try:
-                if running.poll() is None:
-                    running.terminate()
-            except (AttributeError, OSError):
-                continue
-        worker = getattr(self, "_worker_thread", None)
-        if worker and worker is not threading.current_thread():
-            worker.join()
-
-    def _emerge_kernel_package(self, directory: str):
-        """Build a kernel in a disposable project-toolset overlay and export its boot files."""
-        import shlex
-        from .custom_kernel import kernel_package_build_command
-        from .repository import Repository
-        from .root_helper_server import ServerResponseStatusCode
-        from .toolset import BindMount
-        from .project_build_spec import generate_portage_confdir
-        from .rootless import prepare_snapshot_squashfs, unmount_squashfs, distfiles_directory
-        from .project_kernel_packages import _stage_overlays
-        from .project_stage_arguments import StageArgumentDetails
-        from .project_stage_value_resolver import resolve_stage_argument
-
-        process = self.multistage_process
-        project = process.project_directory
-        snapshot = process.support.kernel_snapshot
-        if snapshot is None:
-            raise RuntimeError("Select a Gentoo snapshot to emerge a custom kernel")
-        stage = next((item for item in project.stages if item.id == process.build.stage_id), None)
-        overlays = _stage_overlays(project, stage) if stage is not None else []
-        package_cache = None
-        if stage is not None:
-            package_cache = resolve_stage_argument(project, stage, StageArgumentDetails.pkgcache_path.value)
-            if isinstance(package_cache, str) and package_cache.strip():
-                package_cache = os.path.realpath(os.path.expanduser(package_cache.strip()))
-            else:
-                package_cache = None
-        architecture = project.get_architecture()
-        cache_directory = _kernel_output_cache_directory(
-            process.build, architecture.value if architecture else "unknown",
-            process.support.kernel_package, snapshot, overlays)
-        require_arm64_image = (process.support.backend == "apple"
-                               and process.support.machine.binary == "qemu-system-aarch64")
-        if _kernel_outputs_ready(cache_directory, require_arm64_image):
-            copy_kernel_outputs(cache_directory, directory)
-            return
-
-        toolset = project.get_toolset()
-        if toolset is None:
-            raise RuntimeError("A project toolset is required to build a custom kernel")
-        if not toolset.reserve():
-            raise RuntimeError(toolset.busy_reason or f"Toolset {toolset.name} is in use")
-
-        # Mount the machine workspace before preparing Portage bindings. spawn acquires a second
-        # workspace reference and releases it on unspawn.
-        workspace_machine = toolset.machine
-        workspace_user = f"Preparing VM kernel for {process.build.stage_name}"
-        workspace_acquired = False
-        temporary = os.path.realpath(os.path.expanduser(Repository.Settings.value.temporary_location))
-        os.makedirs(temporary, exist_ok=True)
-        config_directory = tempfile.mkdtemp(prefix="test-vm-kernel-", dir=temporary)
-        spawned = False
-        snapshot_root = None
-        snapshot_mounted = False
-        os.makedirs(cache_directory, exist_ok=True)
-        try:
-            if workspace_machine is not None:
-                workspace_machine.acquire_workspace(output_handler=self.log, user=workspace_user)
-                workspace_acquired = True
-            executor = toolset.executor
-            snapshot_root, snapshot_mounted = prepare_snapshot_squashfs(
-                snapshot.file_path(), self.log, executor=executor)
-
-            if stage is not None:
-                generate_portage_confdir(project, stage, config_directory)
-            repos_directory = Path(config_directory, "repos.conf")
-            repos_directory.mkdir(parents=True, exist_ok=True)
-
-            bindings = [
-                BindMount(mount_path="/var/db/repos/gentoo", host_path=snapshot_root),
-                BindMount(mount_path="/mnt/catalystlab-kernel-output", host_path=cache_directory,
-                          store_changes=True, create_if_missing=True),
-                BindMount(mount_path="/mnt/catalystlab-stage-portage", host_path=config_directory),
-                BindMount(mount_path="/var/cache/distfiles", host_path=distfiles_directory(executor),
-                          store_changes=True, create_if_missing=True),
-            ]
-            use_binary_packages = False
-            if package_cache:
-                try:
-                    info = executor.filesystem({"info": [package_cache]})["info"].get(package_cache, {})
-                    if info.get("type") == "dir":
-                        bindings.append(BindMount(mount_path="/var/cache/binpkgs", host_path=package_cache,
-                                                  read_only=True))
-                        use_binary_packages = True
-                        self.log(f"Using build binary package cache read-only: {package_cache}")
-                except Exception as error:
-                    self.log(f"Build binary package cache is unavailable; packages will be built from source: {error}")
-            repo_lines = ["[gentoo]", "location = /var/db/repos/gentoo", "auto-sync = no", ""]
-            for overlay_name, overlay_path in overlays:
-                overlay = next((item for item in Repository.OverlayDirectory.value
-                                if item.directory_path() == overlay_path), None)
-                repo_name = overlay.repo_name() if overlay else os.path.basename(overlay_path.rstrip(os.sep))
-                if not repo_name or any(character.isspace() or character in "[]" for character in repo_name):
-                    continue
-                repo_lines.extend([f"[{repo_name}]", f"location = /var/db/repos/{repo_name}",
-                                   "masters = gentoo", "auto-sync = no", ""])
-                bindings.append(BindMount(mount_path=f"/var/db/repos/{repo_name}",
-                                          host_path=overlay_path))
-            repo_config = repos_directory / "99-catalystlab-test-vm.conf"
-            repo_config.write_text("\n".join(repo_lines), encoding="utf-8")
-
-            toolset.spawn(store_changes=False, additional_bindings=bindings)
-            spawned = True
-            pkgdir_config = ('printf \'%s\\n\' \'PKGDIR="/var/cache/binpkgs"\' >> /etc/portage/make.conf; '
-                             if use_binary_packages else "")
-            command = ("set -e; mkdir -p /etc/portage; "
-                       "cp -a /mnt/catalystlab-stage-portage/. /etc/portage/; "
-                       + pkgdir_config
-                       + kernel_package_build_command(process.support.kernel_package, use_binary_packages,
-                                                      require_arm64_image))
-            completed = threading.Event()
-            response = []
-            self._kernel_cancel_sent = False
-            call = toolset.run_command(command=command, handler=self.log,
-                                       completion_handler=lambda result: (response.append(result), completed.set()))
-            self._kernel_call = call
-            while call.thread and call.thread.is_alive():
-                call.thread.join(timeout=0.1)
-                if self._cancel_event.is_set() and not self._kernel_cancel_sent:
-                    self._kernel_cancel_sent = True
-                    call.cancel()
-            self._kernel_call = None
-            completed.wait()
-            if not response or response[-1].code != ServerResponseStatusCode.OK:
-                output = call.get_output() if hasattr(call, "get_output") else getattr(call, "output", [])
-                details = "\n".join(output[-30:])
-                suffix = f":\n{details}" if details else ""
-                raise RuntimeError(f"Portage failed to emerge the custom kernel{suffix}")
-        finally:
-            try:
-                if spawned:
-                    toolset.unspawn(rebuild_squashfs_if_needed=False)
-            finally:
-                try:
-                    if snapshot_mounted and snapshot_root:
-                        unmount_squashfs(snapshot_root, self.log, executor=toolset.executor)
-                finally:
-                    try:
-                        if workspace_acquired:
-                            workspace_machine.release_workspace(output_handler=self.log, user=workspace_user)
-                    finally:
-                        toolset.release()
-                        shutil.rmtree(config_directory, ignore_errors=True)
-                        if not _kernel_outputs_ready(cache_directory, require_arm64_image):
-                            shutil.rmtree(cache_directory, ignore_errors=True)
-        if not _kernel_outputs_ready(cache_directory, require_arm64_image):
-            raise RuntimeError("Kernel package did not produce reusable boot files")
-        copy_kernel_outputs(cache_directory, directory)
 
 class QemuRunView(Gtk.Box):
     """Shows a QEMU machine; closing the view detaches it without stopping the machine."""
@@ -572,10 +185,10 @@ class QemuRunView(Gtk.Box):
             self.usage_memory_row.set_subtitle(f"{(run.memory_mib if run else memory_mib) / 1024:g} GiB")
             description = "CPU and memory show configured limits. Live host CPU and memory usage is unavailable for Apple Virtualization."
         else:
-            self.usage_cpu_row = self._usage_row("CPU (host)")
-            self.usage_memory_row = self._usage_row("Memory (resident)")
+            self.usage_cpu_row = usage_row("CPU (host)")
+            self.usage_memory_row = usage_row("Memory (resident)")
             description = "Host-side usage."
-        self.usage_disk_row = self._usage_row("Disk storage (host)")
+        self.usage_disk_row = usage_row("Disk storage (host)")
         self.usage_disk_row.set_visible(self.support.kind == QemuBuildKind.STAGE)
         if self.support.kind == QemuBuildKind.STAGE:
             description += " Disk shows storage allocated to the VM's writable image, not free space inside the guest."
@@ -951,7 +564,7 @@ class QemuRunView(Gtk.Box):
             if self.apple is not None:
                 self.apple = replace(self.apple, support=self.support)
         self._auto_console_detection = True
-        if self.support.kind == QemuBuildKind.STAGE and not stage_image_ready(self.build, self.support):
+        if self.support.kind == QemuBuildKind.STAGE and not stage_image_ready(self.support):
             self._prepare_image()
             return
         self._show_progress("Starting virtual machine…")
@@ -1101,13 +714,6 @@ class QemuRunView(Gtk.Box):
         has_output = self.log_view.get_buffer().get_char_count() > 0
         self.log_stack.set_visible_child_name("output" if has_output else "empty")
 
-    @staticmethod
-    def _usage_row(title: str) -> Adw.ActionRow:
-        row = Adw.ActionRow(title=title, subtitle="Waiting for sample…")
-        row.graph = UsageGraph()
-        row.add_suffix(row.graph)
-        return row
-
     def _start_usage_updates(self):
         if self._usage_timer is None:
             self._usage_timer = GLib.timeout_add_seconds(USAGE_INTERVAL_SECONDS, self._read_usage)
@@ -1147,7 +753,7 @@ class QemuRunView(Gtk.Box):
             self.usage_cpu_row.set_subtitle(f"{cpu_fraction:.0%} of {run.cpus} vCPUs")
             memory_limit = run.memory_mib * 1024 * 1024
             self.usage_memory_row.graph.add(min(resident_bytes / memory_limit, 1) if memory_limit else 0)
-            self.usage_memory_row.set_subtitle(f"{_gib(resident_bytes)} of {run.memory_mib / 1024:.1f} GiB configured")
+            self.usage_memory_row.set_subtitle(f"{format_gib(resident_bytes)} of {run.memory_mib / 1024:.1f} GiB configured")
         if self.support.kind == QemuBuildKind.STAGE:
             if disk_usage is None:
                 self.usage_disk_row.set_subtitle("Storage sample unavailable")
@@ -1156,7 +762,7 @@ class QemuRunView(Gtk.Box):
                 fraction = min(allocated_bytes / virtual_bytes, 1) if virtual_bytes else 0
                 self.usage_disk_row.graph.add(fraction)
                 self.usage_disk_row.set_subtitle(
-                    f"{_gib(allocated_bytes)} used on host of {_gib(virtual_bytes)} virtual"
+                    f"{format_gib(allocated_bytes)} used on host of {format_gib(virtual_bytes)} virtual"
                 )
         return False
 

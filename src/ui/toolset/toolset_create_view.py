@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, re, sys
+import os, re, sys, threading
 from gi.repository import Gtk, GLib, Gio
 from gi.repository import Adw
 from urllib.parse import ParseResult
@@ -7,10 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from .rootless import authorize_toolset_action
 from .lima import virtual_machines_supported
-from .toolset_env_builder import ToolsetEnvBuilder
+from .toolset_env_builder import get_stage3_urls
 from .toolset_manager import ToolsetManager
 from .architecture import Architecture
-from .root_helper_client import RootHelperClient, AuthorizationKeeper
+from .root_helper_client import AuthorizationKeeper
 from .multistage_process import MultiStageProcessState
 from .toolset_installation import ToolsetInstallation
 from .toolset_application import ToolsetApplication, ToolsetApplicationSelection
@@ -58,7 +58,7 @@ class ToolsetCreateView(Gtk.Box):
         if not virtual_machines_supported():
             self.wizard_view.remove_page(self.runs_on_page) # Toolsets run on this computer.
         if installation_in_progress is None or installation_in_progress.status == MultiStageProcessState.SETUP:
-            ToolsetEnvBuilder.get_stage3_urls(architecture=self.architecture, completion_handler=self._update_stages_result)
+            threading.Thread(target=self._load_stage3_urls, daemon=True).start()
         self.connect("realize", self.on_realize)
 
     def on_realize(self, widget):
@@ -159,6 +159,10 @@ class ToolsetCreateView(Gtk.Box):
                 row.set_activatable_widget(check_button)
                 self.stages_list.add(row)
                 self._stage_rows.append(row)
+
+    def _load_stage3_urls(self):
+        result = get_stage3_urls(self.architecture)
+        GLib.idle_add(self._update_stages_result, result)
 
     def _on_stage_selected(self, button: Gtk.CheckButton, stage: ParseResult):
         """Callback for when a row's checkbox is toggled."""

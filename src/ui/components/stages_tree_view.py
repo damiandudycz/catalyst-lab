@@ -4,6 +4,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, GObject, Adw
 import cairo
 from .project_stage import stage_target_icon, stage_target_short_name
+from .tree_node import TreeNode
 from dataclasses import dataclass
 
 # Constants for spacing
@@ -24,24 +25,24 @@ class StageNodeStatus:
 
 NODE_EXPAND_DURATION = 200 # Milliseconds
 
-class TreeNode:
-    def __init__(self, value):
-        self.value = value
-        self.children = []
+def _stage_card_text(stage, status: StageNodeStatus | None, expanded: bool) -> tuple[str, str]:
+    target = getattr(stage, "target", None) or ""
+    broken = getattr(stage, "is_broken", False)
+    subtitle = getattr(stage, "warning_message", None) if broken else target.replace("_", "-")
+    if status:
+        subtitle = f"{subtitle} · {status.title}" if subtitle else status.title
+    title = stage.name if expanded or broken else stage_target_short_name(target)
+    return title, subtitle or ""
 
-def _create_stage_card(stage, status: StageNodeStatus | None, expanded: bool) -> Gtk.ListBox:
+def _create_stage_card(stage, status: StageNodeStatus | None, expanded: bool):
     """Stage displayed as list entry (boxed list with single row). Compact card has icon and short name of target,
     expanded one also name, target and status. Also used for measuring nodes, so sizes match."""
     target = getattr(stage, "target", None) or ""
     broken = getattr(stage, "is_broken", False)
     warning = getattr(stage, "warning_message", None)
-    if expanded:
-        subtitle = warning if broken else target.replace("_", "-")
-        if status:
-            subtitle = f"{subtitle} · {status.title}" if subtitle else status.title
-        row = Adw.ActionRow(title=stage.name, subtitle=subtitle, activatable=not broken)
-    else:
-        row = Adw.ActionRow(title=stage.name if broken else stage_target_short_name(target), activatable=not broken)
+    title, subtitle = _stage_card_text(stage, status, expanded)
+    row = Adw.ActionRow(title=title, subtitle=subtitle, activatable=not broken)
+    row.add_css_class("stage-tree-card-row")
     row.set_use_markup(False)
     # Single line labels, ellipsized while card grows. Wrapping labels would report minimal width and get squeezed.
     row.set_title_lines(1)
@@ -53,20 +54,30 @@ def _create_stage_card(stage, status: StageNodeStatus | None, expanded: bool) ->
         row.add_css_class("warning")
         row.set_tooltip_text(warning or "This stage is unavailable")
         prefix.add_css_class("warning")
-    if status and status.in_progress:
-        spinner = Adw.Spinner(tooltip_text=status.title)
-        spinner.set_size_request(16, 16)
-        row.add_suffix(spinner)
-    elif status and status.icon_name:
-        icon = Gtk.Image.new_from_icon_name(status.icon_name)
-        icon.set_tooltip_text(status.title)
-        if status.css_class:
-            icon.add_css_class(status.css_class)
-        row.add_suffix(icon)
+    status_box = Gtk.Box()
+    spinner = Adw.Spinner()
+    spinner.set_size_request(16, 16)
+    icon = Gtk.Image()
+    status_box.append(spinner)
+    status_box.append(icon)
+    row.add_suffix(status_box)
+    _update_stage_card_status(status, spinner, icon)
     list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
     list_box.add_css_class("boxed-list")
     list_box.append(row)
-    return list_box
+    return list_box, row, spinner, icon
+
+def _update_stage_card_status(status: StageNodeStatus | None, spinner: Adw.Spinner, icon: Gtk.Image):
+    spinner.set_visible(bool(status and status.in_progress))
+    icon.set_visible(bool(status and not status.in_progress and status.icon_name))
+    spinner.set_tooltip_text(status.title if status and status.in_progress else None)
+    icon.set_from_icon_name(status.icon_name if status and status.icon_name else None)
+    icon.set_tooltip_text(status.title if status and status.icon_name else None)
+    if status and status.css_class:
+        icon.add_css_class(status.css_class)
+    for css_class in ("success", "error", "warning", "dimmed"):
+        if not status or status.css_class != css_class:
+            icon.remove_css_class(css_class)
 
 def _lerp(start: float, end: float, progress: float) -> float:
     return start + (end - start) * progress
@@ -80,12 +91,15 @@ class StagesTreeNode(Gtk.Widget):
         super().__init__()
         self.tree = tree
         self.node = node
-        # Opaque base under card (cards are translucent), expanded node covers nodes and lines below it.
+        # An expanded node covers overlapping cards and connector lines below it.
         self.add_css_class("stages-tree-node")
         self.card: Gtk.ListBox | None = None
+        self.card_row: Adw.ActionRow | None = None
+        self.status_spinner: Adw.Spinner | None = None
+        self.status_icon: Gtk.Image | None = None
         self.expanded_content = False
         self.status: StageNodeStatus | None = None
-        self._content_key = None # Displayed name, target and status, card is created again when they change.
+        self._content_key = None # Displayed name, target and status; card text updates in place when they change.
         self.progress = 0.0
         self.always_expanded = False # All nodes of tree shown in full, without animations.
         self.compact_rect = self.expanded_rect = (0, 0, 0, 0) # x, y, width, height in tree.
@@ -94,9 +108,16 @@ class StagesTreeNode(Gtk.Widget):
         self.animation.set_easing(Adw.Easing.EASE_OUT_CUBIC)
         self.animation.connect("done", self._on_animation_done)
         motion = Gtk.EventControllerMotion()
-        motion.connect("enter", lambda *args: self._animate_to(1.0))
-        motion.connect("leave", lambda *args: self._animate_to(0.0))
+        motion.connect("enter", self._on_pointer_enter)
+        motion.connect("leave", self._on_pointer_leave)
         self.add_controller(motion)
+
+    def _on_pointer_enter(self, *args):
+        if not self.always_expanded:
+            self._animate_to(1.0)
+
+    def _on_pointer_leave(self, *args):
+        self._animate_to(0.0)
 
     def set_always_expanded(self, always_expanded: bool):
         if always_expanded == self.always_expanded:
@@ -122,9 +143,14 @@ class StagesTreeNode(Gtk.Widget):
             return self.layout_size
         self._content_key = content_key
         self.status = status
-        self._set_card(expanded=self.progress > 0)
-        compact = _create_stage_card(self.node.value, status, expanded=False).get_preferred_size()
-        expanded = _create_stage_card(self.node.value, status, expanded=True).get_preferred_size()
+        if self.card is not None:
+            self._update_card(expanded=self.progress > 0)
+        else:
+            # Create the compact card on first layout. Deferring creation until hover leaves only
+            # connectors visible on the initial draw.
+            self._set_card(expanded=self.always_expanded)
+        compact = _create_stage_card(self.node.value, status, expanded=False)[0].get_preferred_size()
+        expanded = _create_stage_card(self.node.value, status, expanded=True)[0].get_preferred_size()
         # Expanded content is shown while card grows, so compact card is not smaller than its minimum size.
         self.compact_size = (max(compact[1].width, expanded[0].width), max(compact[1].height, expanded[0].height))
         self.expanded_size = (max(expanded[1].width, self.compact_size[0]), max(expanded[1].height, self.compact_size[1]))
@@ -145,16 +171,26 @@ class StagesTreeNode(Gtk.Widget):
         self._apply_progress()
 
     def _set_card(self, expanded: bool):
-        if self.card is not None:
-            self.card.unparent()
         self.expanded_content = expanded
-        self.card = _create_stage_card(self.node.value, self.status, expanded)
-        if not getattr(self.node.value, "is_broken", False):
-            self.card.connect("row-activated", lambda *args: self.tree.emit("stage-selected", self.node.value))
-        self.card.set_parent(self)
+        if self.card is None:
+            self.card, self.card_row, self.status_spinner, self.status_icon = _create_stage_card(
+                self.node.value, self.status, expanded)
+            if not getattr(self.node.value, "is_broken", False):
+                self.card.connect("row-activated", lambda *args: self.tree.emit("stage-selected", self.node.value))
+            self.card.set_parent(self)
+        else:
+            self._update_card(expanded)
+
+    def _update_card(self, expanded: bool):
+        title, subtitle = _stage_card_text(self.node.value, self.status, expanded)
+        self.card_row.set_title(title)
+        self.card_row.set_subtitle(subtitle)
+        self.card_row.set_activatable(not getattr(self.node.value, "is_broken", False))
+        _update_stage_card_status(self.status, self.status_spinner, self.status_icon)
+        self.expanded_content = expanded
 
     def _animate_to(self, value: float):
-        if self.always_expanded:
+        if self.always_expanded or self.get_parent() is not self.tree:
             return
         if value > 0:
             # Drawn over other nodes.
@@ -176,7 +212,8 @@ class StagesTreeNode(Gtk.Widget):
     def _apply_progress(self):
         x, y, width, height = (_lerp(start, end, self.progress) for start, end in zip(self.compact_rect, self.expanded_rect))
         self._size = (round(width), round(height))
-        self.tree.move(self, round(x), round(y))
+        if self.get_parent() is self.tree:
+            self.tree.move(self, round(x), round(y))
         self.queue_resize()
 
     def do_measure(self, orientation, for_size):

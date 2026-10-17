@@ -105,16 +105,22 @@ class Settings(Serializable):
     def packages_location(self) -> str:
         return library_path("Packages")
 
+    def _set(self, name: str, value, event: SettingsEvents | None = None):
+        attribute = f"_{name}"
+        if getattr(self, attribute) == value:
+            return
+        setattr(self, attribute, value)
+        if event:
+            self.event_bus.emit(event, value)
+        Repository.Settings.save()
+
     @property
     def initial_setup_done(self) -> bool:
         return self._initial_setup_done
 
     @initial_setup_done.setter
     def initial_setup_done(self, value: bool):
-        if self._initial_setup_done != value:
-            self._initial_setup_done = value
-            self.event_bus.emit(SettingsEvents.INITIAL_SETUP_DONE_CHANGED, value)
-            Repository.Settings.save()
+        self._set("initial_setup_done", value, SettingsEvents.INITIAL_SETUP_DONE_CHANGED)
 
     @property
     def keep_root_unlocked(self) -> bool:
@@ -122,10 +128,7 @@ class Settings(Serializable):
 
     @keep_root_unlocked.setter
     def keep_root_unlocked(self, value: bool):
-        if self._keep_root_unlocked != value:
-            self._keep_root_unlocked = value
-            self.event_bus.emit(SettingsEvents.KEEP_ROOT_UNLOCKED_CHANGED, value)
-            Repository.Settings.save()
+        self._set("keep_root_unlocked", value, SettingsEvents.KEEP_ROOT_UNLOCKED_CHANGED)
 
     @property
     def auto_clean_snapshots(self) -> bool:
@@ -133,10 +136,7 @@ class Settings(Serializable):
 
     @auto_clean_snapshots.setter
     def auto_clean_snapshots(self, value: bool):
-        if self._auto_clean_snapshots != value:
-            self._auto_clean_snapshots = value
-            self.event_bus.emit(SettingsEvents.AUTO_CLEAN_SNAPSHOTS_CHANGED, value)
-            Repository.Settings.save()
+        self._set("auto_clean_snapshots", value, SettingsEvents.AUTO_CLEAN_SNAPSHOTS_CHANGED)
 
     @property
     def navigation_style(self) -> NavigationStyle:
@@ -144,10 +144,7 @@ class Settings(Serializable):
 
     @navigation_style.setter
     def navigation_style(self, value: NavigationStyle):
-        if self._navigation_style != value:
-            self._navigation_style = value
-            self.event_bus.emit(SettingsEvents.NAVIGATION_STYLE_CHANGED, value)
-            Repository.Settings.save()
+        self._set("navigation_style", value, SettingsEvents.NAVIGATION_STYLE_CHANGED)
 
     @property
     def pause_queue_on_failure(self) -> bool:
@@ -155,10 +152,7 @@ class Settings(Serializable):
 
     @pause_queue_on_failure.setter
     def pause_queue_on_failure(self, value: bool):
-        if self._pause_queue_on_failure != value:
-            self._pause_queue_on_failure = value
-            self.event_bus.emit(SettingsEvents.PAUSE_QUEUE_ON_FAILURE_CHANGED, value)
-            Repository.Settings.save()
+        self._set("pause_queue_on_failure", value, SettingsEvents.PAUSE_QUEUE_ON_FAILURE_CHANGED)
 
     @property
     def qemu_memory_gib(self) -> int:
@@ -166,10 +160,7 @@ class Settings(Serializable):
 
     @qemu_memory_gib.setter
     def qemu_memory_gib(self, value: int):
-        value = int(value)
-        if self._qemu_memory_gib != value:
-            self._qemu_memory_gib = value
-            Repository.Settings.save()
+        self._set("qemu_memory_gib", int(value))
 
     @property
     def qemu_cpus(self) -> int:
@@ -177,10 +168,7 @@ class Settings(Serializable):
 
     @qemu_cpus.setter
     def qemu_cpus(self, value: int):
-        value = int(value)
-        if self._qemu_cpus != value:
-            self._qemu_cpus = value
-            Repository.Settings.save()
+        self._set("qemu_cpus", int(value))
 
 
 def _navigation_style(value) -> NavigationStyle:

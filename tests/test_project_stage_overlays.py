@@ -107,13 +107,13 @@ class PortageOverlayTests(unittest.TestCase):
 
 
 class RootOverlayTests(unittest.TestCase):
-    def test_root_overlay_argument_and_legacy_source_conversion(self):
+    def test_root_overlay_argument_and_sources(self):
         self.assertEqual(root_overlay_argument(stage('s', target='stage4')), StageArgumentDetails.stage4_root_overlay)
         self.assertEqual(root_overlay_argument(stage('s', target='livecd_stage2')), StageArgumentDetails.livecd_root_overlay)
         self.assertIsNone(root_overlay_argument(stage('s', target='stage3')))
         with tempfile.TemporaryDirectory() as directory:
-            item = stage('child', target='stage4', root_overlay=[StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE,
-                          StageAutomaticOption.INHERIT_FROM_PARENT, '@STAGE_DIR@/root_overlay', '@PROJECT_DIR@/extra'])
+            item = stage('child', target='stage4', root_overlay=[Source.RELENG, Source.PARENT_OVERLAY,
+                          Source.STAGE_OVERLAY, '@PROJECT_DIR@/extra'])
             project = FakeProject(directory, [item])
             self.assertEqual(root_overlay_values(project, item), [Source.RELENG, Source.PARENT_OVERLAY,
                              Source.STAGE_OVERLAY, '@PROJECT_DIR@/extra'])

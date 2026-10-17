@@ -3,12 +3,10 @@ import os, threading, uuid, json, shlex
 from typing import Self
 from .event_bus import EventBus, SharedEvent
 from .repository import Repository
-from .status_indicator import StatusIndicatorState, StatusIndicatorValues, StatusDetail, item_status, status_values
-from .lima import (list_instances, run_limactl, run_as_root_in_instance, swap_activation_script, default_lima_home,
+from .lima import (list_instances, run_limactl, run_as_root_in_instance, swap_activation_script,
                    MACHINE_DATA_DIRECTORY, kill_instance_processes, instance_process_ids,
                    move_lima_disk_to_temporary, remove_temporary_lima_disk_data,
-                   remove_empty_build_machine_temporary_directory)
-from .lima import lima_home as default_new_lima_home
+                   remove_empty_build_machine_temporary_directory, lima_home as default_new_lima_home)
 
 class BuildMachine:
     """Virtual machine (Lima instance) where toolsets run, on systems that can't build stages themselves (macOS).
@@ -30,8 +28,7 @@ class BuildMachine:
 
     @classmethod
     def base_location(cls) -> str:
-        from .lima import machines_directory
-        return machines_directory()
+        return default_new_lima_home()
 
     @classmethod
     def _metadata_path(cls, machine) -> str:
@@ -41,20 +38,17 @@ class BuildMachine:
     def load_all(cls):
         items = []
         root = cls.base_location()
-        from .lima import default_lima_home
-        roots = {root, default_lima_home()}
-        for location in roots:
-            if not os.path.isdir(location):
+        if not os.path.isdir(root):
+            return items
+        for entry in os.scandir(root):
+            if not entry.is_dir(follow_symlinks=False) or not entry.name.startswith("catalystlab-"):
                 continue
-            for entry in os.scandir(location):
-                if not entry.is_dir(follow_symlinks=False) or not entry.name.startswith("catalystlab-"):
-                    continue
-                path = os.path.join(entry.path, "catalystlab.json")
-                try:
-                    with open(path, encoding="utf-8") as file:
-                        items.append(cls.init_from(json.load(file)))
-                except (OSError, ValueError, json.JSONDecodeError) as error:
-                    print(f"Failed to load machine metadata in {entry.path}: {error}")
+            path = os.path.join(entry.path, "catalystlab.json")
+            try:
+                with open(path, encoding="utf-8") as file:
+                    items.append(cls.init_from(json.load(file)))
+            except (OSError, ValueError) as error:
+                print(f"Failed to load machine metadata in {entry.path}: {error}")
         return items
 
     @classmethod
@@ -96,11 +90,8 @@ class BuildMachine:
 
     @classmethod
     def init_from(cls, data: dict) -> Self:
-        return cls(id=uuid.UUID(data["id"]), name=data["name"], cpus=data.get("cpus", 4),
-                   memory_gib=data.get("memory_gib", cls.DEFAULT_MEMORY_GIB), workspace_gib=data.get("workspace_gib", 64),
-                   swap_gib=data.get("swap_gib", cls.DEFAULT_SWAP_GIB),
-                   # Machines created before machines directory are in ~/.lima.
-                   lima_home=data.get("lima_home") or default_lima_home())
+        return cls(id=uuid.UUID(data["id"]), name=data["name"], cpus=data["cpus"], memory_gib=data["memory_gib"],
+                   workspace_gib=data["workspace_gib"], swap_gib=data["swap_gib"], lima_home=data["lima_home"])
 
     # Status:
 
@@ -121,9 +112,7 @@ class BuildMachine:
             return
         instance = list_instances(self.lima_home).get(self.instance_name)
         status = instance.get("status", self.STATUS_STOPPED) if instance else self.STATUS_MISSING
-        if status != self._status:
-            self._status = status
-            self.event_bus.emit(SharedEvent.STATE_UPDATED, self)
+        self._set_status(status)
 
     @property
     def is_running(self) -> bool:
@@ -138,6 +127,8 @@ class BuildMachine:
     def status_indicator_values(self) -> StatusIndicatorValues:
         """Running is loaded, missing (removed outside of app) is error. Blinks while starting, stopping or used by
         operations."""
+        # StatusIndicator is a UI component. Keep the machine model importable by headless maintenance scripts.
+        from .status import StatusIndicatorState, StatusIndicatorValues, StatusDetail, item_status, status_values
         match self.status:
             case self.STATUS_RUNNING:
                 return item_status([StatusDetail(StatusIndicatorState.LOADED, "Running"),
@@ -262,8 +253,6 @@ class BuildMachine:
             output_handler(f"Starting virtual machine {self.name}...")
             self._set_status(self.STATUS_STARTING)
             try:
-                self._remove_deprecated_rosetta_setting(output_handler, process_holder)
-                self._update_provision_script(output_handler, process_holder)
                 self._update_mounts(output_handler, process_holder)
                 self._prepare_swap_disk(output_handler, process_holder)
                 success = run_limactl(["start", self.instance_name], output_handler, process_holder, home=self.lima_home)
@@ -313,17 +302,9 @@ class BuildMachine:
         return instance is not None and instance.get("status") == self.STATUS_STOPPED
 
     def ensure_running(self, output_handler=print, process_holder: list | None = None):
-        """Starts machine if needed, raises when it can't be started. Setup of machine is updated once while app runs,
-        when it's older than current one (machines created by previous versions)."""
+        """Starts machine if needed, raising when it can't be started."""
         if not self.start(output_handler, process_holder, automatically=True):
             raise RuntimeError(f"Failed to start virtual machine {self.name}")
-        if not getattr(self, "_setup_checked", False):
-            from .lima import machine_setup_update_script
-            from .rootless import MachineExecutor
-            self._setup_checked = True # Before running, executor ensures machine is running too.
-            if not MachineExecutor(self).run(machine_setup_update_script(), output_handler, process_holder):
-                self._setup_checked = False
-                raise RuntimeError(f"Failed to update setup of virtual machine {self.name}")
 
     # Swap:
     # Raw disk attached to machine (Lima additional disk), used only as swap, so builds needing more memory than
@@ -353,39 +334,6 @@ class BuildMachine:
         if not self.swap_gib:
             run_limactl(["disk", "delete", "--force", self.swap_disk_name], lambda line: None, home=self.lima_home)
             remove_temporary_lima_disk_data(self.swap_disk_name, self.lima_home)
-
-    def _update_provision_script(self, output_handler, process_holder: list | None = None):
-        """Lima runs provisioning script (stored in configuration of machine) on every boot. Machines created by
-        previous versions get current script, which doesn't install packages again when machine is set up."""
-        import json
-        from .lima import machine_setup_script
-        script = machine_setup_script()
-        try:
-            with open(os.path.join(self.machine_directory, "lima.yaml"), encoding="utf-8") as file:
-                configuration = file.read()
-        except OSError:
-            return
-        if all(line.strip() in configuration for line in script.splitlines() if line.strip()):
-            return
-        output_handler(f"Updating provisioning of virtual machine {self.name}")
-        expression = f'.provision = [{{"mode": "system", "script": {json.dumps(script)}}}]'
-        if not run_limactl(["edit", "--set", expression, self.instance_name], output_handler, process_holder, home=self.lima_home):
-            output_handler(f"Warning: provisioning of virtual machine {self.name} was not updated")
-
-    def _remove_deprecated_rosetta_setting(self, output_handler, process_holder: list | None = None):
-        """Remove the legacy top-level Rosetta key; Lima templates configure it under vmOpts.vz."""
-        import re
-        try:
-            with open(os.path.join(self.machine_directory, "lima.yaml"), encoding="utf-8") as file:
-                configuration = file.read()
-        except OSError:
-            return
-        if not re.search(r"^rosetta:", configuration, re.MULTILINE):
-            return
-        output_handler(f"Updating deprecated Rosetta setting of virtual machine {self.name}")
-        if not run_limactl(["edit", "--set", "del(.rosetta)", self.instance_name], output_handler,
-                           process_holder, home=self.lima_home):
-            output_handler(f"Warning: deprecated Rosetta setting of virtual machine {self.name} was not removed")
 
     def _update_mounts(self, output_handler, process_holder: list | None = None):
         """Machine shares current folders of Catalyst Lab (they change when library is moved to other place)."""
@@ -458,18 +406,6 @@ class BuildMachine:
         return workspace_image_path(self.instance_name)
 
     @property
-    def legacy_workspace_image_path(self) -> str:
-        """Workspace location used by versions before workspaces moved into Library/Temporary."""
-        from .lima import legacy_workspace_image_path
-        return legacy_workspace_image_path(self.instance_name)
-
-    @property
-    def previous_temporary_workspace_image_path(self) -> str:
-        """Workspace location used before workspace and swap data shared a per-machine directory."""
-        from .lima import previous_temporary_workspace_image_path
-        return previous_temporary_workspace_image_path(self.instance_name)
-
-    @property
     def machine_directory(self) -> str:
         """Folder of machine (Lima instance directory)."""
         return os.path.join(self.lima_home, self.instance_name)
@@ -522,9 +458,7 @@ sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
     def _delete_workspace(self, output_handler):
         from .rootless import MachineExecutor
         image = self.workspace_image_path
-        images = [image, self.previous_temporary_workspace_image_path, self.legacy_workspace_image_path]
-        existing_images = [path for path in images if os.path.exists(path)]
-        if not existing_images:
+        if not os.path.exists(image):
             return
         output_handler(f"Removing working space of {self.name}")
         if self.is_running:
@@ -541,15 +475,8 @@ sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
                 output_handler(f"Failed to unmount working space: {e}")
                 return
         try:
-            for path in existing_images:
-                if os.path.exists(path):
-                    os.remove(path)
-            previous_directory = os.path.dirname(self.previous_temporary_workspace_image_path)
-            try:
-                os.rmdir(previous_directory)
-                os.rmdir(os.path.dirname(previous_directory))
-            except OSError:
-                pass
+            if os.path.exists(image):
+                os.remove(image)
             remove_empty_build_machine_temporary_directory(self.instance_name)
         except OSError as e:
             output_handler(f"Failed to remove working space of {self.name}: {e}")

@@ -6,6 +6,7 @@ import shlex
 import shutil
 
 _PACKAGE_ATOM = re.compile(r"^[A-Za-z0-9+_.-]+/[A-Za-z0-9+_.-]+(?:::[A-Za-z0-9+_.-]+)?$")
+KERNEL_OUTPUTS_MANIFEST = ".kernel-output"
 
 
 def valid_kernel_package(value: str) -> bool:
@@ -59,6 +60,7 @@ fi
     \\( -name 'vmlinuz*' -o -name 'vmlinux*' -o -name 'Image*' \\) -print | sort -V | tail -n 1)
 '''
     return f'''set -e
+rm -f /mnt/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}
 command -v emerge >/dev/null || {{ echo "Portage is not installed in the project toolset"; exit 1; }}
 if [ -d /etc/portage/package.use ]; then
     printf '%s\\n' 'sys-kernel/installkernel dracut' \\
@@ -87,5 +89,6 @@ rm -rf /mnt/catalystlab-kernel-output/custom-modules
 mkdir -p /mnt/catalystlab-kernel-output/custom-modules
 cp -a "$release" /mnt/catalystlab-kernel-output/custom-modules/
 chmod a+r /mnt/catalystlab-kernel-output/custom-kernel /mnt/catalystlab-kernel-output/custom-initramfs
+printf '%s\\n' {package} "$(basename "$release")" > /mnt/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}
 echo "Prepared $(basename "$kernel") with initramfs and modules for $release"
 '''

@@ -2,9 +2,9 @@ from __future__ import annotations
 from typing import Self, final
 from dataclasses import dataclass
 from .git_directory import GitDirectory, GitDirectoryEvent
-from .repository import Serializable, Repository
+from .repository import Serializable, Repository, resolve_path
 from .project_stage import ProjectStage
-from .stages_tree_view import TreeNode
+from .tree_node import TreeNode
 from .architecture import Architecture
 import uuid, json, os
 import re
@@ -25,13 +25,7 @@ class ProjectDirectory(GitDirectory):
 
     @classmethod
     def base_location(cls) -> str:
-        from .repository import Repository
-        import os
-        return os.path.realpath(
-            os.path.expanduser(
-                Repository.Settings.value.project_location
-            )
-        )
+        return resolve_path(Repository.Settings.value.project_location)
 
     @classmethod
     def parse_metadata(cls, dict: dict) -> Serializable:
@@ -54,41 +48,31 @@ class ProjectDirectory(GitDirectory):
             for item in items:
                 stage_path = os.path.join(stages_dir, item)
                 config_path = os.path.join(stage_path, "stage.json")
+                raw = ""
                 try:
                     with open(config_path, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        stage = ProjectStage.init_from(data=data)
-                        self._stages.append(stage)
+                        raw = f.read()
+                    stage = ProjectStage.init_from(data=json.loads(raw))
+                    self._stages.append(stage)
                 except Exception as e:
-                    # Recover identity/name from the raw JSON when possible. This lets children
-                    # still point to a broken parent instead of appearing to have no parent.
-                    raw = ""
-                    try:
-                        with open(config_path, 'r', encoding='utf-8') as f:
-                            raw = f.read()
-                    except OSError:
-                        pass
-                    def recover_string(key: str) -> str | None:
-                        # Stage properties are normally encoded as {"type": ..., "value": ...}.
-                        # Also accept plain strings so partially migrated files remain identifiable.
-                        match = re.search(
-                            rf'"{re.escape(key)}"\s*:\s*(?:\{{[^}}]*?"value"\s*:\s*"([^"]+)"|"([^"]+)")',
-                            raw,
-                            re.DOTALL,
-                        )
-                        return next((value for value in match.groups() if value is not None), None) if match else None
-                    recovered_id = recover_string("id")
+                    # Keep malformed stages visible and preserve their current-format identity when possible.
+                    def property_value(key: str) -> str | None:
+                        match = re.search(rf'"{re.escape(key)}"\s*:\s*\{{[^}}]*?"value"\s*:\s*"([^"]+)"',
+                                          raw, re.DOTALL)
+                        return match.group(1) if match else None
+
+                    recovered_id = property_value("id")
                     try:
                         stage_id = uuid.UUID(recovered_id) if recovered_id else None
                     except ValueError:
                         stage_id = None
                     stage_id = stage_id or uuid.uuid5(uuid.NAMESPACE_URL, f"{self.directory_path()}/stages/{item}")
-                    recovered_parent = recover_string("parent")
+                    recovered_parent = property_value("parent")
                     try:
                         parent_id = uuid.UUID(recovered_parent) if recovered_parent else None
                     except ValueError:
                         parent_id = None
-                    stage_name = recover_string("name") or item
+                    stage_name = property_value("name") or item
                     self._broken_stages.append(BrokenProjectStage(
                         id=stage_id,
                         name=stage_name,
@@ -154,10 +138,6 @@ class ProjectDirectory(GitDirectory):
             return "Snapshot is not selected or was removed"
         return None
 
-    def _last_build_run_result(self):
-        result, building, _ = self._last_build_run()
-        return result, building
-
     def _last_build_run(self):
         """Result of newest build run, whether project is being built, and timestamp of newest run."""
         from .project_build import last_build_run
@@ -180,7 +160,6 @@ class ProjectDirectory(GitDirectory):
         if timestamp is None or self.metadata is None or self.metadata.seen_build_timestamp == timestamp:
             return
         self.metadata.seen_build_timestamp = timestamp
-        from .repository import Repository
         Repository.ProjectDirectory.save()
         from .event_bus import SharedEvent
         self.event_bus.emit(SharedEvent.STATE_UPDATED, self)
@@ -190,7 +169,7 @@ class ProjectDirectory(GitDirectory):
         """Builds list: last build run completed (succeeded), failed (error) or stopped (warning), until builds or
         project were opened. Blinking while building."""
         from .project_build import BuildRunResult
-        from .status_indicator import StatusIndicatorState, StatusDetail, item_status
+        from .status import StatusIndicatorState, StatusDetail, item_status
         result, building, timestamp = self._last_build_run()
         match result:
             case BuildRunResult.FAILED: state, description = StatusIndicatorState.ERROR, "Last build failed"
@@ -207,7 +186,7 @@ class ProjectDirectory(GitDirectory):
         """Projects list: configuration error, failed or completed last build (until project is opened), Git status
         (changes, errors), blinking while building."""
         from .project_build import BuildRunResult
-        from .status_indicator import StatusIndicatorState, StatusDetail, item_status
+        from .status import StatusIndicatorState, StatusDetail, item_status
         result, building, timestamp = self._last_build_run()
         details = []
         if configuration_error := self.configuration_error:
@@ -240,7 +219,7 @@ class ProjectDirectory(GitDirectory):
         from .deploy_installation import DeployInstallation
         from .deploy_live_iso import LiveIsoDeployment
         from .multistage_process import MultiStageProcess
-        from .status_indicator import item_status, process_result_status
+        from .status import item_status, process_result_status
         processes = [process for process in dict.fromkeys(MultiStageProcess.started_processes + MultiStageProcess.finished_processes)
                      if isinstance(process, (DeployInstallation, LiveIsoDeployment)) and getattr(process, "project_id", None) == self.id]
         values = [value for process in processes if (value := process_result_status(process)) is not None]
@@ -321,7 +300,6 @@ class ProjectConfiguration(Serializable):
     architecture: Architecture | None = None
     seen_build_timestamp: str | None = None # Newest build run whose result was seen (project was opened).
     packages_directory_id: uuid.UUID | None = None # Binary packages folder (shared by projects).
-    issue_notes: dict[str, list[dict]] | None = None # Notes attached to grouped failure issues.
 
     def serialize(self) -> dict:
         return {
@@ -332,7 +310,6 @@ class ProjectConfiguration(Serializable):
             "architecture": self.architecture.value if self.architecture else None,
             "seen_build_timestamp": self.seen_build_timestamp,
             "packages_directory_id": str(self.packages_directory_id) if self.packages_directory_id else None,
-            "issue_notes": self.issue_notes or {},
         }
 
     @classmethod
@@ -352,7 +329,5 @@ class ProjectConfiguration(Serializable):
             architecture=architecture,
             seen_build_timestamp=data.get("seen_build_timestamp"),
             packages_directory_id=uuid.UUID(data["packages_directory_id"]) if data.get("packages_directory_id") else None,
-            issue_notes={str(key): list(notes) for key, notes in (data.get("issue_notes") or {}).items()
-                         if isinstance(notes, list)},
         )
 

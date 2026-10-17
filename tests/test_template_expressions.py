@@ -51,6 +51,10 @@ class TemplateExpressionTests(unittest.TestCase):
             TemplateExpression("'" + 'x' * 2_001 + "'")
         with self.assertRaisesRegex(TemplateError, 'too long'):
             render_value('{{ upper(value) }}', {'value': 'x' * 100_001})
+        with self.assertRaisesRegex(TemplateError, 'too long'):
+            render_value('{{ value }}', {'value': 'x' * 100_001})
+        with self.assertRaisesRegex(TemplateError, 'too long'):
+            render_value('{{ value }}', {'value': [None] * 10_001})
 
 
 if __name__ == '__main__':

@@ -4,7 +4,6 @@ import sys
 import tempfile
 import types
 import unittest
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if 'catalystlab' not in sys.modules:
@@ -13,7 +12,8 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab.custom_kernel import (copy_kernel_outputs, is_arm64_linux_image,
-                                       kernel_package_build_command, valid_kernel_package)
+                                       kernel_package_build_command, valid_kernel_package,
+                                       KERNEL_OUTPUTS_MANIFEST)
 
 
 class CustomKernelTests(unittest.TestCase):
@@ -69,9 +69,15 @@ class CustomKernelTests(unittest.TestCase):
         self.assertIn('custom-kernel', command)
         self.assertIn('custom-initramfs', command)
         self.assertIn('custom-modules', command)
+        self.assertIn(f'rm -f /mnt/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}', command)
+        self.assertIn(f'> /mnt/catalystlab-kernel-output/{KERNEL_OUTPUTS_MANIFEST}', command)
         self.assertIn('rm -rf /mnt/catalystlab-kernel-output/custom-modules', command)
         self.assertIn('generating one with dracut', command)
         self.assertIn('dracut --force --no-hostonly --kver', command)
+        self.assertLess(command.index('rm -f /mnt/catalystlab-kernel-output/'),
+                        command.index('emerge --ask=n --oneshot'))
+        self.assertGreater(command.index('> /mnt/catalystlab-kernel-output/' + KERNEL_OUTPUTS_MANIFEST),
+                           command.index('cp -a "$release"'))
 
     def test_apple_kernel_command_selects_raw_arm64_image_and_explains_bin_package_limit(self):
         command = kernel_package_build_command('sys-kernel/gentoo-kernel-bin', require_arm64_image=True)

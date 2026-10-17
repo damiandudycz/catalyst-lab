@@ -20,9 +20,11 @@ Prefer the full selection view for a large browse/edit task, and an expander row
 
 | Class/helper | Source | Role |
 |---|---|---|
-| `StatusIndicatorState`, `StatusIndicator` | `src/ui/components/status_indicator.py` | Visual status marker and state model. |
-| `StatusEntry`, `status_values`, `item_status`, `items_status`, `processes_status`, `combined_status`, `unseen_status_entries` | same | Shared aggregation and unseen-state helpers used by section and operation indicators. |
+| `StatusIndicatorState`, `status_values`, `item_status`, `process_result_status` | `src/objects/global_objects/status.py` | UI-independent status model and operation status mapping. |
+| `StatusIndicator` | `src/ui/components/status_indicator.py` | GTK drawing and tooltip for the shared status model. |
+| `StatusEntry`, `items_status`, `processes_status`, `combined_status`, `unseen_status_entries` | same | Sidebar aggregation and seen-state helpers. |
 | `UsageGraph` | `src/ui/components/usage_graph.py` | Compact time-series resource graph (for example CPU and memory). |
+| `usage_row`, `format_gib` | same | Shared resource row layout and GiB formatting for machine and VM usage views. |
 | `StagesTreeView`, `StagesTreeNode`, `TreeNode`, `StageNodeStatus` | `src/ui/components/stages_tree_view.py` | Project stage hierarchy with status/progress presentation and tree interactions. |
 | `MultistageProcessExecutionView` | `src/ui/components/multistage_process_execution_view/` | Renders a process's stages, current activity, output, and completion state. |
 | `MultiStageProcessStageRow` | same | Row for a single process stage. |
@@ -45,6 +47,9 @@ Navigation helpers add the standard root-access button in supported contexts. Av
 | Class/helper | Source | Role |
 |---|---|---|
 | `FilesBrowserView`, `FileContentView` | `src/ui/components/files_browser_view.py` | Read-only file/folder browsing and file content presentation. |
+| `scrolled_window` | `src/ui/components/scrolled_window.py` | Standard expanding scroller with horizontal scrolling disabled. |
+| `format_size` | `src/ui/formatters.py` | Shared byte-size formatter; callers can choose the largest displayed unit. |
+| `populate_disk_rows` | `src/ui/deploy/disk_selection.py` | Shared disk selector rows for stage and Live ISO deployment. |
 | `preserved_scroll_position` | `src/ui/components/scroll_position/scroll_position.py` | Preserves scroll position while a view's content is refreshed/rebuilt. |
 | `CLToggle`, `CLToggleGroup` and fallback classes | `src/ui/components/cl_toggle_group.py` | App-style grouped toggle control, with compatibility fallback implementation. |
 | `fit_popup_to_items` | `src/ui/components/combo_row_popup.py` | Sizes combo popups to their item content. |

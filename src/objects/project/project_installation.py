@@ -1,7 +1,6 @@
 from typing import final
 import subprocess
 from .git_installation import GitInstallation, GitDirectorySetupConfiguration, GitDirectorySource
-from .git_manager import GitManager
 from .project_manager import ProjectManager
 from .toolset import Toolset
 from .releng_directory import RelengDirectory
@@ -10,15 +9,17 @@ from .project_directory import ProjectConfiguration
 from .architecture import Architecture
 from .project_template import apply_project_template, load_cloned_template, download_app_template, ensure_template_overlays
 from .project_template_update import record_template_state, repository_commit, template_tree
-import os, shutil
+import shutil
 from .multistage_process import (
     MultiStageProcess, MultiStageProcessStage,
-    MultiStageProcessState, MultiStageProcessStageState
+    MultiStageProcessStageState
 )
 
 @final
 class ProjectInstallation(GitInstallation):
     """Handles the full project directory installation lifecycle."""
+
+    manager_type = ProjectManager
 
     def __init__(
         self,
@@ -37,11 +38,6 @@ class ProjectInstallation(GitInstallation):
         self.snapshot = None if self.latest_snapshot else snapshot
         self.architecture = architecture
         super().__init__(configuration=source_config)
-
-    # Overwrite in subclassed
-    @classmethod
-    def manager(cls) -> GitManager:
-        return ProjectManager.shared()
 
     def complete_process(self, success: bool):
         if success:

@@ -135,13 +135,19 @@ def _stage_overlays(project_directory, stage) -> list[tuple[str, str]]:
             overlays.append((os.path.basename(item.rstrip("/")), item))
     return overlays
 
-def _tree_state(path: str) -> float:
-    """Changes when packages of folder change (cache of overlay is read again)."""
+def _tree_state(path: str) -> tuple:
+    """State of ebuild files, used to invalidate cached overlay classifications."""
     category = os.path.join(path, _CATEGORY)
-    try:
-        return max([os.path.getmtime(category)] + [os.path.getmtime(entry.path) for entry in os.scandir(category)])
-    except OSError:
-        return 0
+    state = []
+    for root, _directories, files in os.walk(category):
+        for name in files:
+            if name.endswith(".ebuild"):
+                try:
+                    stat = os.stat(os.path.join(root, name))
+                except OSError:
+                    continue
+                state.append((os.path.relpath(os.path.join(root, name), category), stat.st_mtime_ns, stat.st_size))
+    return tuple(sorted(state))
 
 def _newest_ebuilds(names: list[str]) -> dict[str, str]:
     """Ebuild with the newest version of every package, from paths category/package/package-version.ebuild."""

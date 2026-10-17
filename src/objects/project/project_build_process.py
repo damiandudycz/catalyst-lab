@@ -7,11 +7,11 @@ from .multistage_process import (
     MultiStageProcessEvent, MultiStageProcessStageEvent
 )
 from .root_function import root_function
-from .repository import Repository
+from .repository import Repository, resolve_path
 from .event_bus import SharedEvent
 from .root_helper_server import ServerResponse, ServerResponseStatusCode
 from .toolset import BindMount
-from .toolset_env_builder import ToolsetEnvBuilder
+from .toolset_env_builder import get_stage3_urls
 from .project_stage_arguments import StageArgumentDetails
 from .project_stage_cache import CACHE_ARGUMENTS, stage_cache_path
 from .rootless import (
@@ -63,7 +63,7 @@ class ProjectBuild(MultiStageProcess):
         self.catalyst_builds_directory = os.path.join(self.builds_directory, "Catalyst")
         self.stage_artifacts_directory = os.path.join(self.builds_directory, "stages")
         self.kernel_cache_directory = os.path.join(self.builds_directory, "caches", "kerncache")
-        self.work_root = os.path.join(Repository.Settings.value.temporary_location, "CatalystBuilds",
+        self.work_root = os.path.join(resolve_path(Repository.Settings.value.temporary_location), "CatalystBuilds",
                                       project_directory.id.hex, f"{self.timestamp}-{uuid.uuid4().hex}")
         self.seed_subpaths: dict = {} # Downloaded seeds of root stages, relative to builds directory.
         self.stage_builds: dict = {} # Builds made in this run, by stage id.
@@ -122,9 +122,6 @@ class ProjectBuild(MultiStageProcess):
                 self.stages.append(ProjectBuildStepDownloadSeed(stage=stage, multistage_process=self))
             self.stages.append(ProjectBuildStepBuildStage(stage=stage, multistage_process=self))
 
-    def _in_builds_directory(self, host_path: str) -> bool:
-        return host_path == self.builds_directory or host_path.startswith(self.builds_directory + os.sep)
-
     @staticmethod
     def _path_in(host_path: str, root: str) -> bool:
         return host_path == root or host_path.startswith(root + os.sep)
@@ -132,7 +129,7 @@ class ProjectBuild(MultiStageProcess):
     @property
     def seed_cache_directory(self) -> str:
         """Shared Library cache directory for downloaded source stage archives."""
-        return os.path.join(Repository.Settings.value.cache_location, "catalyst-seeds")
+        return os.path.join(resolve_path(Repository.Settings.value.cache_location), "catalyst-seeds")
 
     def stage_work_directory(self, stage) -> str:
         """Transient generated files used while building this stage."""
@@ -141,17 +138,14 @@ class ProjectBuild(MultiStageProcess):
     def container_path(self, host_path: str) -> str:
         """Path inside toolset of file in project builds directory, or in mirrored folder (mounted at the same location,
         or under CATALYST_MIRRORS_PATH when its path contains whitespace). Other paths are the same."""
-        if host_path == self.work_root or host_path.startswith(self.work_root + os.sep):
-            relative = os.path.relpath(host_path, self.work_root)
-            return CATALYST_WORK_PATH if relative == "." else os.path.join(CATALYST_WORK_PATH, relative)
-        if self._path_in(host_path, self.catalyst_builds_directory):
-            relative = os.path.relpath(host_path, self.catalyst_builds_directory)
-            return CATALYST_BUILDS_PATH if relative == "." else os.path.join(CATALYST_BUILDS_PATH, relative)
-        if self._path_in(host_path, self.kernel_cache_directory):
-            relative = os.path.relpath(host_path, self.kernel_cache_directory)
-            return CATALYST_KERNEL_CACHE_PATH if relative == "." else os.path.join(CATALYST_KERNEL_CACHE_PATH, relative)
+        for root, target in ((self.work_root, CATALYST_WORK_PATH),
+                             (self.catalyst_builds_directory, CATALYST_BUILDS_PATH),
+                             (self.kernel_cache_directory, CATALYST_KERNEL_CACHE_PATH)):
+            if self._path_in(host_path, root):
+                relative = os.path.relpath(host_path, root)
+                return target if relative == "." else os.path.join(target, relative)
         for root in sorted(self.mirrored_paths(), key=len, reverse=True):
-            if host_path == root or host_path.startswith(root + os.sep):
+            if self._path_in(host_path, root):
                 return self.mirror_path(root) + host_path[len(root):]
         return host_path
 
@@ -175,7 +169,7 @@ class ProjectBuild(MultiStageProcess):
         # Caches in folders selected by user (automatic ones are in builds directory).
         paths += sorted({
             path for stage in self.plan.build_order() for path in self.stage_cache_paths(stage).values()
-            if not self._in_builds_directory(path)
+            if not self._path_in(path, self.builds_directory)
         })
         return paths
 
@@ -202,7 +196,7 @@ class ProjectBuild(MultiStageProcess):
     def _machine_cache_path(self, path: str) -> str | None:
         """Folder in machine used for automatic cache saved in path, None for caches selected by user."""
         for root, machine_root in self._saved_cache_roots():
-            if path.startswith(root + os.sep):
+            if path != root and self._path_in(path, root):
                 return os.path.join(self.executor.cache_directory(), machine_root, os.path.relpath(path, root))
         return None
 
@@ -217,13 +211,12 @@ class ProjectBuild(MultiStageProcess):
         if not self.machine:
             return []
         caches = [(distfiles_directory(), distfiles_directory(self.executor))]
-        used_paths = self.stage_cache_paths(stage)
         for argument in CACHE_ARGUMENTS:
             if argument == StageArgumentDetails.kerncache_path:
                 continue
             saved = stage_cache_path(self.project_directory, stage, argument)
-            if saved and self._machine_cache_path(saved) and argument in used_paths:
-                caches.append((saved, used_paths[argument]))
+            if saved and (machine_path := self._machine_cache_path(saved)):
+                caches.append((saved, machine_path))
         return caches
 
     def make_directories(self, paths: list[str]):
@@ -391,17 +384,12 @@ def running_project_build(project_directory, timestamp: str | None = None) -> Pr
 
 class ProjectBuildStep(MultiStageProcessStage):
     def start(self):
-        self.server_call = None
         self.namespace_processes = [] # Rootless processes, terminated when canceled.
         super().start()
     def cancel(self):
         super().cancel()
         for process in getattr(self, "namespace_processes", []):
             process.terminate()
-        if self.server_call:
-            self.server_call.cancel()
-            if self.server_call.thread:
-                self.server_call.thread.join()
     def run_command_in_toolset(self, command: str) -> bool:
         """Runs command in toolset, its output is added to step output."""
         result = False
@@ -447,7 +435,7 @@ class ProjectBuildStepFetchSnapshot(ProjectBuildStep):
         from .snapshot_manager import SnapshotManager
         from .snapshot_installation import delete_file, unlock_file_access
         process = self.multistage_process
-        snapshots = os.path.realpath(os.path.expanduser(Repository.Settings.value.snapshots_location))
+        snapshots = resolve_path(Repository.Settings.value.snapshots_location)
         os.makedirs(snapshots, exist_ok=True)
         started = datetime.now().timestamp() - 1
         command = catalyst_snapshot_command()
@@ -559,7 +547,8 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
             BindMount(mount_path=CATALYST_KERNEL_CACHE_PATH, host_path=process.kernel_cache_directory, store_changes=True, create_if_missing=True),
             # Generated specs and scripts for this build run only.
             BindMount(mount_path=CATALYST_WORK_PATH, host_path=process.work_root, store_changes=True, create_if_missing=True),
-            BindMount(mount_path=CATALYST_SNAPSHOTS_PATH, host_path=Repository.Settings.value.snapshots_location, store_changes=True),
+            BindMount(mount_path=CATALYST_SNAPSHOTS_PATH,
+                      host_path=resolve_path(Repository.Settings.value.snapshots_location), store_changes=True),
         ]
         # Directories referenced by spec values with host paths (@REPO_DIR@, root_overlay, repos, cache folders) are
         # available at the same paths.
@@ -614,12 +603,8 @@ class ProjectBuildStepDownloadSeed(ProjectBuildStep):
             architecture = process.project_directory.get_architecture()
             prefix = seed_name_prefix(process.project_directory, self.stage)
             self.log(f"Looking for latest {prefix}")
-            result = None
-            def completion_handler(value):
-                nonlocal result
-                result = value
-            ToolsetEnvBuilder.get_stage3_urls(completion_handler=completion_handler, architecture=architecture)
-            if isinstance(result, Exception) or result is None:
+            result = get_stage3_urls(architecture)
+            if isinstance(result, Exception):
                 raise RuntimeError(f"Failed to read list of stage3 files: {result}")
             url = select_seed_url(result, prefix)
             if url is None:
@@ -1060,15 +1045,19 @@ def _is_build_file(filename: str, name: str, iso_name: str | None) -> bool:
     """Files of build: archive of stage with DIGESTS, CONTENTS..., and ISO of livecd with its files."""
     return filename.startswith(name + ".") or (iso_name is not None and (filename == iso_name or filename.startswith(iso_name + ".")))
 
-def _move_stage_build_files(source_directory: str, name: str, destination_directory: str, iso_name: str | None = None) -> list[str]:
-    """Like move_stage_build_files, for files already owned by user (rootless builds)."""
+def _move_stage_build_files(source_directory: str, name: str, destination_directory: str,
+                            iso_name: str | None = None, owner_uid: int | None = None) -> list[str]:
+    """Moves catalyst outputs, optionally assigning them to the build owner."""
     os.makedirs(destination_directory, exist_ok=True)
     moved = []
     if not os.path.isdir(source_directory):
         return moved
     for filename in sorted(os.listdir(source_directory)):
         if _is_build_file(filename, name, iso_name):
-            shutil.move(os.path.join(source_directory, filename), os.path.join(destination_directory, filename))
+            target = os.path.join(destination_directory, filename)
+            shutil.move(os.path.join(source_directory, filename), target)
+            if owner_uid is not None:
+                os.chown(target, owner_uid, owner_uid)
             moved.append(filename)
     # Folder of target left by catalyst (eg. root of livecd ISO, already in ISO and tarball).
     leftover = os.path.join(source_directory, name)
@@ -1080,19 +1069,5 @@ def _move_stage_build_files(source_directory: str, name: str, destination_direct
 def move_stage_build_files(source_directory: str, name: str, destination_directory: str, iso_name: str | None = None) -> list[str]:
     """Moves files produced by catalyst for given build name (archive, DIGESTS, CONTENTS..., ISO of livecd) to
     destination, and makes them owned by user. Folder of target left by catalyst (root of livecd ISO) is removed."""
-    import os, shutil
     uid = RootHelperServer.shared().uid
-    os.makedirs(destination_directory, exist_ok=True)
-    moved = []
-    if not os.path.isdir(source_directory):
-        return moved
-    for filename in sorted(os.listdir(source_directory)):
-        if filename.startswith(name + ".") or (iso_name is not None and (filename == iso_name or filename.startswith(iso_name + "."))):
-            target = os.path.join(destination_directory, filename)
-            shutil.move(os.path.join(source_directory, filename), target)
-            os.chown(target, uid, uid)
-            moved.append(filename)
-    leftover = os.path.join(source_directory, name)
-    if moved and os.path.isdir(leftover) and not os.path.islink(leftover):
-        shutil.rmtree(leftover, ignore_errors=True)
-    return moved
+    return _move_stage_build_files(source_directory, name, destination_directory, iso_name, owner_uid=uid)

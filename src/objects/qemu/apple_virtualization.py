@@ -13,7 +13,7 @@ import subprocess
 import sys
 from gi.repository import GLib
 
-from .qemu_run import QemuRun, QemuRunEvent, QemuBuildKind, QemuSupport, qemu_support, stage_image_directory
+from .qemu_run import QemuRun, QemuRunEvent, QemuBuildKind, QemuSupport, qemu_support
 from .custom_kernel import is_arm64_linux_image
 
 
@@ -163,8 +163,9 @@ class AppleVirtualizationRun(QemuRun):
         if self.support.kind == QemuBuildKind.ISO:
             options['iso'] = self.build.artifact_path
         else:
-            directory = stage_image_directory(self.build, 'apple', self.support.kernel_package,
-                                              self.support.kernel_snapshot, self.support.image_directory)
+            directory = self.support.image_directory
+            if not directory:
+                raise RuntimeError('Temporary VM image directory has not been allocated')
             kernel_path = os.path.join(directory, self.support.boot_kernel)
             if (self.support.kernel_package and self.support.machine.binary == 'qemu-system-aarch64'
                     and not is_arm64_linux_image(kernel_path)):

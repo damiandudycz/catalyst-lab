@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Gtk, GLib
 from .app_events import app_event_bus, AppEvents
 from .build_queue import BuildQueue, BuildQueueEvent, QueuedBuild, running_build, LATEST
 from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessState

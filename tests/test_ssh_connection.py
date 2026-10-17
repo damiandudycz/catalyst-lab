@@ -14,10 +14,20 @@ if 'catalystlab' not in sys.modules:
     package.__path__ = [str(ROOT / 'src')] + [str(path) for path in (ROOT / 'src').rglob('*') if path.is_dir()]
     sys.modules['catalystlab'] = package
 
-from catalystlab.ssh_connection import SSHConnection, quote
+from catalystlab.ssh_connection import SSHConnection, _command_output, quote
 
 
 class SSHCommandTests(unittest.TestCase):
+    def test_command_output_collects_lines_and_uses_contextual_failure(self):
+        def run(_script, output):
+            output('first')
+            output('second')
+            return True
+
+        self.assertEqual(_command_output(run, 'script', 'failed'), 'first\nsecond')
+        with self.assertRaisesRegex(RuntimeError, 'failed'):
+            _command_output(lambda *_: False, 'script', 'failed')
+
     def test_command_has_master_and_batch_modes(self):
         connection = SSHConnection('192.0.2.5', port=2222, user='admin')
         master = connection._command(master=True)

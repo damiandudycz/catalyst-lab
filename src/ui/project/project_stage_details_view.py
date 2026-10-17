@@ -1,35 +1,30 @@
 import threading, uuid, os
 from gi.repository import Gtk, Gdk, Adw, GLib, Gio, Pango
-from dataclasses import dataclass
 from .project_directory import ProjectDirectory
 from .project_stage import (
-    ProjectStage, load_catalyst_targets, load_releng_templates,
+    ProjectStage, ProjectStageEvent,
     load_catalyst_stage_arguments_options, load_catalyst_stage_arguments_options_for_boolean,
     load_catalyst_stage_arguments_details, load_catalyst_stage_automatic_arguments_options,
-    ProjectStageEvent, ProjectStage
 )
 from .project_stage_arguments import (
-    StageArguments, StageArgumentTargetDetails, StageArgumentOption,
+    StageArgumentTargetDetails, StageArgumentOption,
     StageArgumentType, StageArgumentDetails, StageArgumentLevel, stage_argument_level
 )
 from .cl_toggle_group import CLToggle, CLToggleGroup
 from .combo_row_popup import fit_popup_to_items
 from .project_manager import ProjectManager
 from .git_directory import GitDirectoryEvent
-from .project_stage import ProjectStageEvent
 from .repository_list_view import ItemRow
-from .architecture import Architecture
 from .item_select_view import ItemSelectionViewEvent
-from .project_stage import ProjectStage, StageArgumentOption
 from .item_select_expander_row import ItemSelectionExpanderRow
 from .event_bus import EventBus
 from .project_stage_automatic_option import StageAutomaticOption
 from .project_stage_argument_descriptions import stage_argument_description
-from .project_stage_value_resolver import UNRESOLVED, resolved_stage_argument_display, resolve_stage_argument, split_additions
+from .project_stage_value_resolver import resolved_stage_argument_display, resolve_stage_argument, split_additions
 from .project_stage_portage_confdir import (
     StagePortageConfdirSource, stage_overlay_path, stage_root_overlay_path, root_overlay_values, FILE_OVERLAY_ARGUMENTS
 )
-from .project_stage_cache import CACHE_ARGUMENTS, is_automatic_cache, stage_cache_path, display_path
+from .project_stage_cache import CACHE_ARGUMENTS, stage_cache_path, display_path
 from .project_stage_kernels import (
     live_cd_kernel_warning, own_kernel_names,
     KERNEL_SETTINGS, KERNEL_SETTING_LEVELS, stage_kernel_names, kernel_setting, own_kernel_settings,
@@ -579,8 +574,6 @@ class ProjectStageDetailsView(Gtk.Box):
     # Helper functions
     # --------------------------------------------------------------------------
 
-#    def pref_group_for_option(self, option) -> Adw.PreferencesGroup:
-
 def create_unsupported_options(missing_values: list, argument: StageArgumentDetails | None) -> list[StageArgumentOption]:
     """Creates dummy entries for options that are currently set but not available in available options."""
     if not missing_values:
@@ -596,6 +589,12 @@ def create_unsupported_options(missing_values: list, argument: StageArgumentDeta
         )
         for value in missing_values
     ]
+
+def include_unsupported_options(options: list[StageArgumentOption], values: list,
+                                argument: StageArgumentDetails | None) -> list[StageArgumentOption]:
+    supported = {option.value for option in options}
+    missing = [value for value in values if value is not None and value not in supported]
+    return create_unsupported_options(missing, argument) + options
 
 class StageOptionExpanderRow(ItemSelectionExpanderRow):
 
@@ -629,11 +628,7 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
             current_value = getattr(self.stage, self.argument.details.name, None) # Mapped to object
             automatic_options = load_catalyst_stage_automatic_arguments_options(stage=self.stage, arg_details=self.argument, project_directory=self.project_directory)
             options = automatic_options + (load_catalyst_stage_arguments_options(project_directory=self.project_directory, stage=self.stage, arg_details=self.argument) or [])
-            # Add entries for unsupported values
-            option_values = {opt.value for opt in options}
-            missing_values = [val for val in [current_value] if val not in option_values and val is not None]
-            unsupported_options = self.create_unsupported_options(missing_values=missing_values, argument=self.argument.details)
-            options = unsupported_options + options
+            options = include_unsupported_options(options, [current_value], self.argument.details)
             self.selected_item = next((item for item in options if item.value == current_value), None)
             self.set_static_list(list=options)
         if self.argument.details and self.argument.details.type == StageArgumentType.multiselect:
@@ -648,27 +643,16 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
                 current_values = root_overlay_values(self.project_directory, self.stage, self.argument.details)
             automatic_options = load_catalyst_stage_automatic_arguments_options(stage=self.stage, arg_details=self.argument, project_directory=self.project_directory)
             options = automatic_options + (load_catalyst_stage_arguments_options(project_directory=self.project_directory, stage=self.stage, arg_details=self.argument) or [])
-            # Add entries for unsupported values
-            option_values = {opt.value for opt in options}
-            missing_values = [val for val in current_values if val not in option_values and val is not None]
-            unsupported_options = self.create_unsupported_options(missing_values=missing_values, argument=self.argument.details)
-            options = unsupported_options + options
+            options = include_unsupported_options(options, current_values, self.argument.details)
             self.selected_items = [option for option in options if option.value in current_values] if current_values else []
             self.set_static_list(list=options)
         if self.argument.details and self.argument.details.type == StageArgumentType.boolean:
             current_value = getattr(self.stage, self.argument.details.name, None) # Mapped to object
             automatic_options = load_catalyst_stage_automatic_arguments_options(stage=self.stage, arg_details=self.argument, project_directory=self.project_directory)
             options = automatic_options + load_catalyst_stage_arguments_options_for_boolean(arg_details=self.argument)
-            # Add entries for unsupported values
-            option_values = {opt.value for opt in options}
-            missing_values = [val for val in [current_value] if val not in option_values and val is not None]
-            unsupported_options = self.create_unsupported_options(missing_values=missing_values, argument=self.argument.details)
-            options = unsupported_options + options
+            options = include_unsupported_options(options, [current_value], self.argument.details)
             self.selected_item = next((item for item in options if item.value == current_value), None)
             self.set_static_list(list=options)
-
-    def create_unsupported_options(self, missing_values: list, argument: StageArgumentDetails) -> list[StageArgumentOption]:
-        return create_unsupported_options(missing_values=missing_values, argument=argument)
 
     def set_static_list(self, list: list):
         # Show values automatic options resolve to (inherit from parent, releng template...) when they can be determined.
@@ -1374,14 +1358,13 @@ class StageCacheRow(Adw.ExpanderRow):
     # State:
 
     def _source(self) -> str:
-        if is_automatic_cache(self.value):
+        if self.value == StageAutomaticOption.GENERATE_AUTOMATICALLY:
             return "automatic"
         return "folder" if self.value else "none"
 
     def load_state(self):
         value = getattr(self.stage, self.argument.attribute_name, None)
-        # Automatic options other than automatic cache come from stages made before caches had it, see is_automatic_cache.
-        self.value = StageAutomaticOption.GENERATE_AUTOMATICALLY if is_automatic_cache(value) else (value if isinstance(value, str) and value else None)
+        self.value = value if value == StageAutomaticOption.GENERATE_AUTOMATICALLY or isinstance(value, str) and value else None
         self._folder = self.value if isinstance(self.value, str) else getattr(self, "_folder", None)
         self._loading = True
         self.check_buttons[self._source()].set_active(True)

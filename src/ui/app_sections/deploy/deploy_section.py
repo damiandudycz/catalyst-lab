@@ -2,7 +2,7 @@ from gi.repository import Gtk, Adw
 from .app_section import app_section
 from .deploy_installation import DeployInstallation
 from .deploy_live_iso import LiveIsoDeployment
-from .status_indicator import items_status, processes_status
+from .status_indicator import processes_status
 from .app_events import app_event_bus, AppEvents
 from .deploy_create_view import DeployCreateView
 from .project_deploy_view import ProjectDeployView

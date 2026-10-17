@@ -3,9 +3,9 @@ import os, threading
 from gi.repository import Gtk, Adw, GLib
 from .build_machine import BuildMachine
 from .build_machine_manager import BuildMachineManager
-from .repository import Repository
+from .repository import Repository, collapse_home
 from .event_bus import SharedEvent
-from .usage_graph import UsageGraph, USAGE_INTERVAL_SECONDS
+from .usage_graph import USAGE_INTERVAL_SECONDS, usage_row, format_gib
 
 class BuildMachineDetailsView(Gtk.Box):
     """Details of virtual machine, laid out like toolset details: basic information, status, actions (start, stop,
@@ -33,10 +33,9 @@ class BuildMachineDetailsView(Gtk.Box):
         information_group.add(self.name_used_row)
         information_group.add(Adw.ActionRow(title="Lima instance", subtitle=machine.instance_name, subtitle_selectable=True))
         location = machine.machine_directory
-        home = os.path.expanduser("~")
         information_group.add(Adw.ActionRow(
             title="Location", subtitle_selectable=True,
-            subtitle="~" + location[len(home):] if location.startswith(home + os.sep) else location,
+            subtitle=collapse_home(location),
         ))
         content.append(information_group)
 
@@ -61,11 +60,11 @@ class BuildMachineDetailsView(Gtk.Box):
 
         # Usage of running machine, read every few seconds while view is shown.
         self.usage_group = Adw.PreferencesGroup(title="Usage", visible=False)
-        self.cpu_usage_row = self._usage_row("Processors")
-        self.memory_usage_row = self._usage_row("Memory")
-        self.swap_usage_row = self._usage_row("Swap")
-        self.disk_usage_row = self._usage_row("System disk")
-        self.workspace_usage_row = self._usage_row("Working space")
+        self.cpu_usage_row = usage_row("Processors", "…")
+        self.memory_usage_row = usage_row("Memory", "…")
+        self.swap_usage_row = usage_row("Swap", "…")
+        self.disk_usage_row = usage_row("System disk", "…")
+        self.workspace_usage_row = usage_row("Working space", "…")
         for row in (self.cpu_usage_row, self.memory_usage_row, self.swap_usage_row, self.disk_usage_row, self.workspace_usage_row):
             self.usage_group.add(row)
         content.append(self.usage_group)
@@ -122,13 +121,6 @@ class BuildMachineDetailsView(Gtk.Box):
 
     # Usage
 
-    @staticmethod
-    def _usage_row(title: str) -> Adw.ActionRow:
-        row = Adw.ActionRow(title=title, subtitle="…")
-        row.graph = UsageGraph()
-        row.add_suffix(row.graph)
-        return row
-
     def _start_usage_updates(self):
         if self._usage_timer is None:
             self._usage_timer = GLib.timeout_add_seconds(USAGE_INTERVAL_SECONDS, self._read_usage)
@@ -172,22 +164,22 @@ class BuildMachineDetailsView(Gtk.Box):
         self._previous_cpu = cpu
         if total := usage.get("MemTotal"):
             used = total - usage.get("MemAvailable", 0)
-            self._set_usage(self.memory_usage_row, used / total, f"{_gib(used)} of {_gib(total)}")
+            self._set_usage(self.memory_usage_row, used / total, f"{format_gib(used)} of {format_gib(total)}")
         swap_total = usage.get("SwapTotal", 0)
         self.swap_usage_row.set_visible(swap_total > 0)
         if swap_total:
             used = swap_total - usage.get("SwapFree", 0)
-            self._set_usage(self.swap_usage_row, used / swap_total, f"{_gib(used)} of {_gib(swap_total)}")
+            self._set_usage(self.swap_usage_row, used / swap_total, f"{format_gib(used)} of {format_gib(swap_total)}")
         disks = usage["disks"]
         if "/" in disks:
             used, size = disks["/"]
-            self._set_usage(self.disk_usage_row, used / size if size else 0, f"{_gib(used)} of {_gib(size)}")
+            self._set_usage(self.disk_usage_row, used / size if size else 0, f"{format_gib(used)} of {format_gib(size)}")
         from .lima import MACHINE_DATA_DIRECTORY
         workspace = disks.get(MACHINE_DATA_DIRECTORY)
         self.workspace_usage_row.set_visible(workspace is not None)
         if workspace:
             used, size = workspace
-            self._set_usage(self.workspace_usage_row, used / size if size else 0, f"{_gib(used)} of {_gib(size)}")
+            self._set_usage(self.workspace_usage_row, used / size if size else 0, f"{format_gib(used)} of {format_gib(size)}")
         return False
 
     @staticmethod
@@ -349,6 +341,3 @@ class BuildMachineDetailsView(Gtk.Box):
         BuildMachineManager.shared().remove_machine(self.machine)
         if self.content_navigation_view:
             self.content_navigation_view.pop()
-
-def _gib(size: int) -> str:
-    return f"{size / 1024 ** 3:.1f} GiB"

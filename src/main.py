@@ -5,7 +5,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
-from gi.repository import Gtk, Gio, Adw, Gdk
+from gi.repository import Gio, Adw, Gdk, Gtk
 from .main_window import CatalystlabWindow
 from .modules_scanner import scan_all_submodules
 from . import app_info
@@ -70,6 +70,15 @@ class CatalystlabApplication(Adw.Application):
         if startup_cleanup_needed:
             SnapshotManager.shared().start_auto_clean()
         self._library_initialized = True
+
+    def do_startup(self):
+        """Load app styles before any window is created."""
+        Adw.Application.do_startup(self)
+        provider = Gtk.CssProvider()
+        provider.load_from_resource('/com/damiandudycz/CatalystLab/style.css')
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self._style_provider = provider
 
     def do_activate(self):
         """Called when the application is activated.

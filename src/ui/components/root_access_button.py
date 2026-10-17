@@ -2,7 +2,7 @@ import sys
 from gi.repository import Gtk, Adw
 from .app_events import AppEvents, app_event_bus
 from .root_helper_client import RootHelperClient, RootHelperClientEvents, ServerCall, ServerCallEvents, AuthorizationKeeper
-from .settings import *
+from .settings import Repository, SettingsEvents
 from .root_command_output_view import RootCommandOutputView
 from .rootless import rootless_toolset_unsupported_reason
 
@@ -59,17 +59,6 @@ class RootAccessButton(Gtk.Overlay):
         self.start_button.set_sensitive(not RootHelperClient.shared().running_actions)
         self.task_list_box.append(self.start_button)
 
-        # Stop warning label
-        #self.stop_warning_label = Gtk.Label(label="Disabling root access while actions are in progress will terminate these action.")
-        #self.stop_warning_label.get_style_context().add_class("caption-heading")
-        #self.stop_warning_label.get_style_context().add_class("dim-label")
-        #self.stop_warning_label.set_halign(Gtk.Align.CENTER)
-        #self.stop_warning_label.set_margin_top(12)
-        #self.stop_warning_label.set_margin_bottom(6)
-        #self.stop_warning_label.set_wrap(True)
-        #self.stop_warning_label.set_visible(RootHelperClient.shared().running_actions and RootHelperClient.shared().is_server_process_running)
-        #self.task_list_box.append(self.stop_warning_label)
-
         # CheckButton for "Keep root access unlocked"
         self.keep_unlocked_checkbox = Gtk.CheckButton(label="Keep unlocked")
         self.keep_unlocked_checkbox.get_style_context().add_class("caption-heading")
@@ -78,12 +67,6 @@ class RootAccessButton(Gtk.Overlay):
         self.keep_unlocked_checkbox.connect("toggled", self.on_keep_unlocked_toggled)
         self.keep_unlocked_checkbox.set_margin_top(6)
         self.task_list_box.append(self.keep_unlocked_checkbox)
-
-        # Divider
-        #self.root_tasks_separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        #self.root_tasks_separator.set_visible(RootHelperClient.shared().running_actions)
-        #self.root_tasks_separator.set_margin_top(12)
-        #self.task_list_box.append(self.root_tasks_separator)
 
         # "Root tasks:" label (initially hidden)
         self.root_tasks_label = Gtk.Label(label="Root tasks:")
@@ -147,7 +130,6 @@ class RootAccessButton(Gtk.Overlay):
         self.start_button.set_visible(not enabled)
         self.stop_button.set_visible(enabled)
         self.update_visibility()
-        #self.stop_warning_label.set_visible(RootHelperClient.shared().running_actions and enabled)
 
     def root_requests_status_changed(self, client: RootHelperClient, call: ServerCall, status: bool):
         """Handle changes to root access request status."""
@@ -159,8 +141,6 @@ class RootAccessButton(Gtk.Overlay):
         self.start_button.set_sensitive(not RootHelperClient.shared().running_actions)
         self.root_tasks_label.set_visible(RootHelperClient.shared().running_actions)
         self.update_visibility()
-        #self.stop_warning_label.set_visible(RootHelperClient.shared().running_actions and RootHelperClient.shared().is_server_process_running)
-        #self.root_tasks_separator.set_visible(RootHelperClient.shared().running_actions)
 
     def disable_root_access(self, sender):
         """Disable root access when the button is clicked."""
@@ -209,10 +189,7 @@ class RootActionInfoRow(Gtk.Box):
 
         # Create label on the left
         self.name_button = Gtk.Button(label=call.request.function_name)
-        #self.name_button.set_hexpand(True)
         self.name_button.get_style_context().add_class("flat")
-        #self.name_button.set_can_focus(False)
-        #self.name_button.set_focusable(False)
         self.name_button.connect("clicked", self.show_output)
         row_box.append(self.name_button)
 

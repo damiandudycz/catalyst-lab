@@ -143,11 +143,10 @@ STAGE_ARGUMENT_DESCRIPTIONS: dict[str, str] = {
 
 # Options available in multiple targets (<target>/<option>), for targets without own description.
 _TARGET_OPTION_DESCRIPTIONS: dict[str, str] = {
-    option.split("/", 1)[1]: description for option, description in STAGE_ARGUMENT_DESCRIPTIONS.items()
+    option.split("/", 1)[1]: description
+    for option, description in STAGE_ARGUMENT_DESCRIPTIONS.items()
     if option.startswith("livecd/")
-} | {
-    option.split("/", 1)[1]: description for option, description in STAGE_ARGUMENT_DESCRIPTIONS.items()
-    if option.startswith("stage4/") and option.split("/", 1)[1] in ("groups", "ssh_public_keys")
+    or option in {"stage4/groups", "stage4/ssh_public_keys"}
 }
 
 def stage_argument_description(name: str) -> str | None:

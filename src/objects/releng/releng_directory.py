@@ -6,11 +6,6 @@ class RelengDirectory(GitDirectory):
 
     @classmethod
     def base_location(cls) -> str:
-        from .repository import Repository
-        import os
-        return os.path.realpath(
-            os.path.expanduser(
-                Repository.Settings.value.releng_location
-            )
-        )
+        from .repository import Repository, resolve_path
+        return resolve_path(Repository.Settings.value.releng_location)
 

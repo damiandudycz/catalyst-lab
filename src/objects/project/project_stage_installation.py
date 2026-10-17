@@ -1,20 +1,14 @@
 from typing import final
-from abc import ABC, abstractmethod
-from .git_installation import GitInstallation, GitDirectorySetupConfiguration
-from .git_manager import GitManager
-from .toolset import Toolset
-from .releng_directory import RelengDirectory
-from .snapshot import Snapshot
-from .project_directory import ProjectDirectory, ProjectConfiguration
+from .project_directory import ProjectDirectory
 from .project_stage import ProjectStage, apply_default_stage_arguments
 from .multistage_process import (
     MultiStageProcess, MultiStageProcessStage,
-    MultiStageProcessState, MultiStageProcessStageState
+    MultiStageProcessStageState
 )
 import uuid
 
 @final
-class ProjectStageInstallation(MultiStageProcess, ABC):
+class ProjectStageInstallation(MultiStageProcess):
     def __init__(
         self,
         project_directory: ProjectDirectory,
@@ -74,10 +68,8 @@ class ProjectStageInstallationStepCreate(MultiStageProcessStage):
         self.releng_template_name = releng_template_name
         self.stage_name = stage_name
         self.parent_id = parent_id
-        self.process_started = False
     def start(self):
         super().start()
-        self.process_started = True
         try:
             stage = ProjectStage(id=None, parent_id=self.parent_id, name=self.stage_name, target_name=self.target_name, releng_template_name=self.releng_template_name, profile=None)
             try:
@@ -94,8 +86,4 @@ class ProjectStageInstallationStepCreate(MultiStageProcessStage):
             import traceback
             traceback.print_exc()  # This prints the full stack trace to stderr
             self.complete(MultiStageProcessStageState.FAILED)
-    def cleanup(self) -> bool:
-        if not super().cleanup():
-            return False
-        return True
 

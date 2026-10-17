@@ -1,6 +1,5 @@
 from __future__ import annotations
 import gzip, os, re, shlex, subprocess
-from datetime import datetime
 
 # ------------------------------------------------------------------------------
 # Details of stage builds stored in build.json (StageBuild.details), for reproducing builds and reporting bugs:
@@ -61,11 +60,14 @@ def seed_details(process, stage) -> dict | None:
 
 def failure_details(lines: list[str], failure_directory: str | None) -> dict:
     """Failed packages and reason found in build output, and logs collected for bug reports."""
-    packages, reason = [], None
+    packages, seen_packages, reason = [], set(), None
     for line in lines:
         line = _ANSI.sub("", line)
-        if (match := _FAILED_PACKAGE.search(line)) and not any(item["package"] == match.group(1) for item in packages):
-            packages.append({"package": match.group(1), "repository": match.group(2), "phase": match.group(3)})
+        if match := _FAILED_PACKAGE.search(line):
+            package = match.group(1)
+            if package not in seen_packages:
+                seen_packages.add(package)
+                packages.append({"package": package, "repository": match.group(2) or "gentoo", "phase": match.group(3)})
         if reason is None:
             reason = next((text for pattern, text in _FAILURE_REASONS if pattern.search(line)), None)
     failure = {"packages": packages, "reason": reason}

@@ -7,13 +7,11 @@ machines of project. Inside folder, packages are kept in subfolders by release t
 """
 from __future__ import annotations
 import os, shutil, uuid, json
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Self
-from .repository import Serializable, Repository
+from .repository import Serializable, Repository, resolve_path
 from .architecture import Architecture
-from .event_bus import EventBus, SharedEvent
-from .status_indicator import StatusIndicatorState, StatusDetail, item_status
+from .event_bus import EventBus
 
 class PackagesDirectory(Serializable):
 
@@ -29,7 +27,7 @@ class PackagesDirectory(Serializable):
             try:
                 with open(path, encoding="utf-8") as file:
                     items.append(cls.init_from(json.load(file)))
-            except (OSError, ValueError, json.JSONDecodeError) as error:
+            except (OSError, ValueError) as error:
                 print(f"Failed to load packages directory metadata in {entry.path}: {error}")
         return items
 
@@ -73,7 +71,7 @@ class PackagesDirectory(Serializable):
 
     @staticmethod
     def base_location() -> str:
-        return os.path.realpath(os.path.expanduser(Repository.Settings.value.packages_location))
+        return resolve_path(Repository.Settings.value.packages_location)
 
     @staticmethod
     def sanitized_name_for_name(name: str) -> str:
@@ -93,6 +91,7 @@ class PackagesDirectory(Serializable):
     def compatibility(self, project) -> list[StatusDetail]:
         """Problems of using this folder by project: other architecture (error, packages can't be used), other CPU
         flags (warning, packages might not run on machines of project)."""
+        from .status import StatusIndicatorState, StatusDetail
         problems = []
         architecture = project.get_architecture()
         if self.architecture and architecture and self.architecture != architecture:
@@ -109,6 +108,7 @@ class PackagesDirectory(Serializable):
         return problems
 
     def is_usable_by(self, project) -> bool:
+        from .status import StatusIndicatorState
         return not any(problem.state == StatusIndicatorState.ERROR for problem in self.compatibility(project))
 
     # Display:
@@ -125,6 +125,7 @@ class PackagesDirectory(Serializable):
     @property
     def status_indicator_values(self):
         """Blinking while project using folder is being built."""
+        from .status import StatusIndicatorState, StatusDetail, item_status
         from .project_build_process import running_project_build
         building = [project.name for project in self.projects if running_project_build(project)]
         return item_status([StatusDetail(StatusIndicatorState.LOADED, f"Used by build of {', '.join(building)}")

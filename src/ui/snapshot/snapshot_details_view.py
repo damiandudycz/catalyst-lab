@@ -4,6 +4,7 @@ from .snapshot_manager import SnapshotManager
 from .snapshot import Snapshot
 from .project_build import load_project_builds
 from .packages_browser_view import PackagesBrowserView
+from .scrolled_window import scrolled_window
 
 
 class SnapshotDetailsView(Gtk.Box):
@@ -38,28 +39,19 @@ class SnapshotDetailsView(Gtk.Box):
         self.browser = PackagesBrowserView(loader=snapshot.load_ebuilds, loading_title="Loading snapshot…")
         details.append(self.browser)
         self.stack.add_titled_with_icon(
-            self._scrolled(details), "packages", "Packages", "archive-minimalistic-svgrepo-com-symbolic"
+            scrolled_window(details), "packages", "Packages", "archive-minimalistic-svgrepo-com-symbolic"
         )
 
         # Projects and saved builds that refer to this snapshot.
         self.used_by_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24,
                                    margin_start=24, margin_end=24, margin_top=12, margin_bottom=24)
         self.stack.add_titled_with_icon(
-            self._scrolled(self.used_by_box), "used-by", "Used by", "insert-link-symbolic"
+            scrolled_window(self.used_by_box), "used-by", "Used by", "insert-link-symbolic"
         )
         self.stack.connect("notify::visible-child-name", self._on_page_changed)
         self.connect("map", lambda *_: self._load_usage())
         self.browser.load()
         self._load_usage()
-
-    @staticmethod
-    def _scrolled(child: Gtk.Widget) -> Gtk.ScrolledWindow:
-        return Gtk.ScrolledWindow(
-            child=child,
-            hexpand=True,
-            vexpand=True,
-            hscrollbar_policy=Gtk.PolicyType.NEVER,
-        )
 
     def _on_page_changed(self, stack, _param):
         if stack.get_visible_child_name() == "used-by":

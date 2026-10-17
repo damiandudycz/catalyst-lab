@@ -3,7 +3,6 @@ from gi.repository import Gtk, GLib, Gio, Adw, GObject
 from .git_directory import GitDirectoryEvent, GitDirectoryStatus
 from .git_manager import GitManager
 from .git_update import GitUpdate
-import threading, os
 from .multistage_process import MultiStageProcess, MultiStageProcessEvent, MultiStageProcessState
 from .multistage_process_execution_view import MultistageProcessExecutionView
 from .event_bus import SharedEvent

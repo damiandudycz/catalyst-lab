@@ -1,5 +1,5 @@
 from __future__ import annotations
-from .deploy_installation import DeployStep
+from .deploy_step import DeployStep
 from .deploy_target import PartitionTable
 from .deploy_image import (
     create_image_script, shrink_image_script, compress_image_script, grow_root_script
@@ -71,7 +71,7 @@ class DeployStepSaveImage(DeployStep):
     def __init__(self, multistage_process):
         super().__init__(name="Save image", description="Moves image to selected location", multistage_process=multistage_process)
     def run(self):
-        import os, shutil
+        import os
         process = self.multistage_process
         source, destination = process.created_image_path, process.output_path
         if not destination or destination == source:

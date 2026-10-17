@@ -1,13 +1,30 @@
 from __future__ import annotations
-from gi.repository import Gtk, GLib, Gio, GObject, Adw
+from gi.repository import Gtk, GLib, GObject, Adw
 from enum import Enum, auto
 from .repository import Repository, RepositoryEvent
 from .repository_list_view import ItemRow
 from .event_bus import EventBus
 from .scroll_position import preserved_scroll_position
+from .item_select_state import no_valid_items_visible
 
 class ItemSelectionViewEvent(Enum):
     ITEM_CHANGED = auto() # Means selection was changed or currently selected state changed.
+
+def update_selection_messages(view, valid_items=None, allow_multiselect=False):
+    items = view.items()
+    if valid_items is None:
+        valid_items = [item for item in items if view.emit("is-item-selectable", item)]
+    selected_items = (view.selected_items or []) if allow_multiselect else [view.selected_item]
+    has_supported_selection = any(
+        item in items and not getattr(item, "unsupported", False)
+        for item in selected_items if item is not None
+    )
+    view.no_valid_entries_label.set_visible(
+        no_valid_items_visible(valid_items, view.display_none, allow_multiselect, has_supported_selection)
+    )
+    selected = view.selected_item
+    unusable = not allow_multiselect and selected is not None and not view.emit("is-item-usable", selected)
+    view.is_not_usable_label.set_visible(bool(unusable))
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/components/item_select/item_select_view.ui')
 class ItemSelectionView(Gtk.Box):
@@ -19,6 +36,10 @@ class ItemSelectionView(Gtk.Box):
         "setup-items-monitoring": (GObject.SignalFlags.RUN_FIRST, None, (GObject.TYPE_PYOBJECT,)),
         "selection-changed": (GObject.SignalFlags.RUN_FIRST, None, (GObject.TYPE_PYOBJECT,)),
     }
+
+    def do_is_item_usable(self, item) -> bool:
+        """Items are usable unless a view marks them unavailable, such as a reserved toolset."""
+        return True
 
     # View elements:
     items_list = Gtk.Template.Child()
@@ -78,16 +99,16 @@ class ItemSelectionView(Gtk.Box):
 
     def select(self, item):
         self.selected_item = item
+        update_selection_messages(self)
         self.emit("selection-changed", self)
         self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
 
     def refresh_items_state(self, data):
         """Call this from class using this view when monitoring_usable_changes triggers an update"""
-        self.is_not_usable_label.set_visible(self.selected_item and not self.emit("is-item-usable", self.selected_item))
         valid_items = [item for item in self.items() if self.emit("is-item-selectable", item)]
-        self.no_valid_entries_label.set_visible(not valid_items)
         for row in self.rows:
             row.set_sensitive(row.item in valid_items)
+        update_selection_messages(self, valid_items)
         self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
 
     def _load_labels(self):
@@ -171,13 +192,13 @@ class ItemSelectionView(Gtk.Box):
             row.set_sensitive(item in valid_items)
             self.items_list.add(row)
             self.rows.append(row)
-        self.no_valid_entries_label.set_visible(not valid_items)
-        self.is_not_usable_label.set_visible(self.selected_item and not self.emit("is-item-usable", self.selected_item))
+        update_selection_messages(self, valid_items)
 
     def _on_item_selected(self, button: Gtk.CheckButton, item: item):
         """Callback for when a row's checkbox is toggled."""
         if button.get_active():
             self.selected_item = item
+            update_selection_messages(self)
             self.emit("selection-changed", self)
         else:
             if len(self.rows) == 1 and not self.display_none or len(self.rows) == 0 and self.display_none:

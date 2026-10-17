@@ -24,7 +24,8 @@ class BackendTests(unittest.TestCase):
         apple._load_bridge.cache_clear()
         self.project = types.SimpleNamespace(get_architecture=lambda: types.SimpleNamespace(value='arm64'))
         self.build = types.SimpleNamespace(stage_name='stage3', path='/build', artifact_path='/build/stage.tar.xz')
-        self.support = qemu.QemuSupport(qemu.QemuBuildKind.STAGE, qemu._MACHINES['arm64'], kernel='Image', initramfs='initramfs')
+        self.support = qemu.QemuSupport(qemu.QemuBuildKind.STAGE, qemu._MACHINES['arm64'], kernel='Image',
+                                        initramfs='initramfs', image_directory='/cache/TestVM/hash')
 
     def detection(self, **kwargs):
         return apple.apple_support(self.project, self.build)
@@ -65,7 +66,7 @@ class BackendTests(unittest.TestCase):
         self.addCleanup(lambda: qemu.QemuRun.running_runs.remove(run) if run in qemu.QemuRun.running_runs else None)
         bridge = Mock()
         bridge.api.cl_vm_create.return_value = 123
-        with patch.object(apple, 'apple_support', return_value=availability), patch.object(apple, '_load_bridge', return_value=bridge), patch.object(apple, 'stage_image_directory', return_value='/cache/TestVM/hash'):
+        with patch.object(apple, 'apple_support', return_value=availability), patch.object(apple, '_load_bridge', return_value=bridge):
             run.start()
             config = json.loads(bridge.api.cl_vm_create.call_args.args[0])
             self.assertEqual(config['disk'], '/cache/TestVM/hash/root.img')

@@ -36,49 +36,32 @@ _INSTANCE_NAME_EXAMPLE = "catalystlab-00000000"
 
 def machines_directory() -> str:
     """Machines of Catalyst Lab, one folder for each (disks, configuration, logs, working space). Next to toolsets."""
-    from .repository import Repository
-    toolsets_location = os.path.realpath(os.path.expanduser(Repository.Settings.value.toolsets_location))
+    from .repository import Repository, resolve_path
+    toolsets_location = resolve_path(Repository.Settings.value.toolsets_location)
     return os.path.join(os.path.dirname(toolsets_location), "Machines")
 
 def build_machine_temporary_directory(instance_name: str) -> str:
     """Temporary files for one build machine run, shared by its workspace and swap disk."""
-    from .repository import library_path
-    return os.path.realpath(os.path.expanduser(library_path("Temporary", "BuildMachines", instance_name)))
+    from .repository import library_path, resolve_path
+    return resolve_path(library_path("Temporary", "BuildMachines", instance_name))
 
 def workspace_image_path(instance_name: str) -> str:
     """Temporary ext4 image shared with a machine while an operation is running."""
     return os.path.join(build_machine_temporary_directory(instance_name), "workspace.img")
-
-def previous_temporary_workspace_image_path(instance_name: str) -> str:
-    """Workspace location used before workspace and swap data shared a per-machine directory."""
-    from .repository import library_path
-    return os.path.realpath(os.path.expanduser(library_path("Temporary", "Workspaces", instance_name + ".img")))
-
-def legacy_workspace_image_path(instance_name: str) -> str:
-    """Workspace image location used before workspaces moved into Library/Temporary."""
-    return os.path.join(machines_directory(), "workspaces", instance_name + ".img")
 
 def temporary_swap_disk_path(disk_name: str) -> str:
     """Lima swap disk data, beside its workspace in the per-machine Temporary folder."""
     instance_name = disk_name.removesuffix("-swap")
     return os.path.join(build_machine_temporary_directory(instance_name), "swap-disk")
 
-def previous_temporary_swap_disk_path(disk_name: str) -> str:
-    """Swap disk location used before it shared the machine workspace folder."""
-    from .repository import library_path
-    return os.path.realpath(os.path.expanduser(library_path("Temporary", "LimaSwapDisks", disk_name)))
-
 def remove_empty_build_machine_temporary_directory(instance_name: str) -> None:
     """Remove a per-machine run folder after its workspace and swap disk are both gone."""
     directory = build_machine_temporary_directory(instance_name)
-    try:
-        os.rmdir(directory)
-    except OSError:
-        return
-    try:
-        os.rmdir(os.path.dirname(directory))
-    except OSError:
-        pass
+    for path in (directory, os.path.dirname(directory)):
+        try:
+            os.rmdir(path)
+        except OSError:
+            break
 
 def move_lima_disk_to_temporary(disk_name: str, lima_home: str) -> str:
     """Move a newly created Lima disk into Temporary and leave its managed path as a symlink.
@@ -102,7 +85,7 @@ def move_lima_disk_to_temporary(disk_name: str, lima_home: str) -> str:
 def remove_temporary_lima_disk_data(disk_name: str, lima_home: str) -> None:
     """Remove a redirected disk's Temporary data and any leftover Lima symlink."""
     managed = os.path.join(lima_home, "_disks", disk_name)
-    temporary_paths = (temporary_swap_disk_path(disk_name), previous_temporary_swap_disk_path(disk_name))
+    temporary_paths = (temporary_swap_disk_path(disk_name),)
     if os.path.islink(managed) and os.path.realpath(managed) in temporary_paths:
         os.unlink(managed)
     for temporary in temporary_paths:
@@ -111,8 +94,7 @@ def remove_temporary_lima_disk_data(disk_name: str, lima_home: str) -> None:
     remove_empty_build_machine_temporary_directory(disk_name.removesuffix("-swap"))
 
 def default_lima_home() -> str:
-    """~/.lima in real home of user (not $HOME, which can be changed). Used by machines created before machines
-    directory, and when its path is too long."""
+    """~/.lima in the real home of user (not $HOME, which can be changed), used when the machine path is too long."""
     import pwd
     return os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".lima")
 
@@ -317,9 +299,8 @@ provision:
 {indented_setup}
 """
 
-# Version of machine setup, increased when setup script changes. Existing machines are updated when started.
-MACHINE_SETUP_VERSION = 8
-_MACHINE_SETUP_VERSION_FILE = "/etc/catalystlab-setup-version"
+# Provisioning marker: setup is run once when a machine is created.
+_MACHINE_SETUP_MARKER = "/etc/catalystlab-setup-complete"
 
 # QEMU user emulators, to build stages for other architectures (like on Linux hosts, binfmt_misc with F flag makes
 # them work in chroots and namespaces).
@@ -347,12 +328,11 @@ for entry in qemu-*; do
     magic=$(sed -n 's/^magic //p' "$entry")
     mask=$(sed -n 's/^mask //p' "$entry")
     interpreter=$(sed -n 's/^interpreter //p' "$entry")
-    registered_interpreter=$interpreter
     flags=$(sed -n 's/^flags: //p' "$entry")
     [ "$offset" = 0 ] && [ -n "$magic" ] && [ -n "$mask" ] || continue
     # Bytes 7 and 8 of ELF header are hex digits 15-18.
     fixed_mask="$(echo "$mask" | cut -c1-14)0000$(echo "$mask" | cut -c19-)"
-    [ "$fixed_mask" = "$mask" ] && [ "$interpreter" = "$registered_interpreter" ] && continue
+    [ "$fixed_mask" = "$mask" ] && continue
     echo -1 > "$entry"
     printf ':%s:M:0:%s:%s:%s:%s\n' "$entry" "$(echo "$magic" | sed 's/../\\x&/g')" \
         "$(echo "$fixed_mask" | sed 's/../\\x&/g')" "$interpreter" "$flags" > register
@@ -364,8 +344,8 @@ def machine_setup_script() -> str:
     mount point and emulators of other architectures."""
     return f"""#!/bin/sh
 set -eux
-# Lima runs provisioning on every boot, machine that is already set up starts without installing packages again.
-[ "$(cat {_MACHINE_SETUP_VERSION_FILE} 2>/dev/null || echo 0)" -ge {MACHINE_SETUP_VERSION} ] && exit 0
+# Provisioning runs on every boot; install the machine tools only once.
+test -f {_MACHINE_SETUP_MARKER} && exit 0
 # Mirror sometimes stops sending data in the middle of download (for a minute or more): downloads time out quickly
 # and are retried. Downloaded packages are kept in cache, so retries download only missing ones.
 mkdir -p /var/cache/catalystlab-apk
@@ -409,14 +389,7 @@ user=$(getent passwd | awk -F: '$3 >= 500 && $3 < 60000 {{ print $1; exit }}')
 grep -q "^$user:" /etc/subuid || echo "$user:100000:65536" >> /etc/subuid
 grep -q "^$user:" /etc/subgid || echo "$user:100000:65536" >> /etc/subgid
 mountpoint -q {MACHINE_DATA_DIRECTORY} || install -d -o "$user" {MACHINE_DATA_DIRECTORY}
-echo {MACHINE_SETUP_VERSION} > {_MACHINE_SETUP_VERSION_FILE}
-"""
-
-def machine_setup_update_script() -> str:
-    """Runs setup in existing machine when its version is older."""
-    return f"""[ "$(cat {_MACHINE_SETUP_VERSION_FILE} 2>/dev/null || echo 0)" -ge {MACHINE_SETUP_VERSION} ] && exit 0
-echo "Updating machine setup to version {MACHINE_SETUP_VERSION}"
-echo {_shell_base64(machine_setup_script())} | base64 -d | sudo sh
+touch {_MACHINE_SETUP_MARKER}
 """
 
 def _shell_base64(text: str) -> str:

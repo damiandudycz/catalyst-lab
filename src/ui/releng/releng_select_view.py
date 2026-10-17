@@ -1,5 +1,5 @@
 from __future__ import annotations
-from gi.repository import Gtk, GLib, Gio, GObject, Adw
+from gi.repository import Gtk
 from .releng_directory import RelengDirectory
 from .repository import Repository
 from .repository_list_view import ItemRow

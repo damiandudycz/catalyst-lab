@@ -80,8 +80,11 @@ def stage_kernel_names(project_directory, stage) -> list[str]:
     """Kernels built by stage (boot/kernel value, own or from releng template)."""
     from .project_stage_value_resolver import resolve_stage_argument
     value = resolve_stage_argument(project_directory, stage, StageArgumentDetails.boot_kernel.value)
-    names = value if isinstance(value, list) else [value]
-    return [name.strip() for name in names if isinstance(name, str) and name.strip()]
+    return _kernel_names(value)
+
+def _kernel_names(value) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    return [name.strip() for name in values if isinstance(name, str) and name.strip()]
 
 def own_kernel_settings(stage) -> dict[str, dict[str, Any]]:
     value = getattr(stage, BOOT_KERNELS_ATTRIBUTE, None)
@@ -139,17 +142,14 @@ def stage_inherits_kernels(stage) -> bool:
 
 def own_kernel_names(stage) -> list[str]:
     """Stage-specific kernel names, excluding names inherited from Releng."""
-    value = getattr(stage, StageArgumentDetails.boot_kernel.name, None)
-    values = value if isinstance(value, list) else [value]
-    return [item.strip() for item in values if isinstance(item, str) and item.strip()]
+    return _kernel_names(getattr(stage, StageArgumentDetails.boot_kernel.name, None))
 
 def releng_kernel_names(project_directory, stage) -> list[str]:
     """Kernels defined by releng template of stage."""
     from .project_stage_value_resolver import resolve_stage_argument
     value = resolve_stage_argument(project_directory, stage, StageArgumentDetails.boot_kernel.value,
                                    option=StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE)
-    names = value if isinstance(value, list) else [value]
-    return [name.strip() for name in names if isinstance(name, str) and name.strip()]
+    return _kernel_names(value)
 
 def set_kernel_names(project_directory, stage, names: list[str] | None, *, inherit: bool = False):
     """Set stage kernels, optionally keeping Releng kernels and adding stage-specific ones."""
@@ -270,7 +270,6 @@ def kernel_config_iso9660_warning(config_text: str) -> str | None:
 
 def live_cd_kernel_warning(project_directory, stage, name: str) -> str | None:
     """Warning about kernel of live CD stage (livecd-stage2) built by genkernel with own configuration."""
-    import os
     if (getattr(stage, "target", None) or "").replace("-", "_") != "livecd_stage2":
         return None
     distkernel, _ = kernel_setting(project_directory, stage, name, "distkernel")
@@ -279,11 +278,8 @@ def live_cd_kernel_warning(project_directory, stage, name: str) -> str | None:
     config, _ = kernel_setting(project_directory, stage, name, "config")
     if not isinstance(config, str) or not config:
         return None # Default configuration of kernel sources.
-    releng_directory = project_directory.get_releng_directory()
-    for placeholder, value in (("@STAGE_DIR@", project_directory.stage_directory_path(name=stage.name)),
-                               ("@PROJECT_DIR@", project_directory.directory_path()),
-                               ("@REPO_DIR@", releng_directory.directory_path() if releng_directory else "")):
-        config = config.replace(placeholder, value)
+    from .project_stage_portage_confdir import expand_stage_path
+    config = expand_stage_path(project_directory, stage, config)
     try:
         with open(config, encoding="utf-8", errors="replace") as file:
             return kernel_config_iso9660_warning(file.read())

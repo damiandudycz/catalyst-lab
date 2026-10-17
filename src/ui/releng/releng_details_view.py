@@ -3,6 +3,7 @@ from .git_directory_details_view import GitDirectoryDetailsView
 from .releng_manager import RelengManager
 from .releng_update import RelengUpdate
 from .files_browser_view import FilesBrowserView
+from .scrolled_window import scrolled_window
 
 class RelengDetailsView(Gtk.Box):
     """Releng directory: its Git directory (status, updates, changes) and its files (read-only), in tabs like overlay
@@ -23,18 +24,14 @@ class RelengDetailsView(Gtk.Box):
         details.set_margin_start(24)
         details.set_margin_end(24)
         details.set_margin_bottom(24)
-        self.stack.add_titled_with_icon(self._scrolled(details), "releng", "Releng", "book-minimalistic-svgrepo-com-symbolic")
+        self.stack.add_titled_with_icon(scrolled_window(details), "releng", "Releng", "book-minimalistic-svgrepo-com-symbolic")
         # Files:
         self.browser = FilesBrowserView(root=releng_directory.directory_path(), content_navigation_view=content_navigation_view)
         self.browser.set_margin_start(24)
         self.browser.set_margin_end(24)
         self.browser.set_margin_bottom(24)
-        self.stack.add_titled_with_icon(self._scrolled(self.browser), "files", "Files", "folder-symbolic")
+        self.stack.add_titled_with_icon(scrolled_window(self.browser), "files", "Files", "folder-symbolic")
         self.stack.connect("notify::visible-child-name", self._on_page_changed)
-
-    @staticmethod
-    def _scrolled(child: Gtk.Widget) -> Gtk.ScrolledWindow:
-        return Gtk.ScrolledWindow(child=child, hexpand=True, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
 
     def _on_page_changed(self, stack, _param):
         if stack.get_visible_child_name() == "files":

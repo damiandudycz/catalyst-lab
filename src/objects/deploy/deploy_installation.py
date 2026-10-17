@@ -2,8 +2,10 @@ from __future__ import annotations
 import os, re
 from dataclasses import dataclass, field
 from enum import Enum
-from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessStageState, MultiStageProcessEvent
-from .ssh_connection import SSHConnection, quote
+from .multistage_process import MultiStageProcess, MultiStageProcessEvent
+from .deploy_step import DeployStep
+from .ssh_connection import quote
+from .deploy_log import write_log_line
 from .deploy_target import TargetMachine, PartitionPlan, PartitionType
 from .deploy_boot import Bootloader, Kernel, FIRMWARE_PACKAGE, StageContents, packages_script, bootloader_script, grub_platform, CHROOT_SETUP
 from .deploy_system import (
@@ -309,14 +311,7 @@ class DeployInstallation(MultiStageProcess):
         return os.path.join(self.build.path, f"deploy-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{host}.log")
 
     def write_log(self, line: str):
-        if not self.log_path:
-            return
-        try:
-            if self._log_file is None:
-                self._log_file = open(self.log_path, "a", encoding="utf-8", buffering=1)
-            self._log_file.write(line + "\n")
-        except OSError as e:
-            print(f"Failed to write deploy log: {e}")
+        self._log_file = write_log_line(self.log_path, self._log_file, line)
 
     def complete_process(self, success: bool):
         # Partitions stay mounted after failure on LiveCD, so their files can be checked. Disk of this computer is
@@ -348,32 +343,6 @@ class DeployInstallation(MultiStageProcess):
             self.connection.close()
         except Exception as e:
             print(f"Failed to close connection: {e}")
-
-class DeployStep(MultiStageProcessStage):
-    """Step running scripts on machine, canceled by stopping them."""
-    def log(self, line: str):
-        super().log(line)
-        self.multistage_process.write_log(line)
-    def start(self):
-        self.processes = []
-        super().start()
-        self.multistage_process.write_log(f"=== {self.name}")
-        try:
-            self.run()
-            self.complete(MultiStageProcessStageState.COMPLETED)
-        except Exception as e:
-            print(f"Error during '{self.name}': {e}")
-            self.complete(MultiStageProcessStageState.FAILED)
-    def run(self):
-        raise NotImplementedError
-    def remote(self, script: str, error: str):
-        if not self.multistage_process.connection.run(script, self.log, self.processes):
-            raise RuntimeError(error)
-    def cancel(self):
-        super().cancel()
-        for process in getattr(self, "processes", []):
-            if process.poll() is None:
-                process.terminate()
 
 class DeployStepCheck(DeployStep):
     def __init__(self, multistage_process):

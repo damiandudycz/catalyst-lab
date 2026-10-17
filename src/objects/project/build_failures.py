@@ -20,7 +20,7 @@ def bugzilla_url(atom: str) -> str:
 @dataclass
 class PackageFailure:
     package: str              # With version, eg. sys-libs/readline-8.3_p6.
-    repository: str | None    # Repository of package (gentoo or overlay), None in records made before it was saved.
+    repository: str           # Repository of package (gentoo or overlay).
     phase: str | None         # Ebuild phase that failed (configure, compile...).
     reason: str | None        # Known reason found in output (eg. out of memory).
     project_directory: object
@@ -74,7 +74,7 @@ class PackageFailure:
         if project_id is None or stage_id is None:
             return None
         return (str(project_id), str(stage_id), self.atom,
-                (self.repository or "gentoo").casefold(), (self.phase or "").casefold(), reason)
+                self.repository.casefold(), (self.phase or "").casefold(), reason)
 
     @property
     def version(self) -> str:
@@ -86,8 +86,8 @@ class PackageFailure:
 
     @property
     def is_gentoo(self) -> bool:
-        """Package of Gentoo repository (its bugs are in Gentoo Bugzilla), assumed for records without repository."""
-        return self.repository in (None, "gentoo")
+        """Package of Gentoo repository (its bugs are in Gentoo Bugzilla)."""
+        return self.repository == "gentoo"
 
     @property
     def failure_directory(self) -> str | None:
@@ -124,7 +124,7 @@ def collect_package_failures() -> list[PackageFailure]:
             failure = (build.details or {}).get("failure") or {}
             for index, item in enumerate(failure.get("packages") or []):
                 if (package := item.get("package")) and not item.get("removed"):
-                    failures.append(PackageFailure(package=package, repository=item.get("repository"), phase=item.get("phase"),
+                    failures.append(PackageFailure(package=package, repository=item["repository"], phase=item["phase"],
                                                    reason=failure.get("reason"), project_directory=project, build=build,
                                                    index=index))
     failures.sort(key=lambda failure: failure.date, reverse=True)
@@ -132,7 +132,7 @@ def collect_package_failures() -> list[PackageFailure]:
 
 
 def reconcile_project_failure_states(project):
-    """Update automatic resolution states after a build is saved (also backfills older runs)."""
+    """Reconcile automatic resolution states across the project's build history."""
     from .project_build import load_project_builds
     try:
         _reconcile_resolution_states(project, load_project_builds(project))
@@ -151,9 +151,6 @@ def _configuration_key(build) -> str | None:
             spec = file.read()
     except OSError:
         return None
-    # Recompute instead of trusting the persisted fingerprint: older builds stored
-    # Portage/root overlay contents in that value, which incorrectly made overlay
-    # fixes look like unrelated configurations.
     inputs = build.details.get("inputs") or {}
     toolset = inputs.get("toolset") or {}
     try:
@@ -209,8 +206,8 @@ def _reconcile_resolution_states(project, builds: list):
         for index, item in enumerate(failure.get("packages") or []):
             if not item.get("package"):
                 continue
-            current = PackageFailure(package=item["package"], repository=item.get("repository"),
-                                     phase=item.get("phase"), reason=failure.get("reason"),
+            current = PackageFailure(package=item["package"], repository=item["repository"],
+                                     phase=item["phase"], reason=failure.get("reason"),
                                      project_directory=project, build=build, index=index)
             issue = current.issue_key
             if issue is None or config is None:

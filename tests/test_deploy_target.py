@@ -20,6 +20,10 @@ from catalystlab.deploy_target import (
 
 
 class TargetMachineTests(unittest.TestCase):
+    def test_firmware_display_names_do_not_depend_on_machine_architecture(self):
+        self.assertEqual(TargetFirmware.UEFI.display_name(), 'UEFI')
+        self.assertEqual(TargetFirmware.RASPBERRY_PI.display_name(), 'Raspberry Pi')
+
     def test_remote_discovery_ignores_non_writable_and_non_disk_devices(self):
         connection = Mock()
         connection.output.return_value = "\n".join((
