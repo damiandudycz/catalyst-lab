@@ -12,6 +12,7 @@ from .repository import Repository
 from .item_select_view import ItemSelectionViewEvent
 from .toolset_application import ToolsetApplication
 from .snapshot import LATEST_SNAPSHOT
+from .tree_node import walk_tree
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/project/project_build_view.ui')
 class ProjectBuildView(Gtk.Box):
@@ -89,14 +90,7 @@ class ProjectBuildView(Gtk.Box):
             self.stages_group.add(Adw.ActionRow(title="This project has no stages yet"))
 
     def _stages_in_tree_order(self) -> list[tuple]:
-        result = []
-        def visit(node, depth):
-            result.append((node.value, depth))
-            for child in node.children:
-                visit(child, depth + 1)
-        for root in self.project_directory.stages_tree():
-            visit(root, 0)
-        return result
+        return [(node.value, depth) for node, depth in walk_tree(self.project_directory.stages_tree())]
 
     # Snapshot
     # --------------------------------------------------------------------------

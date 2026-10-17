@@ -4,7 +4,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, GObject, Adw
 import cairo
 from .project_stage import stage_target_icon, stage_target_short_name
-from .tree_node import TreeNode
+from .tree_node import TreeNode, walk_tree
 from dataclasses import dataclass
 
 # Constants for spacing
@@ -327,16 +327,7 @@ class StagesTreeView(Gtk.Fixed):
                     context.stroke()
 
     def _get_all_nodes(self):
-        all_nodes = []
-        nodes_to_visit = list(self.root_nodes)
-        visited = set()
-        while nodes_to_visit:
-            node = nodes_to_visit.pop(0)
-            if node in visited: continue
-            visited.add(node)
-            all_nodes.append(node)
-            nodes_to_visit.extend(node.children)
-        return all_nodes
+        return [node for node, _depth in walk_tree(self.root_nodes)]
 
     def _measure_nodes(self):
         """Creates node widgets for new stages (existing ones are reused, so hovered node stays expanded when statuses

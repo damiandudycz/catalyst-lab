@@ -23,6 +23,7 @@ from .project_stage_portage_confdir import (
     portage_confdir_options, default_portage_confdir_sources, root_overlay_options, default_root_overlay_sources, FILE_OVERLAY_ARGUMENTS,
     ROOT_OVERLAY_ARGUMENTS, root_overlay_argument
 )
+from .tree_node import walk_tree
 
 class ProjectStage(Serializable):
 
@@ -567,27 +568,10 @@ def load_releng_templates(releng_directory: RelengDirectory, stage_name: str, ar
     return templates
 
 def load_stage_possible_seeds(stage: ProjectStage, project_directory: ProjectDirectory):
-    def _get_descendant_ids(stage: ProjectStage, project_directory: ProjectDirectory) -> list[int]:
-        project_stages_tree = project_directory.stages_tree()
-        def find_node(nodes: list, target_id: int):
-            for node in nodes:
-                if node.value.id == target_id:
-                    return node
-                result = find_node(node.children, target_id)
-                if result:
-                    return result
-            return None
-        def collect_ids(node) -> list[int]:
-            ids = []
-            for child in node.children:
-                ids.append(child.value.id)
-                ids.extend(collect_ids(child))
-            return ids
-        root_node = find_node(project_stages_tree, stage.id)
-        if not root_node:
-            return []
-        return collect_ids(root_node)
-    child_ids = _get_descendant_ids(stage=stage, project_directory=project_directory)
+    root_node = next((node for node, _ in walk_tree(project_directory.stages_tree())
+                      if node.value.id == stage.id), None)
+    child_ids = ([node.value.id for child in root_node.children for node, _ in walk_tree([child])]
+                 if root_node else [])
     return [
         s for s in project_directory.stages
         if s.id not in child_ids and s.id != stage.id
