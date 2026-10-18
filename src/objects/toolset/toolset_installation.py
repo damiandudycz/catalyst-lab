@@ -282,10 +282,15 @@ class ToolsetInstallationStepCompress(ToolsetInstallationStep):
     def start(self):
         super().start()
         try:
-            # Packed next to final file (toolsets folder is shared with machines), moved when finished.
             file_path = self.multistage_process.toolset.file_path()
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            self.toolset_squashfs_file = file_path + ".tmp"
+            # Build the image in Cache, which is shared with linked machines. Toolsets itself is not guaranteed to
+            # be mounted inside the executor, and a fixed sibling .tmp also collides if two installs use one name.
+            cache_directory = os.path.join(self.multistage_process.executor.cache_directory(), "ToolsetBuilds")
+            os.makedirs(cache_directory, exist_ok=True)
+            self.toolset_squashfs_file = os.path.join(
+                cache_directory, f".toolset-{uuid.uuid4().hex}.sqfs.tmp"
+            )
             self.squashfs_process = self.multistage_process.toolset.create_squashfs(output_file=self.toolset_squashfs_file)
             for line in self.squashfs_process.stdout:
                 line = line.strip()
@@ -295,7 +300,12 @@ class ToolsetInstallationStepCompress(ToolsetInstallationStep):
             if self.squashfs_process.wait() != 0:
                 raise RuntimeError("Failed to create squashfs file")
             self.squashfs_process = None
+            if not os.path.isfile(self.toolset_squashfs_file):
+                raise FileNotFoundError(
+                    f"SquashFS process completed without creating its output file: {self.toolset_squashfs_file}"
+                )
             shutil.move(self.toolset_squashfs_file, file_path)
+            self.toolset_squashfs_file = None
             self.multistage_process.toolset.unspawn(rebuild_squashfs_if_needed=False, clean_squashfs_binding_dir=False) # Need to unspawn now, to prevent issues with unmounting after squashfs_file was set
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
@@ -307,12 +317,6 @@ class ToolsetInstallationStepCompress(ToolsetInstallationStep):
         if self.state != MultiStageProcessStageState.COMPLETED:
             if getattr(self, "toolset_squashfs_file", None) and os.path.isfile(self.toolset_squashfs_file):
                 os.remove(self.toolset_squashfs_file)
-            if os.path.isfile(self.multistage_process.toolset.file_path()):
-                os.remove(self.multistage_process.toolset.file_path())
-            try:
-                os.rmdir(os.path.dirname(self.multistage_process.toolset.file_path()))
-            except OSError:
-                pass
         return True
     def cancel(self):
         super().cancel()
