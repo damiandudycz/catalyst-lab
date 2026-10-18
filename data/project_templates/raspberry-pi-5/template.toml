@@ -54,7 +54,7 @@ default = true
 [[variables]]
 id = "accept_all_licenses"
 title = "Accept all licenses"
-description = "Allows Portage to install packages with any license in selected stage4 builds (console, GNOME or KDE Plasma). Does not affect stage3 or ISO builds."
+description = "Required to enable stage4 builds (console, GNOME or KDE Plasma) because the Raspberry Pi kernel uses a restricted license. Allows Portage to install packages with any license in those selected stage4 builds. Does not affect stage3 or ISO builds."
 type = "boolean"
 default = false
 
@@ -66,10 +66,10 @@ description = "Select the console stage4, GNOME or KDE Plasma stage4 builds, opt
 type = "multiple"
 default = []
 options = [
-    { value = "stage4", title = "Console stage4" },
-    { value = "gnome", title = "GNOME stage4" },
-    { value = "gnome_customized", title = "Customized GNOME stage4", when = "'gnome' in extra_stages" },
-    { value = "plasma", title = "KDE Plasma stage4" },
+    { value = "stage4", title = "Console stage4", when = "accept_all_licenses" },
+    { value = "gnome", title = "GNOME stage4", when = "accept_all_licenses" },
+    { value = "gnome_customized", title = "Customized GNOME stage4", when = "accept_all_licenses and 'gnome' in extra_stages" },
+    { value = "plasma", title = "KDE Plasma stage4", when = "accept_all_licenses" },
     { value = "iso", title = "Installation ISO (experimental)", when = "init == 'openrc'" },
     { value = "iso_gui", title = "Live ISO with desktop (experimental)", when = "init == 'openrc'" },
 ]
@@ -98,7 +98,7 @@ hostname = "{{ replace(lower(project_name), ' ', '-') or 'raspberrypi' }}"
 stage1_name = "stage1-{{ init }}"
 stage4_name = "stage4-{{ init }}"
 gnome_customizations = "{{ 'gnome_customized' in extra_stages }}"
-with_desktop = "{{ 'gnome' in extra_stages or 'plasma' in extra_stages }}"
+with_desktop = "{{ accept_all_licenses and ('gnome' in extra_stages or 'plasma' in extra_stages) }}"
 desktop_stage3_name = "stage3-desktop-{{ init }}"
 iso_stage1_name = "livecd-stage1-{{ init }}"
 iso_stage2_name = "livecd-stage2-{{ init }}"
@@ -141,7 +141,7 @@ id = "stage4"
 parent = "stage3"
 name = "{{ stage4_name }}"
 target = "stage4"
-when = "'stage4' in extra_stages"
+when = "accept_all_licenses and 'stage4' in extra_stages"
 [stages.arguments]
 stage4_use = ["networkmanager", "bluetooth"]
 stage4_packages = "{{ base_packages }}"
@@ -162,7 +162,7 @@ id = "stage4-gnome"
 parent = "stage3-desktop"
 name = "{{ gnome_stage4_name }}"
 target = "stage4"
-when = "'gnome' in extra_stages"
+when = "accept_all_licenses and 'gnome' in extra_stages"
 [stages.arguments]
 profile = { type = "PortageProfile", value = { path = "default/linux/arm64/23.0/desktop/gnome{{ desktop_profile_suffix }}", stability = "stable", repo = "gentoo" } }
 version_stamp = "gnome-{{ init }}-@TIMESTAMP@"
@@ -177,7 +177,7 @@ id = "stage4-gnome-extras"
 parent = "stage4-gnome"
 name = "{{ gnome_extras_stage4_name }}"
 target = "stage4"
-when = "'gnome' in extra_stages and gnome_customizations"
+when = "accept_all_licenses and 'gnome' in extra_stages and gnome_customizations"
 [stages.arguments]
 stage4_packages = ["sys-apps/flatpak", "net-misc/curl", "app-arch/unzip"]
 version_stamp = "gnome-customized-{{ init }}-@TIMESTAMP@"
@@ -188,7 +188,7 @@ id = "stage4-plasma"
 parent = "stage3-desktop"
 name = "{{ plasma_stage4_name }}"
 target = "stage4"
-when = "'plasma' in extra_stages"
+when = "accept_all_licenses and 'plasma' in extra_stages"
 [stages.arguments]
 profile = { type = "PortageProfile", value = { path = "default/linux/arm64/23.0/desktop/plasma{{ desktop_profile_suffix }}", stability = "stable", repo = "gentoo" } }
 version_stamp = "plasma-{{ init }}-@TIMESTAMP@"
@@ -262,7 +262,7 @@ destination = "stages/{{ stage1_name }}"
 [[files]]
 source = "files/stage4"
 destination = "stages/{{ stage4_name }}"
-when = "'stage4' in extra_stages"
+when = "accept_all_licenses and 'stage4' in extra_stages"
 
 [[files]]
 source = "files/accept-all-licenses"

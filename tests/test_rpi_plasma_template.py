@@ -25,9 +25,9 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
         self.addCleanup(version.stop)
         self.template = ProjectTemplate.load(str(ROOT / 'data/project_templates/raspberry-pi-5'))
 
-    def generate(self, directory, init, accept_all_licenses=False):
+    def generate(self, directory, init, accept_all_licenses=True):
         names = self.template.resolve(dict(init=init, accept_all_licenses=accept_all_licenses,
-                                           extra_stages=['stage4', 'plasma', 'gnome', 'iso_gui']))
+                                           extra_stages=['stage4', 'plasma', 'gnome', 'gnome_customized', 'iso_gui']))
         generated = self.template.generate(names)
         for source, destination in generated.files:
             _copy_template_files(source, str(directory / destination), names, lambda _: None)
@@ -101,29 +101,27 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
             self.assertNotIn('boot_kernel', stages['livegui-stage2'].arguments)
             self.assertNotIn('boot_kernels', stages['livegui-stage2'].arguments)
 
-    def test_accept_all_licenses_adds_package_license_entry_only_to_stage4_variants(self):
+    def test_accept_all_license_toggle_gates_stage4_and_license_file(self):
         for selected in (False, True):
             with self.subTest(accept_all_licenses=selected), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary)
                 stages = self.generate(directory, 'openrc', accept_all_licenses=selected)
-                for stage_id in ('stage4', 'stage4-gnome', 'stage4-plasma'):
-                    stage_path = directory / 'stages' / stages[stage_id].name
-                    snippet = stage_path / 'portage/package.license/90-accept-all-licenses'
-                    if selected:
+                stage4_ids = ('stage4', 'stage4-gnome', 'stage4-plasma')
+                if selected:
+                    for stage_id in stage4_ids:
+                        self.assertIn(stage_id, stages)
+                        stage_path = directory / 'stages' / stages[stage_id].name
+                        snippet = stage_path / 'portage/package.license/90-accept-all-licenses'
                         self.assertEqual(snippet.read_text().strip(), '*/* *')
-                    else:
-                        self.assertFalse(snippet.exists())
+                        self.assertFalse((stage_path / 'portage/package.license/raspberry-pi').exists())
+                    self.assertIn('stage4-gnome-extras', stages)
+                else:
+                    for stage_id in stage4_ids:
+                        self.assertNotIn(stage_id, stages)
+                    self.assertNotIn('stage4-gnome-extras', stages)
                 for stage_id in ('livegui-stage1', 'livegui-stage2'):
                     stage_path = directory / 'stages' / stages[stage_id].name
                     self.assertFalse((stage_path / 'portage/package.license/90-accept-all-licenses').exists())
-
-    def test_raspberry_pi_kernel_license_is_accepted_for_stage4_variants(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            stages = self.generate(directory, 'openrc')
-            for stage_id in ('stage4', 'stage4-gnome', 'stage4-plasma'):
-                license_file = directory / 'stages' / stages[stage_id].name / 'portage/package.license/raspberry-pi'
-                self.assertIn('sys-kernel/raspberrypi-image raspberrypi-videocore-bin', license_file.read_text())
 
 
 if __name__ == '__main__':

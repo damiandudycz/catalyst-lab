@@ -22,7 +22,7 @@ from `sys-kernel/raspberrypi-image`. They also include NetworkManager, SSH, NTP,
 | CPU target | ARM Cortex-A76 (cortex-a76), Generic baseline |
 | Link-time optimization (LTO) | Off by default. Includes workarounds for packages that fail with LTO |
 | Kernel | Prebuilt Raspberry Pi kernel and modules (`sys-kernel/raspberrypi-image`) are installed in stage4 builds |
-| Accept all licenses | Off by default. When enabled, accepts all licenses for selected stage4 builds only through `package.license` |
+| Accept all licenses | Off by default. Required to make stage4 builds selectable because the Raspberry Pi kernel uses a restricted license. When enabled, accepts all licenses for selected stage4 builds through `package.license` |
 | Installation ISO (experimental) | OpenRC only. Live ISO (`livecd-stage1`, `livecd-stage2` from console stage3) with installation tools. Raspberry Pi firmware boots from FAT partitions, not ISO images, so it's for testing |
 | Live ISO with desktop (experimental) | OpenRC only. KDE Plasma live system like Gentoo LiveGUI (`livegui-stage1`, `livegui-stage2` from desktop stage3): SDDM logs user `gentoo` in to Plasma, basic applications (Konsole, Dolphin, Kate, Firefox, GParted) and installation tools. For testing, like the installation ISO |
 | Desktops | GNOME, KDE Plasma (any of them, each gets its own stage4) |
