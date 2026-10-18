@@ -92,21 +92,21 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
             self.assertNotIn('boot_kernel', stages['livegui-stage2'].arguments)
             self.assertNotIn('boot_kernels', stages['livegui-stage2'].arguments)
 
-    def test_accept_all_licenses_adds_make_conf_snippet_only_to_stage4_variants(self):
+    def test_accept_all_licenses_adds_package_license_entry_only_to_stage4_variants(self):
         for selected in (False, True):
             with self.subTest(accept_all_licenses=selected), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary)
                 stages = self.generate(directory, 'openrc', accept_all_licenses=selected)
                 for stage_id in ('stage4', 'stage4-gnome', 'stage4-plasma'):
                     stage_path = directory / 'stages' / stages[stage_id].name
-                    snippet = stage_path / 'portage/make.conf/90-accept-all-licenses'
+                    snippet = stage_path / 'portage/package.license/90-accept-all-licenses'
                     if selected:
-                        self.assertEqual(snippet.read_text().strip(), 'ACCEPT_LICENSE="*"')
+                        self.assertEqual(snippet.read_text().strip(), '*/* *')
                     else:
                         self.assertFalse(snippet.exists())
                 for stage_id in ('livegui-stage1', 'livegui-stage2'):
                     stage_path = directory / 'stages' / stages[stage_id].name
-                    self.assertFalse((stage_path / 'portage/make.conf/90-accept-all-licenses').exists())
+                    self.assertFalse((stage_path / 'portage/package.license/90-accept-all-licenses').exists())
 
 
 if __name__ == '__main__':

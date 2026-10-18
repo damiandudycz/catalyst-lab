@@ -54,6 +54,30 @@ class ProjectBuildDetailsTests(unittest.TestCase):
             "logs": "failure",
         })
 
+    def test_extracts_compiler_error_only_from_failed_package_report(self):
+        failure = failure_details([
+            "warning: error: optional feature probe failed, continuing",
+            ">>> Failed to emerge media-libs/glycin-loaders-2.2.1, Log file:",
+            " * Package: media-libs/glycin-loaders-2.2.1:2",
+            "warning: error: optional feature probe failed, continuing",
+            "aarch64-unknown-linux-gnu-gcc: fatal error: cannot execute ‘as’: posix_spawnp: Permission denied",
+            "compilation terminated.",
+            " * ERROR: media-libs/glycin-loaders-2.2.1::gentoo failed (configure phase):",
+        ], None)
+
+        self.assertEqual(failure["reason"], "error: cannot execute ‘as’: posix_spawnp: Permission denied")
+
+    def test_does_not_promote_warning_or_error_outside_failed_package_report(self):
+        failure = failure_details([
+            "warning: error: optional feature probe failed, continuing",
+            ">>> Failed to emerge media-libs/glycin-loaders-2.2.1, Log file:",
+            "warning: error: optional feature probe failed, continuing",
+            "configure completed successfully",
+            " * ERROR: media-libs/glycin-loaders-2.2.1::gentoo failed (configure phase):",
+        ], None)
+
+        self.assertIsNone(failure["reason"])
+
     def test_failure_logs_capture_assembler_permissions_and_mount_options(self):
         script = failure_logs_script('/stage/root', '/build/failure')
 

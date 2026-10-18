@@ -9,6 +9,12 @@ import gzip, os, re, shlex, subprocess
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # " * ERROR: net-libs/webkit-gtk-2.54.0-r411::gentoo failed (compile phase):"
 _FAILED_PACKAGE = re.compile(r"\* ERROR: (\S+?)(?:::(\S+))? failed \((\w+) phase\)")
+_FAILED_EMERGE = re.compile(r"^\s*>>> Failed to emerge (\S+),")
+_PACKAGE_ERROR_DETAIL = re.compile(
+    r"^\s*(?:(?:[\w.+-]*-)?(?:gcc|g\+\+|clang|clang\+\+)(?:-[\w.+-]+)*:\s*)?"
+    r"(?:fatal\s+)?error:\s*(.+)$",
+    re.I,
+)
 
 # Known reasons of failures, by text in build output (first match is used).
 _FAILURE_REASONS = [
@@ -61,15 +67,34 @@ def seed_details(process, stage) -> dict | None:
 def failure_details(lines: list[str], failure_directory: str | None) -> dict:
     """Failed packages and reason found in build output, and logs collected for bug reports."""
     packages, seen_packages, reason = [], set(), None
-    for line in lines:
-        line = _ANSI.sub("", line)
+    clean_lines = [_ANSI.sub("", line) for line in lines]
+    failure_markers = []
+    for index, line in enumerate(clean_lines):
         if match := _FAILED_PACKAGE.search(line):
             package = match.group(1)
+            failure_markers.append((index, package))
             if package not in seen_packages:
                 seen_packages.add(package)
                 packages.append({"package": package, "repository": match.group(2) or "gentoo", "phase": match.group(3)})
         if reason is None:
             reason = next((text for pattern, text in _FAILURE_REASONS if pattern.search(line)), None)
+    if reason is None:
+        # Keep detailed errors tied to Portage's report for a package it explicitly marked failed.
+        # This avoids promoting an unrelated warning or a recovered configure probe into the reason.
+        for failure_index, package in failure_markers:
+            starts = [index for index, line in enumerate(clean_lines[:failure_index])
+                      if (match := _FAILED_EMERGE.search(line)) and match.group(1) == package]
+            if not starts:
+                continue
+            start = starts[-1]
+            for line in reversed(clean_lines[start + 1:failure_index]):
+                if match := _PACKAGE_ERROR_DETAIL.search(line):
+                    detail = " ".join(match.group(1).split())
+                    if detail:
+                        reason = f"error: {detail[:400]}"
+                        break
+            if reason:
+                break
     failure = {"packages": packages, "reason": reason}
     if failure_directory and os.path.isdir(failure_directory) and os.listdir(failure_directory):
         failure["logs"] = os.path.basename(failure_directory)
