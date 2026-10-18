@@ -44,7 +44,7 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
                 for stage_id in ('stage4', 'stage4-gnome', 'stage4-plasma'):
                     stage = stages[stage_id]
                     packages = stages[stage_id].arguments['stage4_packages']
-                    self.assertNotIn('sys-kernel/raspberrypi-image', packages)
+                    self.assertIn('sys-kernel/raspberrypi-image', packages)
                     self.assertNotIn('sys-kernel/raspberrypi-sources', packages)
                     self.assertNotIn('boot_kernel', stage.arguments)
                     self.assertNotIn('boot_kernels', stage.arguments)
@@ -113,6 +113,14 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
                 for stage_id in ('livegui-stage1', 'livegui-stage2'):
                     stage_path = directory / 'stages' / stages[stage_id].name
                     self.assertFalse((stage_path / 'portage/package.license/90-accept-all-licenses').exists())
+
+    def test_raspberry_pi_kernel_license_is_accepted_for_stage4_variants(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            stages = self.generate(directory, 'openrc')
+            for stage_id in ('stage4', 'stage4-gnome', 'stage4-plasma'):
+                license_file = directory / 'stages' / stages[stage_id].name / 'portage/package.license/raspberry-pi'
+                self.assertIn('sys-kernel/raspberrypi-image raspberrypi-videocore-bin', license_file.read_text())
 
 
 if __name__ == '__main__':

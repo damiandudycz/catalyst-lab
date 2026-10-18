@@ -11,8 +11,8 @@ stage1 ─┬─ stage3 ── stage4                          (optional console
                            └─ stage4-plasma          (if KDE Plasma is selected)
 ```
 
-The console stage4 is optional and off by default. Select kernel packages in the stage package list as needed. It also
-includes NetworkManager, SSH, NTP, cpupower and sudo.
+The console stage4 is optional and off by default. Stage4 builds include the prebuilt Raspberry Pi kernel and modules
+from `sys-kernel/raspberrypi-image`. They also include NetworkManager, SSH, NTP, cpupower and sudo.
 
 ## Options
 
@@ -21,7 +21,7 @@ includes NetworkManager, SSH, NTP, cpupower and sudo.
 | Init system | OpenRC, systemd (OpenRC services are enabled automatically; Plasma graphical login is enabled for both) |
 | CPU target | ARM Cortex-A76 (cortex-a76), Generic baseline |
 | Link-time optimization (LTO) | Off by default. Includes workarounds for packages that fail with LTO |
-| Kernel | Select kernel packages in the stage package list; the template does not build or install a kernel itself |
+| Kernel | Prebuilt Raspberry Pi kernel and modules (`sys-kernel/raspberrypi-image`) are installed in stage4 builds |
 | Accept all licenses | Off by default. When enabled, accepts all licenses for selected stage4 builds only through `package.license` |
 | Installation ISO (experimental) | OpenRC only. Live ISO (`livecd-stage1`, `livecd-stage2` from console stage3) with installation tools. Raspberry Pi firmware boots from FAT partitions, not ISO images, so it's for testing |
 | Live ISO with desktop (experimental) | OpenRC only. KDE Plasma live system like Gentoo LiveGUI (`livegui-stage1`, `livegui-stage2` from desktop stage3): SDDM logs user `gentoo` in to Plasma, basic applications (Konsole, Dolphin, Kate, Firefox, GParted) and installation tools. For testing, like the installation ISO |

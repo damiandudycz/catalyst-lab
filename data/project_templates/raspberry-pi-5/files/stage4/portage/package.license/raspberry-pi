@@ -1,2 +1,3 @@
 sys-firmware/raspberrypi-wifi-ucode *
 sys-boot/raspberrypi-firmware *
+sys-kernel/raspberrypi-image raspberrypi-videocore-bin

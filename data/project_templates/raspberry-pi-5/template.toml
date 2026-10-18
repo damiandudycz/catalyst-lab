@@ -116,7 +116,7 @@ gnome_stage4_name = "stage4-gnome-{{ init }}"
 gnome_extras_stage4_name = "stage4-gnome-customized-{{ init }}"
 plasma_stage4_name = "stage4-plasma-{{ init }}"
 desktop_profile_suffix = "{{ '/systemd' if init == 'systemd' else '' }}"
-base_packages = "{{ ['app-admin/sudo', 'app-portage/gentoolkit', 'net-misc/networkmanager', 'net-misc/chrony', 'sys-power/cpupower'] + (['app-admin/sysklogd'] if openrc else []) + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
+base_packages = "{{ ['app-admin/sudo', 'app-portage/gentoolkit', 'net-misc/networkmanager', 'net-misc/chrony', 'sys-power/cpupower', 'sys-kernel/raspberrypi-image'] + (['app-admin/sysklogd'] if openrc else []) + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
 base_services = "{{ (['cpupower|boot', 'dbus|default', 'NetworkManager|default', 'sysklogd|default', 'chronyd|default', 'sshd|default'] + ([] if zram == 'off' else ['zram-init|boot'])) if openrc else [] }}"
 
 [[stages]]
