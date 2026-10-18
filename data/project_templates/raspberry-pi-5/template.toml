@@ -52,6 +52,13 @@ type = "boolean"
 default = true
 
 [[variables]]
+id = "accept_all_licenses"
+title = "Accept all licenses"
+description = "Allows Portage to install packages with any license in selected stage4 builds."
+type = "boolean"
+default = false
+
+[[variables]]
 id = "extra_stages"
 title = "Extra stages"
 section = "Extra stages"
@@ -258,6 +265,11 @@ destination = "stages/{{ stage4_name }}"
 when = "'stage4' in extra_stages"
 
 [[files]]
+source = "files/accept-all-licenses"
+destination = "stages/{{ stage4_name }}/portage"
+when = "accept_all_licenses and 'stage4' in extra_stages"
+
+[[files]]
 source = "files/zram"
 destination = "stages/{{ stage4_name }}/root_overlay"
 when = "'stage4' in extra_stages and zram != 'off'"
@@ -267,6 +279,11 @@ when = "'stage4' in extra_stages and zram != 'off'"
 source = "files/stage4"
 destination = "stages/{{ gnome_stage4_name }}"
 when = "'gnome' in extra_stages"
+
+[[files]]
+source = "files/accept-all-licenses"
+destination = "stages/{{ gnome_stage4_name }}/portage"
+when = "accept_all_licenses and 'gnome' in extra_stages"
 
 [[files]]
 source = "files/zram"
@@ -307,6 +324,11 @@ when = "'gnome' in extra_stages and lto and tuned"
 source = "files/stage4"
 destination = "stages/{{ plasma_stage4_name }}"
 when = "'plasma' in extra_stages"
+
+[[files]]
+source = "files/accept-all-licenses"
+destination = "stages/{{ plasma_stage4_name }}/portage"
+when = "accept_all_licenses and 'plasma' in extra_stages"
 
 [[files]]
 source = "files/zram"

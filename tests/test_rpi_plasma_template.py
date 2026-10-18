@@ -25,8 +25,9 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
         self.addCleanup(version.stop)
         self.template = ProjectTemplate.load(str(ROOT / 'data/project_templates/raspberry-pi-5'))
 
-    def generate(self, directory, init):
-        names = self.template.resolve(dict(init=init, extra_stages=['stage4', 'plasma', 'gnome', 'iso_gui']))
+    def generate(self, directory, init, accept_all_licenses=False):
+        names = self.template.resolve(dict(init=init, accept_all_licenses=accept_all_licenses,
+                                           extra_stages=['stage4', 'plasma', 'gnome', 'iso_gui']))
         generated = self.template.generate(names)
         for source, destination in generated.files:
             _copy_template_files(source, str(directory / destination), names, lambda _: None)
@@ -90,6 +91,22 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
                     self.assertFalse((stage / 'root_overlay/etc/X11/xorg.conf.d/99-catalystlab-vc4.conf').exists())
             self.assertNotIn('boot_kernel', stages['livegui-stage2'].arguments)
             self.assertNotIn('boot_kernels', stages['livegui-stage2'].arguments)
+
+    def test_accept_all_licenses_adds_make_conf_snippet_only_to_stage4_variants(self):
+        for selected in (False, True):
+            with self.subTest(accept_all_licenses=selected), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                stages = self.generate(directory, 'openrc', accept_all_licenses=selected)
+                for stage_id in ('stage4', 'stage4-gnome', 'stage4-plasma'):
+                    stage_path = directory / 'stages' / stages[stage_id].name
+                    snippet = stage_path / 'portage/make.conf/90-accept-all-licenses'
+                    if selected:
+                        self.assertEqual(snippet.read_text().strip(), 'ACCEPT_LICENSE="*"')
+                    else:
+                        self.assertFalse(snippet.exists())
+                for stage_id in ('livegui-stage1', 'livegui-stage2'):
+                    stage_path = directory / 'stages' / stages[stage_id].name
+                    self.assertFalse((stage_path / 'portage/make.conf/90-accept-all-licenses').exists())
 
 
 if __name__ == '__main__':

@@ -22,6 +22,7 @@ includes NetworkManager, SSH, NTP, cpupower and sudo.
 | CPU target | ARM Cortex-A76 (cortex-a76), Generic baseline |
 | Link-time optimization (LTO) | Off by default. Includes workarounds for packages that fail with LTO |
 | Kernel | Select kernel packages in the stage package list; the template does not build or install a kernel itself |
+| Accept all licenses | Off by default. When enabled, adds `ACCEPT_LICENSE="*"` to selected stage4 builds only |
 | Installation ISO (experimental) | OpenRC only. Live ISO (`livecd-stage1`, `livecd-stage2` from console stage3) with installation tools. Raspberry Pi firmware boots from FAT partitions, not ISO images, so it's for testing |
 | Live ISO with desktop (experimental) | OpenRC only. KDE Plasma live system like Gentoo LiveGUI (`livegui-stage1`, `livegui-stage2` from desktop stage3): SDDM logs user `gentoo` in to Plasma, basic applications (Konsole, Dolphin, Kate, Firefox, GParted) and installation tools. For testing, like the installation ISO |
 | Desktops | GNOME, KDE Plasma (any of them, each gets its own stage4) |
