@@ -35,7 +35,7 @@
                 <child>
                   <object class="AdwPreferencesGroup">
                     <property name="title">VM runner</property>
-                    <property name="description">Lima is required. The macOS app includes it; on Linux, install Lima using your system package manager.</property>
+                    <property name="description">Lima is required. The macOS app includes it; on Linux, Catalyst Lab looks for limactl on PATH.</property>
                     <child>
                       <object class="AdwEntryRow" id="name_row">
                         <property name="title">Name</property>
