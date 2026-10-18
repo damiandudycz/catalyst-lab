@@ -29,8 +29,9 @@ Updating the overlay is `git -C /var/db/repos/catalyst-lab pull`.
 
 - `deploy` (enabled by default): tools for deploying builds to disks, disk images and live CD images (OpenSSH,
   dosfstools, e2fsprogs, mtools, libisoburn, xz-utils).
-- `lima` (disabled by default): builds Lima from source into a private Catalyst Lab directory and installs QEMU and
-  OpenSSH for Linux VM runners.
+- `lima` (disabled by default): builds Lima from source as part of `dev-util/catalyst-lab`, installs it into a private
+  Catalyst Lab directory, and installs QEMU and OpenSSH for Linux VM runners. Enabling this flag requires Go 1.26 or
+  newer at build time; Lima is built directly with Go and does not require `sys-devel/make`.
 
 Enable it for Catalyst Lab with a package.use entry such as `dev-util/catalyst-lab lima`.
 
