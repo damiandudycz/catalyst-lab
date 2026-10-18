@@ -41,6 +41,9 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
                 plasma = stages['stage4-plasma']
                 display_manager_conf = (directory / 'stages' / plasma.name / 'root_overlay/etc/conf.d/display-manager')
                 self.assertEqual(display_manager_conf.is_file(), init == 'openrc')
+                gnome = stages['stage4-gnome']
+                gnome_display_manager_conf = (directory / 'stages' / gnome.name / 'root_overlay/etc/conf.d/display-manager')
+                self.assertEqual(gnome_display_manager_conf.is_file(), init == 'openrc')
                 for stage_id in ('stage4', 'stage4-gnome', 'stage4-plasma'):
                     stage = stages[stage_id]
                     packages = stages[stage_id].arguments['stage4_packages']

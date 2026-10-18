@@ -298,7 +298,7 @@ when = "'gnome' in extra_stages"
 [[files]]
 source = "files/desktop-gnome"
 destination = "stages/{{ gnome_stage4_name }}"
-when = "'gnome' in extra_stages"
+when = "'gnome' in extra_stages and openrc"
 
 [[files]]
 source = "files/gnome-extras/install-gnome-extras.sh"
