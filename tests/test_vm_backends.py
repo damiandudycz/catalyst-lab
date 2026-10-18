@@ -15,6 +15,7 @@ if 'catalystlab' not in sys.modules:
 
 from catalystlab import apple_virtualization as apple
 from catalystlab import qemu_run as qemu
+from catalystlab import repository
 
 LIMITS = dict(min_cpus=1, max_cpus=8, min_memory=1 << 30, max_memory=32 << 30)
 
@@ -22,6 +23,12 @@ LIMITS = dict(min_cpus=1, max_cpus=8, min_memory=1 << 30, max_memory=32 << 30)
 class BackendTests(unittest.TestCase):
     def setUp(self):
         apple._load_bridge.cache_clear()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        settings = types.SimpleNamespace(value=types.SimpleNamespace(temporary_location=self.temporary.name))
+        patcher = patch.object(repository.Repository, 'Settings', settings, create=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.project = types.SimpleNamespace(get_architecture=lambda: types.SimpleNamespace(value='arm64'))
         self.build = types.SimpleNamespace(stage_name='stage3', path='/build', artifact_path='/build/stage.tar.xz')
         self.support = qemu.QemuSupport(qemu.QemuBuildKind.STAGE, qemu._MACHINES['arm64'], kernel='Image',

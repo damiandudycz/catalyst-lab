@@ -17,7 +17,8 @@ def sorted_toolsets(toolsets=None, applications=()) -> list[Toolset]:
     settings_repository = getattr(Repository, "Settings", None)
     configured_id = getattr(getattr(settings_repository, "value", None), "default_toolset_id", None)
     return sorted(toolsets, key=lambda item: (
-        bool(configured_id and str(item.uuid) == configured_id and toolset_has_applications(item, applications)),
+        bool(configured_id and str(getattr(item, "uuid", "")) == configured_id
+             and toolset_has_applications(item, applications)),
         int(getattr(item, "metadata", {}).get("date_updated", 0) or 0),
         getattr(item, "name", "").lower()), reverse=True)
 

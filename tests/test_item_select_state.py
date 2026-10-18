@@ -2,12 +2,19 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from gi.repository import Gio
 
 ROOT = Path(__file__).resolve().parents[1]
 if 'catalystlab' not in sys.modules:
     package = types.ModuleType('catalystlab')
     package.__path__ = [str(ROOT / 'src')] + [str(path) for path in (ROOT / 'src').rglob('*') if path.is_dir()]
     sys.modules['catalystlab'] = package
+
+# Gtk.Template validates its resource paths during import. Register the bundle
+# produced by Meson so the UI helper can be imported by this headless test.
+resource_path = ROOT / '.build-macos' / 'build' / 'src' / 'catalystlab.gresource'
+if resource_path.is_file():
+    Gio.Resource.load(str(resource_path))._register()
 
 from catalystlab.item_select_state import ItemSelectionData, no_valid_items_visible
 from catalystlab.item_select_view import update_selection_messages

@@ -4,6 +4,7 @@ from .app_section import AppSection
 from .app_events import AppEvents, app_event_bus
 from .repository import Repository, library_directory, store_library_directory, collapse_home
 from .library import LibraryTarget, create_library, library_target
+from .runner import HOST_RUNNER
 
 # ------------------------------------------------------------------------------
 # Initial setup: optional library selection, then sections needed before first project (environments, releng
@@ -162,5 +163,8 @@ class InitialSetupPage(Gtk.Box):
             InitialSetupPage.push(self.content_navigation_view, self.step + 1)
 
     def _on_finish_pressed(self, _):
-        Repository.Settings.value.initial_setup_done = True
+        settings = Repository.Settings.value
+        if settings.default_runner_id is None and HOST_RUNNER.supported():
+            settings.default_runner_id = HOST_RUNNER.id
+        settings.initial_setup_done = True
         app_event_bus.emit(AppEvents.OPEN_APP_SECTION, AppSection.ProjectsSection)
