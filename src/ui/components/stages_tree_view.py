@@ -99,7 +99,9 @@ class StagesListView(Gtk.Box):
         self.set_hexpand(True)
         self.set_vexpand(True)
         self.list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-        self.list_box.set_hexpand(True)
+        # Keep the scrollable view full-size, but let the list and its rows use
+        # their natural width so a short list doesn't become a full-width slab.
+        self.list_box.set_halign(Gtk.Align.START)
         self.list_box.add_css_class("boxed-list")
         self.append(self.list_box)
 
@@ -129,6 +131,7 @@ class StagesListView(Gtk.Box):
             row.set_title_lines(1)
             row.set_subtitle_lines(1)
             row.set_activatable(not broken)
+            row.set_halign(Gtk.Align.START)
             if not broken:
                 row.connect("activated", lambda _row, selected_stage=stage: self.emit("stage-selected", selected_stage))
             icon_name = "danger-triangle-svgrepo-com-symbolic" if broken else stage_target_icon(target)
