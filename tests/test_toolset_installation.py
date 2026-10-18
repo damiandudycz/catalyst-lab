@@ -18,7 +18,7 @@ from catalystlab.toolset_installation import ToolsetInstallationStepCompress
 
 class FakeSquashfsProcess:
     def __init__(self, write_output=True, return_code=0):
-        self.stdout = iter(['100\n'])
+        self.stdout = iter(['Creating 4.0 filesystem\n', '100\n'])
         self.output_path = None
         self.write_output = write_output
         self.return_code = return_code
@@ -62,6 +62,8 @@ class ToolsetCompressionTests(unittest.TestCase):
             self.assertEqual(final.read_bytes(), b'squashfs image')
             self.assertEqual(Path(process.output_path).parent, Path(root, 'Cache', 'ToolsetBuilds'))
             self.assertNotEqual(process.output_path, str(final) + '.tmp')
+            self.assertFalse(Path(process.output_path).name.startswith('.'))
+            self.assertIn('Creating 4.0 filesystem', step.output_lines)
             self.assertFalse(Path(process.output_path).exists())
 
     def test_missing_output_reports_failure_without_deleting_existing_toolset(self):

@@ -289,7 +289,7 @@ class ToolsetInstallationStepCompress(ToolsetInstallationStep):
             cache_directory = os.path.join(self.multistage_process.executor.cache_directory(), "ToolsetBuilds")
             os.makedirs(cache_directory, exist_ok=True)
             self.toolset_squashfs_file = os.path.join(
-                cache_directory, f".toolset-{uuid.uuid4().hex}.sqfs.tmp"
+                cache_directory, f"toolset-{uuid.uuid4().hex}.sqfs.tmp"
             )
             self.squashfs_process = self.multistage_process.toolset.create_squashfs(output_file=self.toolset_squashfs_file)
             for line in self.squashfs_process.stdout:
@@ -297,10 +297,17 @@ class ToolsetInstallationStepCompress(ToolsetInstallationStep):
                 if line.isdigit():
                     percent = int(line)
                     self._update_progress(percent / 100.0)
+                elif line:
+                    self.log(line)
             if self.squashfs_process.wait() != 0:
-                raise RuntimeError("Failed to create squashfs file")
+                raise RuntimeError("Failed to create squashfs file; see compressor output above")
             self.squashfs_process = None
             if not os.path.isfile(self.toolset_squashfs_file):
+                try:
+                    cache_entries = ", ".join(sorted(os.listdir(cache_directory))) or "(empty)"
+                except OSError as error:
+                    cache_entries = f"could not list directory: {error}"
+                self.log(f"SquashFS output directory contents: {cache_entries}")
                 raise FileNotFoundError(
                     f"SquashFS process completed without creating its output file: {self.toolset_squashfs_file}"
                 )
