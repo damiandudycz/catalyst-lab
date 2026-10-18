@@ -14,7 +14,7 @@
         <property name="show_welcome_screen">True</property>
         <property name="welcome_screen_icon_name">virtual-machine-symbolic</property>
         <property name="welcome_screen_title">Create VM runner</property>
-        <property name="welcome_screen_description">A VM runner provides a Linux execution environment for primary tools and loaded toolsets on macOS. It's a small Alpine Linux system created with Lima. Folders of Catalyst Lab are shared with it.</property>
+        <property name="welcome_screen_description">A VM runner provides an isolated Linux execution environment for primary tools and loaded toolsets. It's a small Alpine Linux system created with Lima. Folders of Catalyst Lab are shared with it.</property>
         <property name="install_button_label">Create runner</property>
 
         <!-- Page 1: Configuration -->
@@ -35,7 +35,7 @@
                 <child>
                   <object class="AdwPreferencesGroup">
                     <property name="title">VM runner</property>
-                    <property name="description">Lima is required, install it with Homebrew: brew install lima</property>
+                    <property name="description">Lima is required. The macOS app includes it; on Linux, install Lima using your system package manager.</property>
                     <child>
                       <object class="AdwEntryRow" id="name_row">
                         <property name="title">Name</property>

@@ -2,9 +2,9 @@
 
 This guide describes where Catalyst Lab runs build tools and where it keeps their writable state. The key distinction is that a toolset image is a reusable, read-only base; each operation gets its own writable workspace.
 
-## macOS build path
+## Lima VM runner path
 
-Stage builds run in a Lima virtual machine using Alpine Linux. Alpine supplies the Linux kernel features the build needs, including user namespaces, SquashFS, and OverlayFS. The application shares its Library folders with the VM.
+When a VM runner is selected, builds run in a Lima virtual machine using Alpine Linux. Alpine supplies the Linux kernel features the build needs, including user namespaces, SquashFS, and OverlayFS. The application shares its Library folders with the VM. The macOS application bundles Lima and uses Virtualization.framework; Linux finds system Lima and uses QEMU with 9p shared folders.
 
 When an operation needs the VM, Catalyst Lab starts it, creates a sparse ext4 workspace image under `Library/Temporary/BuildMachines/<machine>/workspace.img`, and mounts that image in the guest at `/var/lib/catalystlab`. The workspace stores Linux ownership metadata, mount points, and temporary operation data. The swap disk lives next to the workspace image and is recreated for machine starts.
 
@@ -18,9 +18,9 @@ Toolset installation, updates, and interactive toolset use also run inside the V
 
 Direct SquashFS use is **experimental**. It avoids extracting and copying the full toolset for each operation, which can save startup time, temporary disk space, and repeated filesystem work. However, direct mounts expose the image's filesystem ownership through the VM and user-namespace mappings. If those IDs are translated differently between the host, build machine, and `bwrap`, files may appear owned by unexpected IDs or become inaccessible to Portage. The extracted-cache-and-copy flow is the current test baseline while this ownership behavior is investigated. Emerging successfully from a snapshot only confirms that the snapshot is accessible; it does not verify toolset ownership or writable Portage paths. Stage-build OverlayFS setup is separate and continues to mount its lower layer directly.
 
-## Linux build path
+## Linux Host build path
 
-On Linux, builds run on the host. When unprivileged user namespaces and the required tools are available, the application extracts SquashFS images into `Library/Cache/Extracted` and runs tools in isolated namespaces. It uses a privileged helper when rootless toolset execution is unavailable. In the current `MOUNT_SQFS_DIRECTLY = False` mode, toolset execution copies the reusable extraction into `Library/Temporary` for each operation; the source SquashFS and extracted cache remain unchanged. The code flag also selects the direct-mount path when set to `True` where the executor supports it.
+On Linux, builds can run on the Host or in a selected Lima VM runner. Host execution uses unprivileged user namespaces and the required tools when available; otherwise the application uses a privileged helper. Host execution extracts SquashFS images into `Library/Cache/Extracted` and runs tools in isolated namespaces. In the current `MOUNT_SQFS_DIRECTLY = False` mode, toolset execution copies the reusable extraction into `Library/Temporary` for each operation; the source SquashFS and extracted cache remain unchanged. The code flag also selects the direct-mount path when set to `True` where the executor supports it.
 
 ## Other virtual machines
 

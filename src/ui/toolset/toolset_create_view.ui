@@ -33,7 +33,7 @@
                 <property name="margin-top">4</property>
                 <property name="margin-bottom">4</property>
                 <property name="title">Runner</property>
-                <property name="description">A runner provides the execution environment for primary tools and loaded toolsets. Linux uses the Host runner; macOS uses a VM runner.</property>
+                <property name="description">A runner provides the execution environment for primary tools and loaded toolsets. Choose Host or an available VM runner.</property>
                 <property name="item_class_name">Runner</property>
                 <property name="include_host_runner">True</property>
                 <property name="item_icon">virtual-machine-symbolic</property>

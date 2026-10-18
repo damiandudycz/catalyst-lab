@@ -2,18 +2,16 @@ from __future__ import annotations
 import json, os, platform, shutil, signal, subprocess, sys, threading
 
 # ------------------------------------------------------------------------------
-# Lima (https://lima-vm.io) runs virtual machines used to build on systems other than Linux. On macOS it uses
-# Virtualization.framework. Folders of Catalyst Lab are shared with machines at the same paths.
+# Lima (https://lima-vm.io) provides isolated Linux runners. On macOS it uses Virtualization.framework; on Linux it
+# uses QEMU and 9p mounts. Folders of Catalyst Lab are shared with machines at the same paths.
 
 def virtual_machines_supported() -> bool:
-    """Virtual machines are available only on macOS, where toolsets can't run on the computer itself. Elsewhere
-    (Linux) UI for them is hidden.
-    TODO: Virtual machines could be supported on Linux too, for systems where toolsets can't run without root
-    (unprivileged user namespaces blocked, eg. by AppArmor on Ubuntu or hardened kernels), as alternative to the root
-    helper. It needs machine configuration for Linux hosts (vmType: qemu with KVM instead of vz, and shared folders
-    mount type working there, eg. virtiofs or 9p), install hint not mentioning Homebrew, and testing. Machines could
-    then be offered on Linux only when rootless toolsets are not supported (rootless_toolset_unsupported_reason)."""
-    return sys.platform == "darwin"
+    """Virtual machines are available whenever Lima is installed and discoverable.
+
+    The macOS application adds its bundled Lima directory to PATH; Linux installations
+    discover the system limactl executable.
+    """
+    return limactl_path() is not None
 
 # GUI apps on macOS don't get PATH of shell, so Homebrew locations are checked too.
 _LIMACTL_LOCATIONS = ["/opt/homebrew/bin/limactl", "/usr/local/bin/limactl"]
@@ -122,7 +120,9 @@ def limactl_path() -> str | None:
 def lima_unavailable_reason() -> str | None:
     """None when virtual machines can be created, otherwise reason why not."""
     if limactl_path() is None:
-        return "Lima is not installed. Install it with Homebrew: brew install lima"
+        if sys.platform == "darwin":
+            return "Lima is not available. The macOS application bundle should include it."
+        return "Lima (limactl) is not available on PATH. Install Lima for your system."
     return None
 
 def list_instances(home: str | None = None) -> dict[str, dict]:
@@ -184,7 +184,7 @@ def instance_process_ids(instance_name: str, home: str | None = None) -> list[in
     """Host agent of instance and processes it started (driver of virtual machine), from its pid files."""
     directory = os.path.join(home or lima_home(), instance_name)
     pids = []
-    for pid_file in ("ha.pid", "vz.pid"):
+    for pid_file in ("ha.pid", "vz.pid", "qemu.pid"):
         try:
             with open(os.path.join(directory, pid_file), encoding="utf-8") as file:
                 pid = int(file.read().strip())
@@ -209,7 +209,7 @@ def kill_instance_processes(instance_name: str, output_handler, home: str | None
     instance is stopped."""
     kill_processes(list(dict.fromkeys((pids or []) + instance_process_ids(instance_name, home))), output_handler)
     directory = os.path.join(home or lima_home(), instance_name)
-    for name in ("ha.pid", "ha.sock", "vz.pid", "default_ep.sock", "default_fd.sock"):
+    for name in ("ha.pid", "ha.sock", "vz.pid", "qemu.pid", "default_ep.sock", "default_fd.sock"):
         try:
             os.remove(os.path.join(directory, name))
         except OSError:
@@ -279,11 +279,13 @@ def machine_configuration(cpus: int, memory_gib: int, shared_paths: list[str]) -
     """Lima configuration (YAML) of build machine."""
     mounts = "\n".join(f'- location: "{path}"\n  writable: true' for path in shared_paths)
     indented_setup = "\n".join("    " + line for line in machine_setup_script().splitlines())
+    vm_type = "vz" if sys.platform == "darwin" else "qemu"
+    mount_type = "" if sys.platform == "darwin" else "mountType: 9p\n"
     return f"""minimumLimaVersion: 2.0.0
 base:
 - {LIMA_TEMPLATE}
-vmType: vz
-cpus: {cpus}
+vmType: {vm_type}
+{mount_type}cpus: {cpus}
 memory: {memory_gib}GiB
 disk: {SYSTEM_DISK_GIB}GiB
 containerd:

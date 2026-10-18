@@ -73,7 +73,7 @@ knowledge of Catalyst internals is needed.
 ### 🧰 Environments
 - **Toolsets** are isolated Gentoo environments with the tools needed for building (Catalyst, QEMU...). They are
   created from official stage3 images, kept as `.squashfs` files and can be updated from the app.
-- **Virtual machines** (macOS) run toolsets where stages can't be built natively. Catalyst Lab manages them with
+- **Virtual machines** run toolsets where stages can't be built natively or without root. Catalyst Lab manages them with
   [Lima](https://lima-vm.io):
   - they start when needed and stop when nothing uses them;
   - they emulate other architectures with QEMU;
@@ -157,7 +157,8 @@ Hovering the dot lists items and their states.
 
 ## How it works
 
-1. **Prepare an environment**: create a toolset (on macOS, create a virtual machine first).
+1. **Prepare an environment**: optionally create a VM runner when you want an isolated Linux execution environment,
+   then create a toolset on the Host or a VM runner.
 2. **Add sources**: clone a Releng directory and generate a snapshot.
 3. **Create a project**: choose its toolset, Releng directory, snapshot and architecture, then add stages.
 4. **Build**: select stages and start the build. Results appear in the **Builds** section.
@@ -169,7 +170,7 @@ Hovering the dot lists items and their states.
 
 | | Linux | macOS |
 |---|---|---|
-| Building stages | ✅ On the computer, without root when user namespaces are available | ✅ In virtual machines (Lima) |
+| Building stages | ✅ On the computer, without root when user namespaces are available; optionally in Lima VMs | ✅ In virtual machines (Lima, bundled with the app) |
 | Other architectures | ✅ QEMU user emulation | ✅ QEMU user emulation in the virtual machine |
 | Deploy over SSH | ✅ | ✅ |
 | Deploy to a local disk | ✅ | — Virtual machines can't access disks of the Mac |
@@ -178,6 +179,7 @@ Hovering the dot lists items and their states.
 
 **Linux**
 - `bwrap` (bubblewrap) 0.11 or newer
+- Lima (`limactl`) on PATH for optional VM runners
 - `squashfs-tools`, `git`
 - Kernel with overlayfs and squashfs support
 - For building without root: `unshare`, `newuidmap` / `newgidmap`, entries for your user in `/etc/subuid` and
@@ -332,11 +334,6 @@ some operation holds an authorization keeper.
   - export `.spec` and other Catalyst files instead of building in the app;
   - edit the final `.spec` before building, and show differences from the generated one.
 - **Help**: text and video help for each section, opened from relevant places in the app.
-- **Virtual machines on Linux**: for systems where toolsets can't run without root (unprivileged user namespaces
-  blocked, eg. by AppArmor on Ubuntu or hardened kernels), as an alternative to the root helper.
-  - Needs Lima configuration for Linux hosts: `vmType: qemu` with KVM, and a shared folder type that works there,
-    like virtiofs or 9p.
-  - See `virtual_machines_supported` in `lima.py`.
 
 ### Open tasks
 

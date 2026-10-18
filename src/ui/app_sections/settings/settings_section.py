@@ -82,7 +82,7 @@ class SettingsSection(Gtk.Box):
             self.default_runner_list.remove(row)
         self._default_runner_rows.clear()
         settings = Repository.Settings.value
-        choices = [(None, "Automatic (platform default)", "Uses Host on Linux or a VM runner on macOS", None)]
+        choices = [(None, "Automatic (platform default)", "Uses Host on Linux; uses a VM runner when available", None)]
         choices.append(("host", "Host", "Runs primary tools directly on this computer", HOST_RUNNER))
         choices.extend((str(runner.id), runner.name, runner.short_details, runner)
                        for runner in sorted(Repository.Runner.value, key=lambda item: item.name.lower()))
