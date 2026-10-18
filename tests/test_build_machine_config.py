@@ -41,6 +41,13 @@ class VMRunnerConfigTests(unittest.TestCase):
         with patch.object(lima, 'limactl_path', return_value=None):
             self.assertFalse(lima.virtual_machines_supported())
 
+    def test_linux_discovers_private_gentoo_lima_binary(self):
+        private_path = '/usr/libexec/catalyst-lab/lima/bin/limactl'
+        with patch.object(lima.sys, 'platform', 'linux'), \
+             patch.object(lima.shutil, 'which', return_value='/usr/bin/limactl'), \
+             patch.object(lima.os, 'access', side_effect=lambda path, _mode: path == private_path):
+            self.assertEqual(lima.limactl_path(), private_path)
+
 
 if __name__ == '__main__':
     unittest.main()

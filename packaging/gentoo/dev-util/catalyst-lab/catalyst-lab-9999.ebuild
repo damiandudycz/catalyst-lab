@@ -21,7 +21,7 @@ fi
 
 LICENSE="GPL-3+"
 SLOT="0"
-IUSE="+deploy"
+IUSE="+deploy lima"
 REQUIRED_USE="${PYTHON_REQUIRED_USE}"
 
 # Toolsets run in bubblewrap namespaces, mounted from squashfs images. Without unprivileged user namespaces, root
@@ -39,6 +39,11 @@ RDEPEND="
 	sys-apps/util-linux
 	sys-auth/polkit
 	sys-fs/squashfs-tools
+	lima? (
+		app-emulation/catalyst-lab-lima
+		app-emulation/qemu
+		net-misc/openssh
+	)
 	deploy? (
 		app-arch/xz-utils
 		dev-libs/libisoburn

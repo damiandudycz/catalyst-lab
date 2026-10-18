@@ -29,8 +29,13 @@ Updating the overlay is `git -C /var/db/repos/catalyst-lab pull`.
 
 - `deploy` (enabled by default): tools for deploying builds to disks, disk images and live CD images (OpenSSH,
   dosfstools, e2fsprogs, mtools, libisoburn, xz-utils).
+- `lima` (disabled by default): builds Lima from source into a private Catalyst Lab directory and installs QEMU and
+  OpenSSH for Linux VM runners.
+
+Enable it for Catalyst Lab with a package.use entry such as `dev-util/catalyst-lab lima`.
 
 ## Updating
 
-New release: copy the newest versioned ebuild to `catalyst-lab-<version>.ebuild` and push tag `v<version>`. Manifest
-of the release (`ebuild catalyst-lab-<version>.ebuild manifest`) is generated after the tag exists.
+New release: copy the newest versioned ebuild to `catalyst-lab-<version>.ebuild` and push tag
+`catalyst-lab-v<version>`. The overlay directory is excluded from release source archives so its Manifest can hash
+the archive without creating a checksum cycle.

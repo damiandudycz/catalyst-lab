@@ -8,8 +8,8 @@ import json, os, platform, shutil, signal, subprocess, sys, threading
 def virtual_machines_supported() -> bool:
     """Virtual machines are available whenever Lima is installed and discoverable.
 
-    The macOS application adds its bundled Lima directory to PATH; Linux installations
-    discover the system limactl executable.
+    The macOS application adds its bundled Lima directory to PATH. Linux installations
+    discover Catalyst Lab's private Gentoo runtime first, then a system limactl executable.
     """
     return limactl_path() is not None
 
@@ -115,7 +115,13 @@ def lima_environment(home: str | None = None) -> dict:
     return environment
 
 def limactl_path() -> str | None:
-    return shutil.which("limactl") or next((path for path in _LIMACTL_LOCATIONS if os.access(path, os.X_OK)), None)
+    if sys.platform.startswith("linux"):
+        # Prefer the Gentoo USE=lima runtime so builds use the version bundled for Catalyst Lab.
+        private_path = "/usr/libexec/catalyst-lab/lima/bin/limactl"
+        if os.access(private_path, os.X_OK):
+            return private_path
+    locations = list(_LIMACTL_LOCATIONS)
+    return shutil.which("limactl") or next((path for path in locations if os.access(path, os.X_OK)), None)
 
 def lima_unavailable_reason() -> str | None:
     """None when virtual machines can be created, otherwise reason why not."""
