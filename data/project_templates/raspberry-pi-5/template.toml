@@ -193,7 +193,7 @@ when = "'plasma' in extra_stages"
 profile = { type = "PortageProfile", value = { path = "default/linux/arm64/23.0/desktop/plasma{{ desktop_profile_suffix }}", stability = "stable", repo = "gentoo" } }
 version_stamp = "plasma-{{ init }}-@TIMESTAMP@"
 stage4_use = ["networkmanager", "bluetooth", "pulseaudio"]
-stage4_packages = "{{ base_packages + ['kde-plasma/plasma-meta', 'x11-misc/sddm'] }}"
+stage4_packages = "{{ base_packages + ['kde-plasma/plasma-meta', 'x11-misc/sddm'] + (['gui-libs/display-manager-init'] if openrc else []) }}"
 stage4_rcadd = "{{ base_services + (['display-manager|default'] if openrc else []) }}"
 stage4_empty = ["/var/cache/distfiles"]
 stage4_fsscript = "@STAGE_DIR@/configure-plasma.sh"
@@ -346,6 +346,11 @@ destination = "stages/{{ plasma_stage4_name }}"
 when = "'plasma' in extra_stages"
 
 [[files]]
+source = "files/openrc-display-manager/root_overlay"
+destination = "stages/{{ plasma_stage4_name }}/root_overlay"
+when = "'plasma' in extra_stages and openrc"
+
+[[files]]
 source = "files/lto-workarounds"
 destination = "stages/{{ plasma_stage4_name }}/portage"
 when = "'plasma' in extra_stages and lto"
@@ -462,9 +467,9 @@ destination = "stages/{{ livegui_stage2_name }}/portage"
 when = "'iso_gui' in extra_stages"
 
 [[files]]
-source = "files/desktop-plasma/root_overlay"
+source = "files/openrc-display-manager/root_overlay"
 destination = "stages/{{ livegui_stage2_name }}/root_overlay"
-when = "'iso_gui' in extra_stages"
+when = "'iso_gui' in extra_stages and openrc"
 
 [[files]]
 source = "files/zram"

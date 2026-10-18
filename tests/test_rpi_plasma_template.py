@@ -39,6 +39,8 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
                 directory = Path(temporary)
                 stages = self.generate(directory, init)
                 plasma = stages['stage4-plasma']
+                display_manager_conf = (directory / 'stages' / plasma.name / 'root_overlay/etc/conf.d/display-manager')
+                self.assertEqual(display_manager_conf.is_file(), init == 'openrc')
                 for stage_id in ('stage4', 'stage4-gnome', 'stage4-plasma'):
                     stage = stages[stage_id]
                     packages = stages[stage_id].arguments['stage4_packages']
@@ -48,7 +50,9 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
                     self.assertNotIn('boot_kernels', stage.arguments)
                     if stage_id == 'stage4-plasma':
                         self.assertEqual(stage.arguments['stage4_fsscript'], '@STAGE_DIR@/configure-plasma.sh')
+                        self.assertEqual('gui-libs/display-manager-init' in packages, init == 'openrc')
                     else:
+                        self.assertNotIn('gui-libs/display-manager-init', packages)
                         self.assertNotIn('stage4_fsscript', stage.arguments)
                 stage = directory / 'stages' / plasma.name
                 script = stage / 'configure-plasma.sh'
@@ -89,6 +93,8 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
                     stage = directory / 'stages' / stages[name].name
                     self.assertFalse((stage / 'configure-plasma.sh').exists())
                     self.assertFalse((stage / 'root_overlay/etc/X11/xorg.conf.d/99-catalystlab-vc4.conf').exists())
+            livegui = directory / 'stages' / stages['livegui-stage2'].name
+            self.assertTrue((livegui / 'root_overlay/etc/conf.d/display-manager').is_file())
             self.assertNotIn('boot_kernel', stages['livegui-stage2'].arguments)
             self.assertNotIn('boot_kernels', stages['livegui-stage2'].arguments)
 
