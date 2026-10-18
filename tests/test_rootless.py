@@ -215,6 +215,40 @@ class ExecutorTests(unittest.TestCase):
         self.assertIn('mode=$(stat -c %a "$TOOLSET$current")', script)
         self.assertIn('chmod "$mode" "$UPPER$current"', script)
 
+    def test_build_session_makes_synced_cache_writable_to_portage_and_checks_access(self):
+        executor = FakeExecutor()
+        with patch.object(project_build_rootless, 'sessions_directory', return_value='/workspace/Temporary/Sessions'):
+            script = project_build_rootless.stage_build_session_script(
+                executor, '/workspace/Toolsets/mount',
+                [('/library/Snapshots', '/var/db/repos/gentoo'),
+                 ('/vm/Cache/Distfiles', '/var/cache/distfiles')], 'catalyst --build',
+                synced_caches=[('/library/Cache/Distfiles', '/var/cache/distfiles')])
+
+        resolve_ids = script.index('PORTAGE_UID=$(awk')
+        cache_chown = script.index('chown "$PORTAGE_UID:$PORTAGE_GID" "$SESSION/caches/0/upper"')
+        cache_mount = script.index('mount -t overlay overlay -o lowerdir=/library/Cache/Distfiles')
+        access_check = script.index('Checking Gentoo snapshot and distfiles access as portage')
+        command = script.index('chroot "$ROOT" /usr/bin/env -i')
+        self.assertLess(resolve_ids, cache_chown)
+        self.assertLess(cache_chown, cache_mount)
+        self.assertLess(cache_mount, access_check)
+        self.assertLess(access_check, command)
+        self.assertIn('open("/var/db/repos/gentoo/profiles/thirdpartymirrors", "rb")', script)
+        self.assertIn('/usr/bin/python3 - <<\'PY_PORTAGE_ACCESS\'', script)
+        self.assertIn('os.setuid(account.pw_uid)', script)
+        self.assertIn('catalystlab-portage-access-test-', script)
+        self.assertNotIn('bind /vm/Cache/Distfiles /var/cache/distfiles', script)
+
+    def test_snapshot_generation_does_not_run_portage_access_preflight(self):
+        executor = FakeExecutor()
+        with patch.object(project_build_rootless, 'sessions_directory', return_value='/workspace/Temporary/Sessions'):
+            script = project_build_rootless.stage_build_session_script(
+                executor, '/workspace/Toolsets/mount',
+                [('/library/Snapshots', '/var/tmp/catalyst/snapshots')], 'catalyst -s stable')
+
+        self.assertNotIn('Checking Gentoo snapshot and distfiles access as portage', script)
+        self.assertNotIn('PORTAGE_UID=$(awk', script)
+
     def test_build_session_overrides_toolset_resolver_symlink_in_writable_overlay(self):
         executor = FakeExecutor()
         with patch.object(project_build_rootless, 'sessions_directory', return_value='/workspace/Temporary/Sessions'):

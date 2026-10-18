@@ -96,9 +96,9 @@ desktop_stage3_name = "stage3-desktop-{{ init }}"
 iso_stage1_name = "livecd-stage1-{{ init }}"
 iso_stage2_name = "livecd-stage2-{{ init }}"
 # Installation tools of minimal installation ISO of Gentoo releases.
-iso_packages = "{{ ['app-portage/gentoolkit', 'net-misc/chrony', 'net-misc/networkmanager', 'app-accessibility/brltty', 'app-admin/pwgen', 'app-arch/lbzip2', 'app-arch/pigz', 'app-arch/zstd', 'app-crypt/gnupg', 'app-misc/livecd-tools', 'app-portage/mirrorselect', 'app-shells/bash-completion', 'app-shells/gentoo-bashcomp', 'net-analyzer/traceroute', 'net-misc/dhcpcd', 'net-misc/iputils', 'net-misc/openssh', 'net-misc/rdate', 'net-wireless/iw', 'net-wireless/iwd', 'net-wireless/wireless-tools', 'net-wireless/wpa_supplicant', 'sys-apps/busybox', 'sys-apps/ethtool', 'sys-apps/gptfdisk', 'sys-apps/hdparm', 'sys-apps/iproute2', 'sys-apps/memtester', 'sys-apps/sdparm', 'sys-apps/usbutils', 'sys-auth/ssh-import-id', 'sys-block/parted', 'sys-fs/btrfs-progs', 'sys-fs/cryptsetup', 'sys-fs/dosfstools', 'sys-fs/e2fsprogs', 'sys-fs/f2fs-tools', 'sys-fs/lsscsi', 'sys-fs/sysfsutils', 'sys-fs/xfsprogs', 'sys-libs/gpm', 'sys-process/lsof', 'www-client/links', 'sys-devel/bc', 'sys-devel/bison', 'sys-devel/flex'] + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
+iso_packages = "{{ ['app-portage/gentoolkit', 'net-misc/chrony', 'net-misc/networkmanager', 'app-accessibility/brltty', 'app-admin/pwgen', 'app-arch/lbzip2', 'app-arch/pigz', 'app-arch/zstd', 'app-crypt/gnupg', 'app-misc/livecd-tools', 'app-portage/mirrorselect', 'app-shells/bash-completion', 'app-shells/gentoo-bashcomp', 'net-analyzer/traceroute', 'net-misc/dhcpcd', 'net-misc/iputils', 'net-misc/openssh', 'net-misc/rdate', 'net-wireless/iw', 'net-wireless/iwd', 'net-wireless/wireless-tools', 'net-wireless/wpa_supplicant', 'sys-apps/busybox', 'sys-apps/ethtool', 'sys-apps/gptfdisk', 'sys-apps/hdparm', 'sys-apps/iproute2', 'sys-apps/memtester', 'sys-apps/sdparm', 'sys-apps/usbutils', 'sys-auth/ssh-import-id', 'sys-block/parted', 'sys-fs/btrfs-progs', 'sys-fs/cryptsetup', 'sys-fs/dosfstools', 'sys-fs/e2fsprogs', 'sys-fs/f2fs-tools', 'sys-fs/lsscsi', 'sys-fs/sysfsutils', 'sys-fs/xfsprogs', 'sys-libs/gpm', 'sys-process/lsof', 'www-client/links'] + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
 # Packages of installation ISO added to releng installcd-stage1 ones.
-iso_extra_packages = "{{ ['net-misc/networkmanager', 'net-wireless/iwd', 'app-arch/lbzip2', 'app-arch/pigz', 'app-arch/zstd', 'sys-fs/sysfsutils', 'sys-process/lsof', 'sys-devel/bc', 'sys-devel/bison', 'sys-devel/flex'] + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
+iso_extra_packages = "{{ ['net-misc/networkmanager', 'net-wireless/iwd', 'app-arch/lbzip2', 'app-arch/pigz', 'app-arch/zstd', 'sys-fs/sysfsutils', 'sys-process/lsof'] + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
 iso_services = "{{ ([] if zram == 'off' else ['zram-init|boot']) + ['NetworkManager|default', 'chronyd|default'] + (['bluetooth|default'] if 'wireless' in groups else []) }}"
 livegui_stage1_name = "livegui-stage1-{{ init }}"
 livegui_stage2_name = "livegui-stage2-{{ init }}"
@@ -109,8 +109,7 @@ gnome_stage4_name = "stage4-gnome-{{ init }}"
 gnome_extras_stage4_name = "stage4-gnome-customized-{{ init }}"
 plasma_stage4_name = "stage4-plasma-{{ init }}"
 desktop_profile_suffix = "{{ '/systemd' if init == 'systemd' else '' }}"
-# Catalyst builds the Raspberry Pi kernel from raspberrypi-sources for stage4 and ISO stages.
-base_packages = "{{ ['app-admin/sudo', 'app-portage/gentoolkit', 'net-misc/networkmanager', 'net-misc/chrony', 'sys-power/cpupower', 'sys-devel/bc', 'sys-devel/bison', 'sys-devel/flex'] + (['app-admin/sysklogd'] if openrc else []) + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
+base_packages = "{{ ['app-admin/sudo', 'app-portage/gentoolkit', 'net-misc/networkmanager', 'net-misc/chrony', 'sys-power/cpupower'] + (['app-admin/sysklogd'] if openrc else []) + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
 base_services = "{{ (['cpupower|boot', 'dbus|default', 'NetworkManager|default', 'sysklogd|default', 'chronyd|default', 'sshd|default'] + ([] if zram == 'off' else ['zram-init|boot'])) if openrc else [] }}"
 
 [[stages]]
@@ -141,12 +140,7 @@ stage4_use = ["networkmanager", "bluetooth"]
 stage4_packages = "{{ base_packages }}"
 stage4_rcadd = "{{ base_services }}"
 stage4_empty = ["/var/cache/distfiles"]
-stage4_fsscript = "@STAGE_DIR@/install-kernel.sh"
-boot_kernel = ["rpi"]
 stage4_rm = ["/root/.bash_history"]
-[stages.arguments.boot_kernels.rpi]
-sources = "sys-kernel/raspberrypi-sources"
-config = "@STAGE_DIR@/kernel.config"
 
 [[stages]]
 id = "stage3-desktop"
@@ -169,12 +163,7 @@ stage4_use = ["networkmanager", "bluetooth", "pulseaudio"]
 stage4_packages = "{{ base_packages + ['gnome-base/gnome', 'gnome-base/gdm'] }}"
 stage4_rcadd = "{{ base_services + (['display-manager|default'] if openrc else []) }}"
 stage4_empty = ["/var/cache/distfiles"]
-stage4_fsscript = "@STAGE_DIR@/install-kernel.sh"
-boot_kernel = ["rpi"]
 stage4_rm = ["/root/.bash_history"]
-[stages.arguments.boot_kernels.rpi]
-sources = "sys-kernel/raspberrypi-sources"
-config = "@STAGE_DIR@/kernel.config"
 
 [[stages]]
 id = "stage4-gnome-extras"
@@ -201,15 +190,9 @@ stage4_packages = "{{ base_packages + ['kde-plasma/plasma-meta', 'x11-misc/sddm'
 stage4_rcadd = "{{ base_services + (['display-manager|default'] if openrc else []) }}"
 stage4_empty = ["/var/cache/distfiles"]
 stage4_fsscript = "@STAGE_DIR@/configure-plasma.sh"
-boot_kernel = ["rpi"]
 stage4_rm = ["/root/.bash_history"]
-[stages.arguments.boot_kernels.rpi]
-sources = "sys-kernel/raspberrypi-sources"
-config = "@STAGE_DIR@/kernel.config"
 
-# Installation ISO (experimental): releng minimal installation CD (installcd specs) with its Raspberry Pi kernel
-# configured through Catalyst's boot/kernel settings and additional tools. Raspberry Pi firmware boots kernels from
-# FAT partitions, not directly from ISO images; Catalyst's ISO kernel/initramfs are used by the firmware-prepared ISO.
+# Installation ISO (experimental): releng minimal installation CD (installcd specs) with additional tools.
 [[stages]]
 id = "livecd-stage1"
 parent = "stage3"
@@ -228,16 +211,11 @@ target = "livecd_stage2"
 releng_template = "installcd-stage2-minimal.spec"
 when = "'iso' in extra_stages"
 [stages.arguments]
-boot_kernel = ["rpi"]
 livecd_volid = "Gentoo-rpi5"
 livecd_iso = "install-rpi5-@TIMESTAMP@.iso"
 livecd_rcadd = "{{ ['@releng'] + iso_services }}"
-[stages.arguments.boot_kernels.rpi]
-sources = "sys-kernel/raspberrypi-sources"
-config = "@STAGE_DIR@/kernel.config"
-
 # Live ISO with desktop (experimental): KDE Plasma live system like Gentoo LiveGUI (releng livegui specs), from
-# desktop stage3, with the same kernel as installation ISO.
+# desktop stage3.
 [[stages]]
 id = "livegui-stage1"
 parent = "stage3-desktop"
@@ -257,7 +235,6 @@ name = "{{ livegui_stage2_name }}"
 target = "livecd_stage2"
 when = "'iso_gui' in extra_stages"
 [stages.arguments]
-boot_kernel = ["rpi"]
 livecd_type = "gentoo-release-livecd"
 livecd_bootargs = "nodhcp"
 livecd_depclean = "no"
@@ -268,39 +245,16 @@ livecd_fsscript = "@STAGE_DIR@/fsscript.sh"
 livecd_rcadd = "{{ livegui_services }}"
 livecd_unmerge = ["net-misc/netifrc"]
 livecd_empty = ["/var/db/repos", "/usr/src"]
-[stages.arguments.boot_kernels.rpi]
-sources = "sys-kernel/raspberrypi-sources"
-config = "@STAGE_DIR@/kernel.config"
 
 # CPU features and GPU of Raspberry Pi 5, inherited by all stages (parent overlay).
 [[files]]
 source = "files/stage1"
 destination = "stages/{{ stage1_name }}"
 
-# Raspberry Pi kernel, firmware and boot configuration.
+# Raspberry Pi boot configuration.
 [[files]]
 source = "files/stage4"
 destination = "stages/{{ stage4_name }}"
-when = "'stage4' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/kernel.config"
-destination = "stages/{{ stage4_name }}/kernel.config"
-when = "'stage4' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/portage"
-destination = "stages/{{ stage4_name }}/portage"
-when = "'stage4' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/root_overlay"
-destination = "stages/{{ stage4_name }}/root_overlay"
-when = "'stage4' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/install-kernel.sh"
-destination = "stages/{{ stage4_name }}/install-kernel.sh"
 when = "'stage4' in extra_stages"
 
 [[files]]
@@ -312,26 +266,6 @@ when = "'stage4' in extra_stages and zram != 'off'"
 [[files]]
 source = "files/stage4"
 destination = "stages/{{ gnome_stage4_name }}"
-when = "'gnome' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/kernel.config"
-destination = "stages/{{ gnome_stage4_name }}/kernel.config"
-when = "'gnome' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/portage"
-destination = "stages/{{ gnome_stage4_name }}/portage"
-when = "'gnome' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/root_overlay"
-destination = "stages/{{ gnome_stage4_name }}/root_overlay"
-when = "'gnome' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/install-kernel.sh"
-destination = "stages/{{ gnome_stage4_name }}/install-kernel.sh"
 when = "'gnome' in extra_stages"
 
 [[files]]
@@ -372,26 +306,6 @@ when = "'gnome' in extra_stages and lto and tuned"
 [[files]]
 source = "files/stage4"
 destination = "stages/{{ plasma_stage4_name }}"
-when = "'plasma' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/kernel.config"
-destination = "stages/{{ plasma_stage4_name }}/kernel.config"
-when = "'plasma' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/portage"
-destination = "stages/{{ plasma_stage4_name }}/portage"
-when = "'plasma' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/root_overlay"
-destination = "stages/{{ plasma_stage4_name }}/root_overlay"
-when = "'plasma' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/install-kernel.sh"
-destination = "stages/{{ plasma_stage4_name }}/install-kernel.sh"
 when = "'plasma' in extra_stages"
 
 [[files]]
@@ -461,8 +375,7 @@ stages = ["stage4", "stage4-gnome", "stage4-plasma"]
 stage4_packages = ["app-containers/docker", "app-containers/docker-cli"]
 stage4_rcadd = "{{ ['docker|default'] if openrc else [] }}"
 
-# Installation ISO: Raspberry Pi devices in both stages, kernel configuration and sources (with genkernel without
-# firmware) in stage2, zram of live system.
+# Installation ISO: Raspberry Pi device configuration in both stages and zram of live system.
 [[files]]
 source = "files/stage4/portage"
 destination = "stages/{{ iso_stage1_name }}/portage"
@@ -474,22 +387,12 @@ destination = "stages/{{ iso_stage2_name }}/portage"
 when = "'iso' in extra_stages"
 
 [[files]]
-source = "files/kernel-sources/kernel.config"
-destination = "stages/{{ iso_stage2_name }}/kernel.config"
-when = "'iso' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/portage"
-destination = "stages/{{ iso_stage2_name }}/portage"
-when = "'iso' in extra_stages"
-
-[[files]]
 source = "files/zram"
 destination = "stages/{{ iso_stage2_name }}/root_overlay"
 when = "'iso' in extra_stages and zram != 'off'"
 
-# Live ISO with desktop: Raspberry Pi devices and desktop settings (and LTO workarounds) in both stages, kernel
-# configuration and sources in stage2, live system setup (fsscript), Plasma display manager and zram.
+# Live ISO with desktop: Raspberry Pi devices and desktop settings (and LTO workarounds) in both stages, live system
+# setup (fsscript), Plasma display manager and zram.
 [[files]]
 source = "files/stage4/portage"
 destination = "stages/{{ livegui_stage1_name }}/portage"
@@ -517,16 +420,6 @@ when = "'iso_gui' in extra_stages"
 
 [[files]]
 source = "files/desktop/portage"
-destination = "stages/{{ livegui_stage2_name }}/portage"
-when = "'iso_gui' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/kernel.config"
-destination = "stages/{{ livegui_stage2_name }}/kernel.config"
-when = "'iso_gui' in extra_stages"
-
-[[files]]
-source = "files/kernel-sources/portage"
 destination = "stages/{{ livegui_stage2_name }}/portage"
 when = "'iso_gui' in extra_stages"
 

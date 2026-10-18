@@ -92,6 +92,11 @@ def stage_build_session_script(executor, toolset_path: str, bindings: list[tuple
     When build is interrupted, changes stay in session and are saved by save_interrupted_caches."""
     session = os.path.join(sessions_directory(executor), f"build-{uuid.uuid4().hex}")
     q = shlex.quote
+    caches = list(enumerate(synced_caches or []))
+    # A synced cache is mounted at its build path as an overlay. Binding the raw machine cache there afterward would
+    # hide the writable upper layer and make userpriv/userfetch writes fail.
+    synced_cache_targets = {os.path.normpath(used) for _saved, used in (synced_caches or [])}
+    bindings = [(host, target) for host, target in bindings if os.path.normpath(target) not in synced_cache_targets]
     binds = "\n".join(f"bind {q(host)} {q(target)}" for host, target in bindings)
     # Materialize bind mountpoints in the overlay upper layer before mounting the overlay. Creating a deeply nested
     # mountpoint directly in the merged view can fail with EOVERFLOW on the machine's SquashFS lower layer (notably
@@ -117,9 +122,9 @@ if os.path.isfile(source):
 PATCH_TOOLSET_FILE""" if patch_catalyst_stage1 else ""
     # Saved caches are lower layer of overlay (read from shared folder without copying), changes go to upper layer in
     # session and are copied back after build: new and changed files, and deletions (whiteouts, character devices).
-    caches = list(enumerate(synced_caches or []))
     sync_in = "\n".join(
         f'mkdir -p {q(saved)} {q(used)} "$SESSION/caches/{index}/upper" "$SESSION/caches/{index}/work" && '
+        f'chown "$PORTAGE_UID:$PORTAGE_GID" "$SESSION/caches/{index}/upper" && '
         f'echo {q(saved)} > "$SESSION/caches/{index}/saved" && '
         f'mount -t overlay overlay -o lowerdir={q(saved)},upperdir="$SESSION/caches/{index}/upper",workdir="$SESSION/caches/{index}/work" {q(used)} '
         f'|| {{ echo "Failed to use cache {saved}"; exit 1; }}'
@@ -127,6 +132,54 @@ PATCH_TOOLSET_FILE""" if patch_catalyst_stage1 else ""
     sync_out = "\n".join(
         f'save_cache "$SESSION/caches/{index}/upper" {q(used)} {q(saved)}'
         for index, (saved, used) in caches)
+    portage_setup = """# Resolve Portage's ids from the toolset: the build machine itself may not have a portage account.
+PORTAGE_UID=$(awk -F: '$1 == "portage" { print $3; exit }' "$TOOLSET/etc/passwd")
+PORTAGE_GID=$(awk -F: '$1 == "portage" { print $4; exit }' "$TOOLSET/etc/passwd")
+case "$PORTAGE_UID" in ''|*[!0-9]*) echo "Could not resolve portage uid from toolset"; exit 1 ;; esac
+case "$PORTAGE_GID" in ''|*[!0-9]*) echo "Could not resolve portage gid from toolset"; exit 1 ;; esac""" if caches else ""
+    has_gentoo_repo_binding = any(os.path.normpath(target) == "/var/db/repos/gentoo"
+                                  for _host, target in bindings)
+    portage_access_check = """# Check the same access that Portage's userpriv/userfetch workers need before launching Catalyst.
+if [ -f "$ROOT/var/db/repos/gentoo/profiles/thirdpartymirrors" ]; then
+    echo "Checking Gentoo snapshot and distfiles access as portage"
+    if ! chroot "$ROOT" /usr/bin/python3 - <<'PY_PORTAGE_ACCESS'
+import os, pwd, sys
+account = pwd.getpwnam("portage")
+os.setgid(account.pw_gid)
+os.setuid(account.pw_uid)
+try:
+    with open("/var/db/repos/gentoo/profiles/thirdpartymirrors", "rb"):
+        pass
+except OSError as error:
+    print(f"portage cannot read Gentoo snapshot: {error}", file=sys.stderr)
+    sys.exit(1)
+probe = f"/var/cache/distfiles/.catalystlab-portage-access-test-{os.getpid()}"
+try:
+    with open(probe, "xb"):
+        pass
+    os.unlink(probe)
+except OSError as error:
+    print(f"portage cannot write Gentoo distfiles cache: {error}", file=sys.stderr)
+    sys.exit(1)
+PY_PORTAGE_ACCESS
+    then
+        echo "Portage access check failed; effective identity and path permissions:"
+        chroot "$ROOT" /usr/bin/python3 - <<'PY_PORTAGE_DIAGNOSTICS' || true
+import os, pwd, stat
+account = pwd.getpwnam("portage")
+os.setgid(account.pw_gid)
+os.setuid(account.pw_uid)
+print(f"uid={os.getuid()} gid={os.getgid()}")
+for path in ("/var", "/var/db", "/var/db/repos", "/var/db/repos/gentoo", "/var/db/repos/gentoo/profiles", "/var/db/repos/gentoo/profiles/thirdpartymirrors", "/var/cache", "/var/cache/distfiles"):
+    try:
+        info = os.stat(path)
+        print(f"{stat.filemode(info.st_mode)} {info.st_uid}:{info.st_gid} {path}")
+    except OSError as error:
+        print(f"{path}: {error}")
+PY_PORTAGE_DIAGNOSTICS
+        exit 1
+    fi
+fi""" if has_gentoo_repo_binding and caches else ""
     diagnostics = f'[ $status != 0 ] && chroot "$ROOT" /usr/bin/env -i HOME=/tmp TERM=dumb PATH=/usr/sbin:/usr/bin:/sbin:/bin {diagnostics_command} < /dev/null' if diagnostics_command else ""
     return f"""set -u
 SESSION={q(session)}
@@ -163,6 +216,7 @@ prepare_bind_target() {{
 }}
 {prepare_bind_targets}
 {stage1_patch}
+{portage_setup}
 mkdir -p "$UPPER/etc" || exit 1
 if [ -d "$TOOLSET/etc" ]; then
     mode=$(stat -c %a "$TOOLSET/etc") || exit 1
@@ -180,6 +234,7 @@ bind() {{
 }}
 {sync_in}
 {binds}
+{portage_access_check}
 chroot "$ROOT" /usr/bin/env -i HOME=/tmp TERM=dumb PATH=/usr/sbin:/usr/bin:/sbin:/bin {command} < /dev/null
 status=$?
 {sync_out}

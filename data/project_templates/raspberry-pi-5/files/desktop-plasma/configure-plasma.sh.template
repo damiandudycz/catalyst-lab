@@ -2,8 +2,6 @@
 # Run by Catalyst inside the stage, after packages and root overlay are installed.
 set -euo pipefail
 
-bash "${CATALYSTLAB_KERNEL_INSTALLER:-/usr/local/libexec/catalystlab-install-kernel}"
-
 if {{ 'true' if init == 'systemd' else 'false' }}; then
     # Configure the image offline; never start services inside the build chroot.
     systemctl --root=/ enable sddm.service
