@@ -217,7 +217,9 @@ versions). Add it as a repository and `emerge dev-util/catalystlab`, see its REA
 ./install.sh
 ```
 
-This builds the app with Meson and installs it system-wide (`sudo ninja install`).
+This builds the app with Meson and installs it system-wide under `/usr/local`. The installer records the exact
+installed files so `./uninstall.sh` can remove this direct installation later. User data is kept. Use your package
+manager to remove package-managed installations.
 
 ### macOS: application bundle
 
