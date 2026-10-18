@@ -16,6 +16,8 @@ localedir = os.path.join(SHARE_DIRECTORY, "locale")
 # Icons (app, Adwaita, hicolor) and settings schemas of the bundle.
 os.environ["XDG_DATA_DIRS"] = os.pathsep.join(filter(None, [SHARE_DIRECTORY, os.environ.get("XDG_DATA_DIRS")]))
 os.environ["GSETTINGS_SCHEMA_DIR"] = os.path.join(SHARE_DIRECTORY, "catalystlab-schemas")
+# GTK was built into a private prefix. Point its data lookup at the relocated bundle prefix rather than the build path.
+os.environ["GTK_DATA_PREFIX"] = BUNDLE_DIRECTORY
 # Bundled tools: squashfs tools and Lima (virtual machines). Apps started from Finder don't get PATH of shell.
 os.environ["PATH"] = os.pathsep.join([
     os.path.join(BUNDLE_DIRECTORY, "bin"),
@@ -30,7 +32,9 @@ if __name__ == "__main__":
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Gio
+    gi.require_version("GdkMacos", "4.0")
+    # Keep these imports explicit so PyInstaller runs its GI hooks and bundles the corresponding typelibs.
+    from gi.repository import Adw, Gio, GdkMacos, Gtk
     Gio.Resource.load(os.path.join(pkgdatadir, "catalystlab.gresource"))._register()
 
     from catalystlab import main

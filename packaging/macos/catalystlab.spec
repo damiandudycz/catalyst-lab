@@ -6,6 +6,8 @@ SCHEMAS = os.environ["CATALYSTLAB_SCHEMAS"]   # Compiled settings schemas (GTK a
 ICON = os.environ["CATALYSTLAB_ICON"]         # .icns file.
 VERSION = os.environ["CATALYSTLAB_VERSION"]
 TOOLS = os.environ["CATALYSTLAB_TOOLS"].split(os.pathsep) # Command line tools used by app (squashfs).
+GTK_DATA = os.environ["CATALYSTLAB_GTK_DATA"]
+ICON_DATA = os.environ["CATALYSTLAB_ICON_DATA"]
 PKGDATADIR = os.path.join(STAGING, "share", "catalystlab")
 HERE = os.path.dirname(os.path.abspath(SPEC))
 
@@ -26,6 +28,8 @@ a = Analysis(
         (os.path.join(PKGDATADIR, "catalystlab.gresource"), "share/catalystlab"),
         (os.path.join(PKGDATADIR, "VERSION"), "share/catalystlab"),
         (os.path.join(STAGING, "share", "icons", "hicolor"), "share/icons/hicolor"),
+        (GTK_DATA, "share/gtk-4.0"),
+        (ICON_DATA, "share/icons/Adwaita"),
         (SCHEMAS, "share/catalystlab-schemas"),
     ],
     hiddenimports=app_modules + [

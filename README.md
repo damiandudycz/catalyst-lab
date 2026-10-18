@@ -227,12 +227,15 @@ packaging/macos/build-app.sh
 
 Creates `dist/Catalyst Lab.app` and `dist/Catalyst Lab.dmg`. The bundle contains Python, GTK, libadwaita, squashfs
 tools and Lima, so it runs on Macs without Homebrew.
-- Build dependencies come from Homebrew and Lima from GitHub (checksum verified).
-- Homebrew packages missing on your Mac are installed only for the build and removed when it ends.
+- Build dependencies are installed in `.build-macos-app` from Conda-forge; GTK and libadwaita are built from source
+  into private prefixes, leaving system package managers and libraries untouched. Lima comes from GitHub (checksum
+  verified).
+- Xcode Command Line Tools and an internet connection are required for the source builds and package downloads.
+- The default GTK source is GNOME's `main` branch. Set `GTK_REF` to a branch, tag or commit to build a different GTK;
+  `LIBADWAITA_REF` selects the libadwaita source ref (default `1.10.0`).
 - Options:
-  - `--keep-packages` keeps those Homebrew packages installed;
   - `--no-dmg` skips the disk image;
-  - `--clean` starts from scratch.
+  - `--clean` removes the isolated build environment and starts from scratch.
 
 ---
 
