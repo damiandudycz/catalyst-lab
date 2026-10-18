@@ -282,6 +282,7 @@ class GitInstallationStepSetupRepository(MultiStageProcessStage):
                     git("commit", "-m", "Initial commit")
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
+            self.log(f"Error: {e}")
             print(f"Error during local Git init: {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 

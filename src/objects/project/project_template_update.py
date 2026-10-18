@@ -23,6 +23,7 @@ from .project_template import (
     APP_REPOSITORY_URL, ProjectTemplate, TemplateError, app_template_tree, apply_project_template,
     download_app_template, validate_template_repository, _run_git
 )
+from .git_identity import git_environment, require_git_identity
 from .git_directory import GitDirectory
 
 TEMPLATE_STATE_FILE = "project-template.json"
@@ -383,8 +384,17 @@ def apply_changes(project_path: str, changes: list[TemplateChange], project: Pro
 # ------------------------------------------------------------------------------
 
 def _git(path: str, *arguments, check: bool = True, environment: dict | None = None) -> str:
+    if "commit-tree" in arguments or "commit" in arguments:
+        require_git_identity(path)
+    command_environment = git_environment(
+        {**os.environ, "GIT_TERMINAL_PROMPT": "0", **(environment or {})}
+    )
+    # Replayed commits keep their original author while Catalyst Lab supplies the committer identity.
+    for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE"):
+        if environment and key in environment:
+            command_environment[key] = environment[key]
     result = subprocess.run(["git", "-C", path, *arguments], capture_output=True, text=True,
-                            env={**os.environ, "GIT_TERMINAL_PROMPT": "0", **(environment or {})})
+                            env=command_environment)
     if check and result.returncode != 0:
         raise TemplateError(f"git {arguments[0]} failed: {(result.stderr or result.stdout).strip()}")
     return result.stdout.strip()

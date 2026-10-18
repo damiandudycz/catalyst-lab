@@ -14,6 +14,7 @@ from .multistage_process import (
     MultiStageProcess, MultiStageProcessStage,
     MultiStageProcessStageState
 )
+from .git_identity import git_environment, require_git_identity
 
 @final
 class ProjectInstallation(GitInstallation):
@@ -185,7 +186,11 @@ class ProjectInstallationStepApplyTemplate(MultiStageProcessStage):
             self.complete(MultiStageProcessStageState.FAILED)
 
     def _run(self, command: list[str]):
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        if "commit" in command:
+            repository_path = command[command.index("-C") + 1] if "-C" in command else None
+            require_git_identity(repository_path)
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                env=git_environment())
         for line in result.stdout.splitlines():
             self.log(line)
         if result.returncode != 0:

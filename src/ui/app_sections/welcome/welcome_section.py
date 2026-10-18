@@ -3,6 +3,7 @@ from .app_events import AppEvents, app_event_bus
 from .app_section import AppSection, app_section
 from .repository import Repository, RepositoryEvent
 from .initial_setup_page import InitialSetupPage
+from .git_identity import effective_git_identity
 
 @app_section(title="Welcome", label="Home", icon="go-home-symbolic", show_in_side_bar=False, show_side_bar=False, order=1_000)
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/app_sections/welcome/welcome_section.ui')
@@ -23,7 +24,7 @@ class WelcomeSection(Gtk.Box):
 
     def setup_sections_visibility(self, _ = None):
         settings = Repository.Settings.value
-        initial_setup_done = settings.initial_setup_done
+        initial_setup_done = settings.initial_setup_done and effective_git_identity().configured
         self.default_actions_section.set_visible(initial_setup_done)
         self.first_run_section.set_visible(not initial_setup_done)
 

@@ -7,6 +7,7 @@ from gi.repository import GLib
 from enum import Enum, auto
 from datetime import datetime
 from .repository import Serializable
+from .git_identity import git_environment, require_git_identity
 from .event_bus import EventBus, SharedEvent
 from abc import ABC, abstractmethod
 
@@ -201,6 +202,9 @@ class GitDirectory(Serializable, ABC):
         self._status_update_id = GLib.timeout_add(300, update)
 
     def _run_git(self, *args, **kwargs):
+        if args and args[0] == "commit":
+            require_git_identity(self.directory_path())
+        kwargs["env"] = git_environment(kwargs.get("env"))
         return subprocess.run(["git", *args], cwd=self.directory_path(), **kwargs)
 
     def run_git_logged(self, arguments: list[str], log, env=None):

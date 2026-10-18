@@ -27,6 +27,9 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.qemu_cpus, 4)
         self.assertIsNone(settings.default_toolset_id)
         self.assertIsNone(settings.default_runner_id)
+        self.assertEqual(settings.git_identity_mode, 'system')
+        self.assertEqual(settings.git_user_name, '')
+        self.assertEqual(settings.git_user_email, '')
         self.assertEqual(settings.library_location, "~/CatalystLab")
         self.assertEqual(Settings.init_from(settings.serialize()).serialize(), settings.serialize())
 
@@ -69,7 +72,10 @@ class SettingsTests(unittest.TestCase):
             settings.pause_queue_on_failure = True
             settings.default_toolset_id = 'toolset-id'
             settings.default_runner_id = 'runner-id'
-        self.assertEqual(repository.save.call_count, 7)
+            settings.git_identity_mode = 'custom'
+            settings.git_user_name = 'Test User'
+            settings.git_user_email = 'test@example.com'
+        self.assertEqual(repository.save.call_count, 10)
         self.assertEqual({event for event, _ in events}, set(SettingsEvents))
 
     def test_qemu_resource_settings_coerce_integers_and_skip_unchanged_saves(self):

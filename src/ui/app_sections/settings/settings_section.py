@@ -7,6 +7,7 @@ from .repository import RepositoryEvent
 from .library import LibraryChange, library_target, change_problem, change_library
 from .status_indicator import StatusIndicatorState
 from .runner import HOST_RUNNER, runner_is_supported
+from .git_identity_editor import GitIdentityEditor
 
 @app_section(title="Settings", icon="settings-svgrepo-com-symbolic", order=9_000)
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/app_sections/settings/settings_section.ui')
@@ -21,6 +22,7 @@ class SettingsSection(Gtk.Box):
     qemu_memory_row = Gtk.Template.Child()
     default_toolset_list = Gtk.Template.Child()
     default_runner_list = Gtk.Template.Child()
+    git_identity_container = Gtk.Template.Child()
 
     # Options of navigation style row, in order.
     NAVIGATION_STYLES = [NavigationStyle.MODAL, NavigationStyle.PUSH]
@@ -28,6 +30,7 @@ class SettingsSection(Gtk.Box):
     def __init__(self, content_navigation_view: Adw.NavigationView, **kwargs):
         super().__init__(**kwargs)
         self.content_navigation_view = content_navigation_view
+        self.git_identity_container.append(GitIdentityEditor())
         self.location_row.set_subtitle(collapse_home(library_directory()))
         self.navigation_style_row.set_selected(self.NAVIGATION_STYLES.index(Repository.Settings.value.navigation_style))
         self.navigation_style_row.connect("notify::selected", self._on_navigation_style_selected)

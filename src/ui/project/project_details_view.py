@@ -43,6 +43,8 @@ class ProjectDetailsView(Gtk.Box):
     arch_selection_view = Gtk.Template.Child()
     packages_selection_view = Gtk.Template.Child()
     source_banner = Gtk.Template.Child()
+    stage_actions = Gtk.Template.Child()
+    source_action_row = Gtk.Template.Child()
     add_stage_row = Gtk.Template.Child()
     source_button = Gtk.Template.Child()
     source_button_label = Gtk.Template.Child()
@@ -86,7 +88,6 @@ class ProjectDetailsView(Gtk.Box):
         self.source_button.set_has_frame(False)
         for css_class in ("flat", "caption", "stage-toolset-change-button"):
             self.source_button.add_css_class(css_class)
-        self.source_button.set_size_request(-1, 24)
         self.source_button_label.add_css_class("dim-label")
         self.source_button_label.add_css_class("caption")
 
@@ -275,10 +276,7 @@ class ProjectDetailsView(Gtk.Box):
         if self._source is None:
             return
         unsaved = has_unsaved_changes(path)
-        # Keep the compact footer button size consistent with Stage details.
-        self.source_button_label.set_markup(
-            f'<span size="small" weight="normal">{GLib.markup_escape_text(button)}</span>'
-        )
+        self.source_button_label.set_label(button)
         # The action opens template options even when the source has no newer version;
         # only unsaved project changes prevent running an update.
         self.source_button.set_sensitive(not unsaved)
@@ -362,6 +360,8 @@ class ProjectDetailsView(Gtk.Box):
         self.build_row.set_visible(is_stages_page and self._build_action_available)
         self.build_progress_row.set_visible(is_stages_page and self._build_running)
         self.source_button.set_visible(is_stages_page and has_source)
+        self.source_action_row.set_visible(is_stages_page and has_source)
+        self.stage_actions.set_margin_bottom(0 if has_source else 12)
         self.source_banner.set_visible(is_stages_page)
 
     def header_bar_end_widgets(self) -> list[Gtk.Widget]:

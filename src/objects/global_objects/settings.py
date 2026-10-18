@@ -14,6 +14,7 @@ class SettingsEvents(Enum):
     PAUSE_QUEUE_ON_FAILURE_CHANGED = auto()
     DEFAULT_TOOLSET_CHANGED = auto()
     DEFAULT_RUNNER_CHANGED = auto()
+    GIT_IDENTITY_CHANGED = auto()
 
 
 @final
@@ -39,6 +40,9 @@ class Settings(Serializable):
         default_toolset_id: str | None = None,
         default_runner_id: str | None = None,
         library_location: str | None = None,
+        git_identity_mode: str = "system",
+        git_user_name: str = "",
+        git_user_email: str = "",
     ):
         self._initial_setup_done = initial_setup_done
         self._keep_root_unlocked = keep_root_unlocked
@@ -49,6 +53,9 @@ class Settings(Serializable):
         self._qemu_cpus = qemu_cpus
         self._default_toolset_id = default_toolset_id
         self._default_runner_id = default_runner_id
+        self._git_identity_mode = git_identity_mode if git_identity_mode in ("system", "custom") else "system"
+        self._git_user_name = git_user_name
+        self._git_user_email = git_user_email
         # None lets older preferences files fall back to the default Library path.
         self._library_location = library_location
         self.event_bus = EventBus[SettingsEvents]()
@@ -66,6 +73,9 @@ class Settings(Serializable):
             default_toolset_id=data.get("default_toolset_id"),
             default_runner_id=data.get("default_runner_id"),
             library_location=data.get("library_location"),
+            git_identity_mode=data.get("git_identity_mode", "system"),
+            git_user_name=data.get("git_user_name", ""),
+            git_user_email=data.get("git_user_email", ""),
         )
 
     def serialize(self) -> dict:
@@ -79,6 +89,9 @@ class Settings(Serializable):
             "qemu_cpus": self.qemu_cpus,
             "default_toolset_id": self.default_toolset_id,
             "default_runner_id": self.default_runner_id,
+            "git_identity_mode": self.git_identity_mode,
+            "git_user_name": self.git_user_name,
+            "git_user_email": self.git_user_email,
             "library_location": collapse_home(self.library_location),
         }
 
@@ -215,6 +228,31 @@ class Settings(Serializable):
     def default_runner_id(self, value: str | None):
         self._set("default_runner_id", str(value) if value is not None else None,
                   SettingsEvents.DEFAULT_RUNNER_CHANGED)
+
+    @property
+    def git_identity_mode(self) -> str:
+        return self._git_identity_mode
+
+    @git_identity_mode.setter
+    def git_identity_mode(self, value: str):
+        mode = value if value in ("system", "custom") else "system"
+        self._set("git_identity_mode", mode, SettingsEvents.GIT_IDENTITY_CHANGED)
+
+    @property
+    def git_user_name(self) -> str:
+        return self._git_user_name
+
+    @git_user_name.setter
+    def git_user_name(self, value: str):
+        self._set("git_user_name", str(value).strip(), SettingsEvents.GIT_IDENTITY_CHANGED)
+
+    @property
+    def git_user_email(self) -> str:
+        return self._git_user_email
+
+    @git_user_email.setter
+    def git_user_email(self, value: str):
+        self._set("git_user_email", str(value).strip(), SettingsEvents.GIT_IDENTITY_CHANGED)
 
 
 def _navigation_style(value) -> NavigationStyle:
