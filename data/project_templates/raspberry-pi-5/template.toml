@@ -54,7 +54,7 @@ default = true
 [[variables]]
 id = "accept_all_licenses"
 title = "Accept all licenses"
-description = "Allows Portage to install packages with any license in selected stage4 builds."
+description = "Allows Portage to install packages with any license in selected stage4 builds (console, GNOME or KDE Plasma). Does not affect stage3 or ISO builds."
 type = "boolean"
 default = false
 
