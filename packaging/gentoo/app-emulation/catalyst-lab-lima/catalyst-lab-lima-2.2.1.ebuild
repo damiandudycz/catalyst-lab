@@ -46,7 +46,7 @@ src_install() {
 	doins -r _output/share/lima/*
 
 	insinto "/usr/share/licenses/${PF}"
-	doins LICENSE
+	doins LICENSE NOTICE
 	local license_file relative_path target_dir
 	while IFS= read -r -d '' license_file; do
 		relative_path=${license_file#vendor/}
