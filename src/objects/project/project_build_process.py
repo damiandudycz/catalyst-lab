@@ -137,6 +137,7 @@ class ProjectBuild(MultiStageProcess):
         or under CATALYST_MIRRORS_PATH when its path contains whitespace). Other paths are the same."""
         for root, target in ((self.work_root, CATALYST_WORK_PATH),
                              (self.catalyst_builds_directory, CATALYST_BUILDS_PATH),
+                             (self.stage_artifacts_directory, CATALYST_STAGE_ARTIFACTS_PATH),
                              (self.kernel_cache_directory, CATALYST_KERNEL_CACHE_PATH)):
             if path_is_within(host_path, root):
                 relative = os.path.relpath(host_path, root)

@@ -13,7 +13,9 @@ if "catalystlab" not in sys.modules:
     package.__path__ = [str(ROOT / "src")] + [str(path) for path in (ROOT / "src").rglob("*") if path.is_dir()]
     sys.modules["catalystlab"] = package
 
-from catalystlab.project_build_details import _project_commit, failure_details, installed_packages, output_details
+from catalystlab.project_build_details import (
+    _project_commit, failure_details, failure_logs_script, installed_packages, output_details,
+)
 
 
 class ProjectBuildDetailsTests(unittest.TestCase):
@@ -51,6 +53,14 @@ class ProjectBuildDetailsTests(unittest.TestCase):
             "reason": "out of memory, compiler was killed",
             "logs": "failure",
         })
+
+    def test_failure_logs_capture_assembler_permissions_and_mount_options(self):
+        script = failure_logs_script('/stage/root', '/build/failure')
+
+        self.assertIn('gcc -print-prog-name=as', script)
+        self.assertIn('stat -Lc', script)
+        self.assertIn('findmnt -T "$AS"', script)
+        self.assertIn('findmnt -T /var/tmp/portage', script)
 
     def test_reads_unique_installed_packages_from_contents(self):
         with tempfile.TemporaryDirectory() as temporary:

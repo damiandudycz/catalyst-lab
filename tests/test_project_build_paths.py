@@ -15,7 +15,8 @@ if "catalystlab" not in sys.modules:
     sys.modules["catalystlab"] = package
 
 from catalystlab.project_build_process import (
-    ProjectBuild, EmergeProgress, CATALYST_WORK_PATH, CATALYST_BUILDS_PATH, CATALYST_KERNEL_CACHE_PATH,
+    ProjectBuild, EmergeProgress, CATALYST_WORK_PATH, CATALYST_BUILDS_PATH,
+    CATALYST_STAGE_ARTIFACTS_PATH, CATALYST_KERNEL_CACHE_PATH,
     _move_stage_build_files,
 )
 from catalystlab.project_build import StageBuild, delete_project_builds
@@ -48,6 +49,7 @@ class ProjectBuildPathTests(unittest.TestCase):
         process = ProjectBuild.__new__(ProjectBuild)
         process.work_root = "/library/Temporary/work"
         process.catalyst_builds_directory = "/library/Builds/Catalyst"
+        process.stage_artifacts_directory = "/library/Builds/stages"
         process.kernel_cache_directory = "/library/Builds/kerncache"
         process.mirrored_paths = lambda: []
 
@@ -55,6 +57,8 @@ class ProjectBuildPathTests(unittest.TestCase):
         self.assertEqual(process.container_path(process.work_root + "/stage.spec"),
                          CATALYST_WORK_PATH + "/stage.spec")
         self.assertEqual(process.container_path(process.catalyst_builds_directory), CATALYST_BUILDS_PATH)
+        self.assertEqual(process.container_path(process.stage_artifacts_directory + "/stage-id/run/failure"),
+                         CATALYST_STAGE_ARTIFACTS_PATH + "/stage-id/run/failure")
         self.assertEqual(process.container_path(process.kernel_cache_directory + "/source"),
                          CATALYST_KERNEL_CACHE_PATH + "/source")
 

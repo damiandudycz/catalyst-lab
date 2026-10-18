@@ -142,7 +142,18 @@ tail -n 300 "$C/var/log/emerge.log" > "$FAILURE/emerge.log" 2>/dev/null
     echo "--- binutils"; in_chroot ld --version 2>&1 | head -n 1
     echo "--- binutils-config"; in_chroot binutils-config -l 2>&1
     echo "--- python"; in_chroot python3 --version 2>&1
-}} > "$FAILURE/toolchain.txt"
+    echo "--- assembler path and executable permissions"
+    in_chroot /bin/bash -c '
+        AS=$(gcc -print-prog-name=as)
+        printf "gcc selected assembler: %s\\n" "$AS"
+        printf "resolved assembler: "; readlink -f "$AS"
+        stat -Lc "%A %a %U:%G %n" "$AS" "$(readlink -f "$AS")" 2>&1
+        echo "--- assembler filesystem mount"
+        findmnt -T "$AS" -o TARGET,FSTYPE,OPTIONS 2>&1
+        echo "--- Portage temporary filesystem mount"
+        findmnt -T /var/tmp/portage -o TARGET,FSTYPE,OPTIONS 2>&1
+    '
+}} > "$FAILURE/toolchain.txt" 2>&1
 {{
     echo "--- disk space"; df -h "$C" /var/tmp 2>&1
     echo "--- memory"; free -m 2>/dev/null || head -n 5 /proc/meminfo
