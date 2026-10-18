@@ -279,7 +279,13 @@ class ProjectDetailsView(Gtk.Box):
         self.source_button_label.set_markup(
             f'<span size="small" weight="normal">{GLib.markup_escape_text(button)}</span>'
         )
+        # The action opens template options even when the source has no newer version;
+        # only unsaved project changes prevent running an update.
         self.source_button.set_sensitive(not unsaved)
+        if updates is True:
+            self.source_button.add_css_class("source-updates-available")
+        else:
+            self.source_button.remove_css_class("source-updates-available")
         self.source_button.set_tooltip_text(
             "Save or discard changes first" if unsaved
             else f"There are changes in {self._source}" if updates
