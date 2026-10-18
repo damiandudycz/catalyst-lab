@@ -12,6 +12,7 @@ class State(Enum):
     IN_PROGRESS = auto()
     COMPLETED = auto()
     FAILED = auto()
+    CANCELED = auto()
 
 
 class RowStub:

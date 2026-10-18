@@ -33,6 +33,7 @@ class ProjectBuildView(Gtk.Box):
     location_row = Gtk.Template.Child()
     runs_on_row = Gtk.Template.Child()
     snapshot_row = Gtk.Template.Child()
+    cleanup_previous_builds_row = Gtk.Template.Child()
 
     def __init__(self, project_directory: ProjectDirectory, installation_in_progress: ProjectBuild | None = None, content_navigation_view: Adw.NavigationView | None = None):
         super().__init__()
@@ -285,7 +286,8 @@ class ProjectBuildView(Gtk.Box):
             self._add_to_queue(selected, fetch, update_project_snapshot)
             return
         start_project_build(self.project_directory, self.plan, snapshot=None if fetch else selected, fetch_snapshot=fetch,
-                            update_project_snapshot=update_project_snapshot and not fetch, done=self._on_build_started)
+                            update_project_snapshot=update_project_snapshot and not fetch,
+                            cleanup_previous_builds=self.cleanup_previous_builds_row.get_active(), done=self._on_build_started)
 
     def _add_to_queue(self, selected, fetch: bool, update_project_snapshot: bool):
         if update_project_snapshot and not fetch:
@@ -295,7 +297,8 @@ class ProjectBuildView(Gtk.Box):
             metadata.latest_snapshot = False
             Repository.ProjectDirectory.save()
         try:
-            BuildQueue.shared().add(self.project_directory, list(self.selected_stage_ids), LATEST if fetch else selected.filename)
+            BuildQueue.shared().add(self.project_directory, list(self.selected_stage_ids), LATEST if fetch else selected.filename,
+                                    cleanup_previous_builds=self.cleanup_previous_builds_row.get_active())
         except RuntimeError as e:
             dialog = Adw.AlertDialog(heading="Can't add build to queue", body=str(e))
             dialog.add_response("ok", "OK")

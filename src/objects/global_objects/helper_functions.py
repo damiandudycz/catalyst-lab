@@ -1,6 +1,6 @@
 from .root_function import root_function
 from catalystlab.formatters import format_size
-import os, re, shutil, signal, subprocess, tarfile, tempfile, threading
+import os, re, shutil, signal, subprocess, tarfile, tempfile, threading, uuid
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 
@@ -57,6 +57,44 @@ def mount_squashfs(squashfs_path: str, prefix: str) -> str:
     mount_point = create_temp_workdir(prefix=prefix)
     subprocess.run(['unsquashfs', '-f', '-d', mount_point, squashfs_path], check=True)
     return mount_point
+
+@root_function
+def cached_squashfs_copy(squashfs_path: str, cache_path: str, prefix: str, check_path: str = "usr") -> str:
+    """Keep one extracted image in Cache, then create a writable per-operation copy in Temporary."""
+    source = os.stat(squashfs_path)
+    stamp = f"{source.st_size}:{source.st_mtime_ns}"
+    stamp_path = cache_path + ".stamp"
+    try:
+        with open(stamp_path, encoding="utf-8") as file:
+            cached_stamp = file.read()
+    except OSError:
+        cached_stamp = None
+    if not (os.path.isdir(cache_path) and os.path.exists(os.path.join(cache_path, check_path))
+            and cached_stamp == stamp):
+        parent = os.path.dirname(cache_path)
+        os.makedirs(parent, exist_ok=True)
+        staging = cache_path + f".{uuid.uuid4().hex}.tmp"
+        try:
+            subprocess.run(["unsquashfs", "-f", "-d", staging, squashfs_path], check=True)
+            if not os.path.exists(os.path.join(staging, check_path)):
+                raise RuntimeError(f"Extraction of {os.path.basename(squashfs_path)} is missing {check_path}")
+            if os.path.isdir(cache_path):
+                shutil.rmtree(cache_path)
+            elif os.path.lexists(cache_path):
+                os.unlink(cache_path)
+            os.replace(staging, cache_path)
+            with open(stamp_path + ".tmp", "w", encoding="utf-8") as file:
+                file.write(stamp)
+            os.replace(stamp_path + ".tmp", stamp_path)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+    temporary = create_temp_workdir(prefix)
+    try:
+        subprocess.run(["cp", "-a", "--", cache_path + "/.", temporary + "/"], check=True)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    return temporary
 
 @root_function
 def umount_squashfs(mount_point: str):

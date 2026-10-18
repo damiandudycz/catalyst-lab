@@ -131,6 +131,18 @@
                 </child>
                 <child>
                   <object class="AdwPreferencesGroup">
+                    <property name="title">Cleanup</property>
+                    <property name="description">Runs after each successful stage build.</property>
+                    <child>
+                      <object class="AdwSwitchRow" id="cleanup_previous_builds_row">
+                        <property name="title">Remove previous successful builds</property>
+                        <property name="subtitle">After each stage succeeds, remove its older successful builds. Failed builds are kept.</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup">
                     <property name="title">Location</property>
                     <child>
                       <object class="AdwActionRow" id="snapshot_row">

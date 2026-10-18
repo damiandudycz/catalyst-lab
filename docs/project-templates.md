@@ -85,7 +85,7 @@ Types:
 |---|---|
 | `choice` | Texts from `options`. Options can have their own `when`, to be available only for some selections. |
 | `boolean` | `true` or `false`, shown as a switch. Has no `options`. |
-| `multiple` | Any number of `options`, shown as a list of switches. Its value is a list of selected values, `default` is a list too. |
+| `multiple` | Any number of `options`, shown as a list of switches. Its value and `default` are lists. Optional `minimum_selected` requires that many choices before the template can continue. |
 | `architecture` | Architecture names (`amd64`, `arm64`, `arm`, `ppc`, `ppc64`, `ppc64le`, `riscv`, `s390x`, `sparc`, `x86`...). The selected one is also the architecture of the project, so the app doesn't ask for it separately. Only one per template. |
 
 A `when` condition can use variables defined above it. When a selected value is no longer available (because of

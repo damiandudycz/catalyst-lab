@@ -34,7 +34,8 @@ from catalystlab.build_machine import BuildMachine  # noqa: E402
 from catalystlab.rootless import (  # noqa: E402
     MachineExecutor,
     prepare_toolset_squashfs,
-    unmount_squashfs,
+    unmount_read_only_mount,
+    remove_in_namespace,
 )
 from catalystlab.project_build_rootless import (  # noqa: E402
     catalyst_snapshot_command,
@@ -92,6 +93,7 @@ def main() -> int:
     executor = MachineExecutor(machine)
     output = lambda line: print(line, flush=True)
     mounted_toolset = False
+    temporary_toolset = False
     success = False
     workspace_acquired = False
     snapshot_test_started = time.time()
@@ -99,7 +101,8 @@ def main() -> int:
         machine.ensure_running(output)
         machine.acquire_workspace(output, user="Overlay smoke test")
         workspace_acquired = True
-        toolset_root, mounted_toolset = prepare_toolset_squashfs(toolset_path, output, executor=executor)
+        toolset_root, mounted_toolset, temporary_toolset = prepare_toolset_squashfs(
+            toolset_path, output, executor=executor)
         command = (
             "sh -c " + shlex.quote(
                 "cat /etc/resolv.conf; python3 -c "
@@ -134,7 +137,9 @@ def main() -> int:
         return 0 if success else 1
     finally:
         if mounted_toolset:
-            unmount_squashfs(toolset_root, output, executor=executor)
+            unmount_read_only_mount(toolset_root, output, executor=executor)
+        elif temporary_toolset:
+            remove_in_namespace([toolset_root], output, executor=executor)
         if workspace_acquired:
             machine.release_workspace(output, user="Overlay smoke test")
         if not was_running and machine.is_running:

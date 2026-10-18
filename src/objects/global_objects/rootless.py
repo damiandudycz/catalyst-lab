@@ -1,6 +1,9 @@
 from __future__ import annotations
 import base64, functools, hashlib, json, os, re, shlex, shutil, signal, subprocess, tempfile, threading, uuid
 from .repository import Repository, resolve_path
+
+# Code-level switch while validating the extracted toolset flow.
+MOUNT_SQFS_DIRECTLY = False
 from .helper_functions import path_is_within
 
 # ------------------------------------------------------------------------------
@@ -521,9 +524,35 @@ def prepare_squashfs(squashfs_path: str, kind: str, check_path: str, output_hand
                               check_path=check_path, executor=executor), False
 
 def prepare_toolset_squashfs(squashfs_path: str, output_handler, process_holder: list | None = None,
-                             executor: Executor | None = None) -> tuple[str, bool]:
-    """Prepare a toolset layer; stage builds add a writable OverlayFS upper layer to it."""
-    return prepare_squashfs(squashfs_path, "toolsets", "bin/bash", output_handler, process_holder, executor)
+                             executor: Executor | None = None) -> tuple[str, bool, bool]:
+    """Prepare a toolset root, optionally copying a cached extraction into this operation's temporary workspace.
+
+    Returns (path, is_mount, is_temporary_copy)."""
+    executor = executor or LOCAL_EXECUTOR
+    if MOUNT_SQFS_DIRECTLY:
+        path, mounted = prepare_squashfs(squashfs_path, "toolsets", "bin/bash", output_handler,
+                                         process_holder, executor)
+        return path, mounted, False
+
+    output_handler(f"Preparing cached extracted toolset {os.path.basename(squashfs_path)}")
+    cache_mount = None
+    try:
+        if executor.is_machine:
+            cached_path = mount_cached_machine_toolset(squashfs_path, output_handler, process_holder, executor)
+            cache_mount = os.path.dirname(cached_path)
+        else:
+            cached_path = extracted_squashfs(squashfs_path, "toolsets", output_handler, process_holder,
+                                             check_path="bin/bash", executor=executor)
+        temporary_path = create_work_directory("toolsets/copy_", executor)
+        q = shlex.quote
+        script = f"cp -a -- {q(cached_path)}/. {q(temporary_path)}/"
+        if not executor.run_in_namespace(script, output_handler, process_holder):
+            remove_in_namespace([temporary_path], output_handler, executor=executor)
+            raise RuntimeError(f"Failed to copy extracted toolset {os.path.basename(squashfs_path)} to Temporary")
+        return temporary_path, False, True
+    finally:
+        if cache_mount:
+            unmount_read_only_mount(cache_mount, output_handler, process_holder, executor)
 
 def prepare_snapshot_squashfs(squashfs_path: str, output_handler, process_holder: list | None = None,
                               executor: Executor | None = None) -> tuple[str, bool]:

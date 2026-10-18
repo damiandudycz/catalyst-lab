@@ -60,6 +60,7 @@ class TemplateVariable:
     default: Any
     when: str | None
     section: str = "Options"
+    minimum_selected: int = 0
 
     def available_options(self, names: dict[str, Any]) -> list[TemplateOption]:
         return [option for option in self.options if evaluate_condition(option.when, names)]
@@ -136,6 +137,7 @@ class GeneratedProject:
     files: list[tuple[str, str]] # Absolute source path in template, destination path relative to project.
     architecture: Architecture | None
     overlays: list[TemplateOverlay] = field(default_factory=list) # Overlays used by project.
+    file_names: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
 
 def _table(data: dict, key: str, context: str) -> dict:
     value = data.get(key, {})
@@ -254,17 +256,23 @@ class ProjectTemplate:
                     raise TemplateError(f"{context}: no options")
             default = variable_data.get("default")
             option_values = [option.value for option in options]
+            minimum_selected = variable_data.get("minimum_selected", 0)
             if variable_type == TemplateVariableType.MULTIPLE:
                 default = [] if default is None else default
                 if not isinstance(default, list) or any(value not in option_values for value in default):
                     raise TemplateError(f"{context}: default value must be list of options")
+                if not isinstance(minimum_selected, int) or isinstance(minimum_selected, bool) or minimum_selected < 0:
+                    raise TemplateError(f"{context}: minimum_selected must be a non-negative integer")
+            elif minimum_selected != 0:
+                raise TemplateError(f"{context}: minimum_selected is only valid for multiple variables")
             elif default is not None and default not in option_values:
                 raise TemplateError(f"{context}: default value {default} is not one of options")
             variables.append(TemplateVariable(
                 id=variable_id, title=_text(variable_data, "title", context, required=False) or variable_id,
                 description=_text(variable_data, "description", context, required=False),
                 type=variable_type, options=options, default=default, when=_condition(variable_data, context),
-                section=_text(variable_data, "section", context, required=False) or "Options"
+                section=_text(variable_data, "section", context, required=False) or "Options",
+                minimum_selected=minimum_selected
             ))
         if sum(variable.type == TemplateVariableType.ARCHITECTURE for variable in variables) > 1:
             raise TemplateError("Template can have only one architecture variable")
@@ -403,6 +411,13 @@ class ProjectTemplate:
             if value not in options:
                 value = variable.default if variable.default in options else options[0]
             names[variable.id] = value
+        # Matrix templates expand one logical selection into parallel variants during generate().
+        # Resolve derived preview values using the first selected variant; generate() recalculates them per variant.
+        if isinstance(names.get("init_systems"), list):
+            init_options = next((variable.available_options(names) for variable in self.variables
+                                if variable.id == "init_systems"), [])
+            names["init"] = names["init_systems"][0] if names["init_systems"] else (
+                init_options[0].value if init_options else None)
         # Groups: selected as {"enabled": bool, "stages": [stage ids]} under "group:<id>", defaults otherwise.
         enabled_groups, group_stages = [], {}
         for group in self.groups:
@@ -464,7 +479,45 @@ class ProjectTemplate:
         return visible
 
     def generate(self, names: dict[str, Any]) -> GeneratedProject:
-        """Stages and files of project for values resolved with resolve()."""
+        """Generate a project, expanding an optional init_systems multi-selection into parallel stage graphs."""
+        for variable in self.variables:
+            if variable.type == TemplateVariableType.MULTIPLE \
+                    and len(names.get(variable.id, [])) < variable.minimum_selected:
+                raise TemplateError(f"Select at least {variable.minimum_selected} option(s) for {variable.title}")
+        init_systems = names.get("init_systems")
+        if not isinstance(init_systems, list):
+            return self._generate_single(names)
+        stages: list[GeneratedStage] = []
+        files: list[tuple[str, str]] = []
+        file_names: dict[tuple[str, str], dict[str, Any]] = {}
+        overlays: dict[str, TemplateOverlay] = {}
+        architecture = None
+        for init in init_systems:
+            variant_names = dict(names)
+            variant_names["init"] = init
+            # Recompute derived template values for this init-system variant.
+            for key, expression in self.values.items():
+                variant_names[key] = render_value(expression, variant_names)
+            variant = self._generate_single(variant_names)
+            for stage in variant.stages:
+                stages.append(GeneratedStage(
+                    template_id=f"{stage.template_id}-{init}", name=stage.name, target=stage.target,
+                    parent=f"{stage.parent}-{init}" if stage.parent else None,
+                    releng_template=stage.releng_template, arguments=stage.arguments, groups=stage.groups,
+                    persistent_id=stage.persistent_id
+                ))
+            for file in variant.files:
+                if file not in file_names:
+                    files.append(file)
+                    file_names[file] = variant.file_names.get(file, variant_names)
+            for overlay in variant.overlays:
+                overlays[overlay.id] = overlay
+            architecture = variant.architecture
+        return GeneratedProject(stages=stages, files=files, architecture=architecture,
+                                overlays=list(overlays.values()), file_names=file_names)
+
+    def _generate_single(self, names: dict[str, Any]) -> GeneratedProject:
+        """Generate one stage graph after all template choices have been resolved."""
         suffix = render_value(self.stage_id_suffix, names) if self.stage_id_suffix is not None else None
         if self.stage_id_suffix is not None and (not isinstance(suffix, str) or not suffix.strip()):
             raise TemplateError("Template: stage_id_suffix must render to non-empty text")
@@ -542,8 +595,11 @@ class ProjectTemplate:
             for reference in _overlay_references(stage.arguments):
                 if reference.id not in available_ids:
                     raise TemplateError(f"Stage {stage.template_id}: overlay {reference.id} is not available for selected options")
-        return GeneratedProject(stages=stages, files=files, overlays=overlays,
-                                architecture=Architecture[architecture_name] if architecture_name else self.architecture)
+        return GeneratedProject(
+            stages=stages, files=files, overlays=overlays,
+            architecture=Architecture[architecture_name] if architecture_name else self.architecture,
+            file_names={file: names for file in files}
+        )
 
 def _template_files_paths(template: ProjectTemplate, entry: TemplateFiles, names: dict[str, Any], base: str) -> tuple[str, str]:
     """Source path in template and destination in project (relative to base directory in project) of files."""
@@ -1061,7 +1117,7 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
     for source, destination in generated.files:
         # Template directory can be reached through symbolic link (eg. in macOS application bundle).
         log(f"Copying {os.path.relpath(source, os.path.realpath(template.path))} to {destination}")
-        _copy_template_files(source, os.path.join(path, destination), names, log)
+        _copy_template_files(source, os.path.join(path, destination), generated.file_names.get((source, destination), names), log)
     os.makedirs(os.path.join(path, "stages"), exist_ok=True)
     releng_directory = project_directory.get_releng_directory()
     architecture = project_directory.get_architecture()

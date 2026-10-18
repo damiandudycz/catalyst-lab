@@ -16,7 +16,7 @@ from .project_stage_arguments import StageArgumentDetails
 from .project_stage_cache import CACHE_ARGUMENTS, stage_cache_path
 from .rootless import (
     prepare_toolset_squashfs, prepare_snapshot_squashfs, unmount_read_only_mount,
-    remove_stale_sessions, distfiles_directory, path_is_within
+    remove_stale_sessions, remove_in_namespace, distfiles_directory, path_is_within
 )
 from .project_build_rootless import (
     stage_build_session_script, save_interrupted_caches, CATALYST_WRAPPER, catalyst_snapshot_command,
@@ -51,13 +51,14 @@ class ProjectBuild(MultiStageProcess):
     toolset before building. Selected snapshot can be stored in project too."""
 
     def __init__(self, project_directory, plan: StageBuildPlan, snapshot=None, fetch_snapshot: bool = False,
-                 update_project_snapshot: bool = False):
+                 update_project_snapshot: bool = False, cleanup_previous_builds: bool = False):
         self.project_directory = project_directory
         self.plan = plan
         self._build_order = plan.build_order()
         self.snapshot = None if fetch_snapshot else (snapshot or project_directory.get_snapshot()) # Set when fetched.
         self.fetch_snapshot = fetch_snapshot
         self.update_project_snapshot = update_project_snapshot
+        self.cleanup_previous_builds = cleanup_previous_builds
         self.toolset = project_directory.get_toolset()
         self.timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") # @TIMESTAMP@ for all stages of this build.
         self.builds_directory = project_builds_directory(project_directory)
@@ -79,6 +80,7 @@ class ProjectBuild(MultiStageProcess):
         self.rootless = self.machine is not None or self.rootless_unsupported_reason is None
         self.rootless_toolset_path: str | None = None # Read-only mounted or extracted toolset lower layer.
         self.rootless_toolset_mounted = False # Mounted SquashFS lower layer, released before machine workspace.
+        self.rootless_toolset_temporary_copy = False
         self.rootless_snapshot_path: str | None = None
         self.rootless_snapshot_mounted = False
         super().__init__(title=f"Building {project_directory.name}")
@@ -121,7 +123,11 @@ class ProjectBuild(MultiStageProcess):
         for stage in self._build_order:
             if self.plan.parent(stage) is None:
                 self.stages.append(ProjectBuildStepDownloadSeed(stage=stage, multistage_process=self))
-            self.stages.append(ProjectBuildStepBuildStage(stage=stage, multistage_process=self))
+            build_step = ProjectBuildStepBuildStage(stage=stage, multistage_process=self)
+            self.stages.append(build_step)
+            if self.cleanup_previous_builds:
+                self.stages.append(ProjectBuildStepCleanupPreviousBuilds(
+                    stage=stage, build_step=build_step, multistage_process=self))
 
     @property
     def seed_cache_directory(self) -> str:
@@ -260,6 +266,11 @@ class ProjectBuild(MultiStageProcess):
         for step in self.stages:
             if step.state != MultiStageProcessStageState.SCHEDULED:
                 continue
+            if isinstance(step, ProjectBuildStepCleanupPreviousBuilds) \
+                    and step.build_step.state != MultiStageProcessStageState.COMPLETED:
+                step.log("Canceled: the stage build did not complete successfully")
+                step._update_state(MultiStageProcessStageState.CANCELED)
+                continue
             if reason := self.is_blocked(step):
                 step.log(f"Skipped: {reason}")
                 step._update_state(MultiStageProcessStageState.FAILED)
@@ -302,6 +313,11 @@ class ProjectBuild(MultiStageProcess):
 
     def cancel(self):
         self.canceled = True
+        for step in self.stages:
+            if isinstance(step, ProjectBuildStepCleanupPreviousBuilds) \
+                    and step.state == MultiStageProcessStageState.SCHEDULED:
+                step.log("Canceled with the build")
+                step._update_state(MultiStageProcessStageState.CANCELED)
         super().cancel()
 
     def store_project_snapshot(self):
@@ -331,7 +347,7 @@ class ProjectBuild(MultiStageProcess):
         save_build_record(self)
 
 def start_project_build(project_directory, plan: StageBuildPlan, snapshot=None, fetch_snapshot: bool = False,
-                        update_project_snapshot: bool = False, done=None):
+                        update_project_snapshot: bool = False, cleanup_previous_builds: bool = False, done=None):
     """Starts build of project (used by build view and build queue). Builds that can't run in user namespace get root
     privileges first (user is asked). Done is called on main thread with started build, or None when it didn't start."""
     from .rootless import rootless_unsupported_reason
@@ -340,7 +356,8 @@ def start_project_build(project_directory, plan: StageBuildPlan, snapshot=None, 
         build = None
         try:
             build = ProjectBuild(project_directory=project_directory, plan=plan, snapshot=snapshot,
-                                 fetch_snapshot=fetch_snapshot, update_project_snapshot=update_project_snapshot)
+                                 fetch_snapshot=fetch_snapshot, update_project_snapshot=update_project_snapshot,
+                                 cleanup_previous_builds=cleanup_previous_builds)
             build.start(authorization_keeper=authorization_keeper)
         except Exception as e:
             print(f"Failed to start build of {project_directory.name}: {e}")
@@ -513,7 +530,8 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
         else:
             self.log("Building without root privileges, in user namespace")
         remove_stale_sessions(self.log, self.namespace_processes, executor=executor)
-        process.rootless_toolset_path, process.rootless_toolset_mounted = prepare_toolset_squashfs(
+        (process.rootless_toolset_path, process.rootless_toolset_mounted,
+         process.rootless_toolset_temporary_copy) = prepare_toolset_squashfs(
             process.toolset.file_path(), self.log, self.namespace_processes, executor=executor)
         # Latest snapshot is extracted after it's generated.
         if not process.fetch_snapshot:
@@ -562,20 +580,33 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
                 ("rootless_toolset_path", "rootless_toolset_mounted", "toolset image"),
                 ("rootless_snapshot_path", "rootless_snapshot_mounted", "Gentoo snapshot"),
             ):
-                if not getattr(process, mounted_attribute):
-                    continue
-                try:
-                    unmount_read_only_mount(getattr(process, path_attribute), self.log, executor=process.executor)
-                    setattr(process, mounted_attribute, False)
-                    setattr(process, path_attribute, None)
-                except Exception as e:
-                    # Releasing the workspace recursively unmounts any remaining mount as a fallback.
-                    self.log(f"Failed to unmount {description}: {e}")
+                if getattr(process, mounted_attribute):
+                    try:
+                        unmount_read_only_mount(getattr(process, path_attribute), self.log, executor=process.executor)
+                        setattr(process, mounted_attribute, False)
+                        setattr(process, path_attribute, None)
+                    except Exception as e:
+                        # Releasing the workspace recursively unmounts any remaining mount as a fallback.
+                        self.log(f"Failed to unmount {description}: {e}")
+            self._remove_temporary_toolset_copy()
             process.machine.release_workspace(self.log, user=self.workspace_user)
+        else:
+            self._remove_temporary_toolset_copy()
         shutil.rmtree(process.work_root, ignore_errors=True)
         if self.reserved:
             toolset.release()
         return True
+
+    def _remove_temporary_toolset_copy(self):
+        process = self.multistage_process
+        if not process.rootless_toolset_temporary_copy or not process.rootless_toolset_path:
+            return
+        try:
+            remove_in_namespace([process.rootless_toolset_path], self.log, executor=process.executor)
+            process.rootless_toolset_path = None
+            process.rootless_toolset_temporary_copy = False
+        except Exception as e:
+            self.log(f"Failed to remove temporary toolset copy: {e}")
 
 class ProjectBuildStepDownloadSeed(ProjectBuildStep):
     def __init__(self, stage, multistage_process: ProjectBuild):
@@ -874,6 +905,48 @@ echo "===== End of diagnostics ====="
         except Exception as e:
             self.log(f"Failed to prepare diagnostics: {e}")
             return None
+
+class ProjectBuildStepCleanupPreviousBuilds(ProjectBuildStep):
+    """Remove only older successful builds of the stage that just completed."""
+
+    def __init__(self, stage, build_step: ProjectBuildStepBuildStage, multistage_process: ProjectBuild):
+        super().__init__(name=f"Remove previous builds of {stage.name}",
+                         description="Removes older successful builds of this stage", multistage_process=multistage_process)
+        self.target_stage = stage
+        self.build_step = build_step
+
+    def start(self):
+        super().start()
+        if self.build_step.state != MultiStageProcessStageState.COMPLETED or self.build_step.build is None:
+            self.log("Skipped: this stage did not build successfully")
+            self.complete(MultiStageProcessStageState.COMPLETED)
+            return
+        try:
+            from .project_build import load_project_builds
+            current_build = self.build_step.build
+            previous = [build for build in load_project_builds(self.multistage_process.project_directory)
+                        if build.stage_id == self.target_stage.id
+                        and build.id != current_build.id
+                        and build.status == StageBuildStatus.COMPLETED]
+            removed = 0
+            for build in previous:
+                if self._cancel_event.is_set() or getattr(self.multistage_process, "canceled", False):
+                    self.log("Canceled before all previous builds were removed")
+                    self._update_state(MultiStageProcessStageState.CANCELED)
+                    return
+                self.log(f"Removing successful build from {build.date:%Y-%m-%d %H:%M}")
+                build.delete()
+                removed += 1
+            self.log(f"Removed {removed} previous successful build(s)")
+            self.complete(MultiStageProcessStageState.COMPLETED)
+        except Exception as e:
+            print(f"Error during '{self.name}': {e}")
+            self.complete(MultiStageProcessStageState.FAILED)
+
+    def cancel(self):
+        if self.state == MultiStageProcessStageState.IN_PROGRESS:
+            self._cancel_event.set()
+            self._update_state(MultiStageProcessStageState.CANCELED)
 
 # ------------------------------------------------------------------------------
 # Helper functions.

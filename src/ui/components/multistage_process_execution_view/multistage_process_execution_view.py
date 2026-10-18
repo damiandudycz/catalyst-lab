@@ -266,12 +266,14 @@ class MultiStageProcessStageRow(Adw.ActionRow):
             MultiStageProcessStageState.SCHEDULED: "square-alt-arrow-right-svgrepo-com-symbolic",
             MultiStageProcessStageState.IN_PROGRESS: "menu-dots-square-svgrepo-com-symbolic",
             MultiStageProcessStageState.FAILED: "error-box-svgrepo-com-symbolic",
+            MultiStageProcessStageState.CANCELED: "stop-square-symbolic",
             MultiStageProcessStageState.COMPLETED: "check-square-svgrepo-com-symbolic"
         }.get(state)
         styles = {
             MultiStageProcessStageState.SCHEDULED: "dimmed",
             MultiStageProcessStageState.IN_PROGRESS: "",
             MultiStageProcessStageState.FAILED: "error",
+            MultiStageProcessStageState.CANCELED: "dimmed",
             MultiStageProcessStageState.COMPLETED: "success"
         }
         style = styles.get(state)

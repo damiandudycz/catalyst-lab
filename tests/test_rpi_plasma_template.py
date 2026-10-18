@@ -26,12 +26,18 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
         self.template = ProjectTemplate.load(str(ROOT / 'data/project_templates/raspberry-pi-5'))
 
     def generate(self, directory, init, accept_all_licenses=True):
-        names = self.template.resolve(dict(init=init, accept_all_licenses=accept_all_licenses,
+        init_systems = [init] if isinstance(init, str) else list(init)
+        names = self.template.resolve(dict(init_systems=init_systems, accept_all_licenses=accept_all_licenses,
                                            extra_stages=['stage4', 'plasma', 'gnome', 'gnome_customized', 'iso_gui']))
         generated = self.template.generate(names)
         for source, destination in generated.files:
-            _copy_template_files(source, str(directory / destination), names, lambda _: None)
-        return {stage.template_id: stage for stage in generated.stages}
+            copy_names = generated.file_names.get((source, destination), names)
+            _copy_template_files(source, str(directory / destination), copy_names, lambda _: None)
+        suffix = f"-{init_systems[0]}" if len(init_systems) == 1 else None
+        return {
+            stage.template_id.removesuffix(suffix) if suffix else stage.template_id: stage
+            for stage in generated.stages
+        }
 
     def test_stage4_leaves_kernel_packages_to_stage_configuration_and_preserves_desktop_setup(self):
         for init in ('systemd', 'openrc'):
@@ -122,6 +128,27 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
                 for stage_id in ('livegui-stage1', 'livegui-stage2'):
                     stage_path = directory / 'stages' / stages[stage_id].name
                     self.assertFalse((stage_path / 'portage/package.license/90-accept-all-licenses').exists())
+
+    def test_selecting_both_init_systems_generates_independent_stage_graphs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            stages = self.generate(directory, ['openrc', 'systemd'])
+            for init in ('openrc', 'systemd'):
+                self.assertIn(f'stage1-{init}', stages)
+                self.assertEqual(stages[f'stage3-{init}'].parent, f'stage1-{init}')
+                self.assertEqual(stages[f'stage4-plasma-{init}'].parent, f'stage3-desktop-{init}')
+                plasma = stages[f'stage4-plasma-{init}']
+                packages = plasma.arguments['stage4_packages']
+                self.assertIn('sys-kernel/raspberrypi-image', packages)
+                self.assertEqual('gui-libs/display-manager-init' in packages, init == 'openrc')
+                script = directory / 'stages' / plasma.name / 'configure-plasma.sh'
+                text = script.read_text()
+                self.assertIn('if true;' if init == 'systemd' else 'if false;', text)
+
+    def test_init_system_selection_requires_at_least_one(self):
+        names = self.template.resolve(dict(init_systems=[], accept_all_licenses=True))
+        with self.assertRaisesRegex(Exception, 'Select at least 1'):
+            self.template.generate(names)
 
 
 if __name__ == '__main__':

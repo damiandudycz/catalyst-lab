@@ -66,7 +66,8 @@ class QueuedBuildPreview(MultiStageProcess):
         stage_ids = {stage.id for stage in project.stages} & set(self.entry.stage_ids)
         try:
             build = ProjectBuild(project_directory=project, plan=StageBuildPlan(project, stage_ids),
-                                 fetch_snapshot=self.entry.snapshot == LATEST)
+                                 fetch_snapshot=self.entry.snapshot == LATEST,
+                                 cleanup_previous_builds=self.entry.cleanup_previous_builds)
             self.stages = [_PlannedStep(step.name, step.description, self) for step in build.stages]
         except Exception as e:
             print(f"Failed to plan queued build of {project.name}: {e}")

@@ -18,7 +18,7 @@ from `sys-kernel/raspberrypi-image`. They also include NetworkManager, SSH, NTP,
 
 | Option | Values |
 |---|---|
-| Init system | OpenRC, systemd (OpenRC services are enabled automatically; Plasma graphical login is enabled for both) |
+| Init systems | Toggle OpenRC, systemd, or both (at least one is required; OpenRC services are enabled automatically; Plasma graphical login is enabled for both) |
 | CPU target | ARM Cortex-A76 (cortex-a76), Generic baseline |
 | Link-time optimization (LTO) | Off by default. Includes workarounds for packages that fail with LTO |
 | Kernel | Prebuilt Raspberry Pi kernel and modules (`sys-kernel/raspberrypi-image`) are installed in stage4 builds |

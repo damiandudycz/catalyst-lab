@@ -1,6 +1,6 @@
 format = 1
 min_app_version = "2.0.0"
-# Build identities change with init system; stage layout and group references stay the same.
+# Build identities and stage graphs are generated independently for each selected init system.
 stage_id_suffix = "{{ init }}"
 name = "Raspberry Pi 5"
 description = "Gentoo for Raspberry Pi 5: CPU target selection, boot configuration, zram swap and optional GNOME and KDE Plasma desktops."
@@ -8,10 +8,12 @@ groups_title = "Software"
 architecture = "arm64"
 
 [[variables]]
-id = "init"
-title = "Init system"
-description = "OpenRC services are enabled automatically. Plasma graphical login is enabled with either init system."
-default = "openrc"
+id = "init_systems"
+title = "Init systems"
+description = "Choose one or both. OpenRC services are enabled automatically; Plasma graphical login works with either init system."
+type = "multiple"
+minimum_selected = 1
+default = ["openrc"]
 options = [
     { value = "openrc", title = "OpenRC" },
     { value = "systemd", title = "systemd" },
@@ -70,8 +72,8 @@ options = [
     { value = "gnome", title = "GNOME stage4", when = "accept_all_licenses" },
     { value = "gnome_customized", title = "Customized GNOME stage4", when = "accept_all_licenses and 'gnome' in extra_stages" },
     { value = "plasma", title = "KDE Plasma stage4", when = "accept_all_licenses" },
-    { value = "iso", title = "Installation ISO (experimental)", when = "init == 'openrc'" },
-    { value = "iso_gui", title = "Live ISO with desktop (experimental)", when = "init == 'openrc'" },
+    { value = "iso", title = "Installation ISO (experimental)", when = "'openrc' in init_systems" },
+    { value = "iso_gui", title = "Live ISO with desktop (experimental)", when = "'openrc' in init_systems" },
 ]
 
 [[variables]]
@@ -88,6 +90,7 @@ options = [
 
 [values]
 openrc = "{{ init == 'openrc' }}"
+systemd = "{{ init == 'systemd' }}"
 tuned = "{{ optimization == 'tuned' }}"
 cpu_flags = "{{ '-O2 -pipe -mcpu=cortex-a76+crc+crypto -mtune=cortex-a76' if tuned else '-O2 -pipe' }}"
 # Release type names optimizations (eg. 23.0-cortex-a76-lto), generic stages use 23.0-default of releng specs.

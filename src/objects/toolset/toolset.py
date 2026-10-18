@@ -11,10 +11,12 @@ from .event_bus import EventBus, SharedEvent
 from .root_helper_server import ServerResponse, ServerResponseStatusCode
 from .repository import Serializable, Repository, resolve_path
 from .toolset_application import ToolsetApplication, ToolsetApplicationInstall
-from .helper_functions import create_temp_workdir, delete_temp_workdir, mount_squashfs, umount_squashfs, create_squashfs, loop_mount_squashfs, loop_umount_squashfs
+from .helper_functions import (create_temp_workdir, delete_temp_workdir, mount_squashfs, umount_squashfs,
+                               create_squashfs, loop_mount_squashfs, loop_umount_squashfs,
+                               cached_squashfs_copy)
 from .rootless import (
-    rootless_toolset_unsupported_reason, run_in_namespace, extracted_squashfs, mount_cached_machine_toolset,
-    writable_squashfs_copy,
+    MOUNT_SQFS_DIRECTLY, rootless_toolset_unsupported_reason, rootless_unsupported_reason, run_in_namespace, extracted_squashfs, mount_cached_machine_toolset,
+    writable_squashfs_copy, prepare_toolset_squashfs,
     remove_in_namespace, squashfs_process, sessions_directory, executor_for_machine,
     unmount_read_only_mount
 )
@@ -55,6 +57,7 @@ class Toolset(Serializable):
         # SquashFS mount; local rootless toolsets use an extracted copy. Writable copies are removed when unspawning.
         self.rootless = False
         self.rootless_writable_copy: str | None = None
+        self.root_helper_temporary_copy = False
         self.event_bus = EventBus[ToolsetEvents]()
 
     @property
@@ -207,7 +210,14 @@ class Toolset(Serializable):
             # Create squashfs mounting if needed. Toolset being installed already has its root directory.
             uses_squashfs_file = self.squashfs_binding_dir is None and self.file_path() and os.path.exists(self.file_path())
             if uses_squashfs_file and self.rootless:
-                if store_changes:
+                if not MOUNT_SQFS_DIRECTLY:
+                    self.squashfs_binding_dir, mounted, temporary_copy = prepare_toolset_squashfs(
+                        self.file_path(), print, executor=executor)
+                    if mounted:
+                        self.machine_cache_mounted = True
+                    if temporary_copy:
+                        self.rootless_writable_copy = self.squashfs_binding_dir
+                elif store_changes:
                     self.squashfs_binding_dir = writable_squashfs_copy(squashfs_path=self.file_path(), output_handler=print, executor=executor)
                     self.rootless_writable_copy = self.squashfs_binding_dir
                 elif machine:
@@ -220,7 +230,19 @@ class Toolset(Serializable):
                     self.squashfs_loop_mounted = False
             elif uses_squashfs_file:
                 prefix = f"toolsets/{Toolset.sanitized_name_for_name(name=self.name)}/mount_"
-                if store_changes:
+                if not MOUNT_SQFS_DIRECTLY:
+                    if rootless_unsupported_reason() is None:
+                        self.squashfs_binding_dir, _mounted, temporary_copy = prepare_toolset_squashfs(
+                            self.file_path(), print, executor=executor)
+                        if temporary_copy:
+                            self.rootless_writable_copy = self.squashfs_binding_dir
+                    else:
+                        cache_path = os.path.join(resolve_path(Repository.Settings.value.cache_location),
+                                                  "Extracted", "Toolsets", os.path.basename(self.file_path()) + ".d")
+                        self.squashfs_binding_dir = cached_squashfs_copy(
+                            self.file_path(), cache_path, prefix, check_path="usr")
+                        self.root_helper_temporary_copy = True
+                elif store_changes:
                     # Changes are written directly to toolset files and squashfs is rebuilt from them when unspawning,
                     # so it needs writable copy.
                     self.squashfs_binding_dir = mount_squashfs(squashfs_path=self.file_path(), prefix=prefix)
@@ -504,6 +526,16 @@ class Toolset(Serializable):
 
     def _release_squashfs_binding_dir(self):
         """Unmounts or deletes squashfs contents prepared by spawn, used when spawning fails."""
+        if getattr(self, "root_helper_temporary_copy", False) and self.squashfs_binding_dir:
+            umount_squashfs(self.squashfs_binding_dir)
+            self.root_helper_temporary_copy = False
+            self.squashfs_binding_dir = None
+            return
+        if self.rootless_writable_copy:
+            remove_in_namespace([self.rootless_writable_copy], print, executor=self.executor)
+            self.rootless_writable_copy = None
+            self.squashfs_binding_dir = None
+            return
         if self.rootless:
             if (self.machine_cache_mounted or (self.squashfs_loop_mounted and self.machine)) and self.squashfs_binding_dir:
                 mount_point = os.path.dirname(self.squashfs_binding_dir) if self.machine_cache_mounted else self.squashfs_binding_dir
@@ -511,9 +543,6 @@ class Toolset(Serializable):
                 self.machine_cache_mounted = self.squashfs_loop_mounted = False
                 self.squashfs_binding_dir = None
                 return
-            if self.rootless_writable_copy:
-                remove_in_namespace([self.rootless_writable_copy], print, executor=self.executor)
-            self.rootless_writable_copy = None
             self.squashfs_binding_dir = None
             return
         if self.squashfs_binding_dir and self.file_path() and os.path.exists(self.file_path()):
@@ -544,8 +573,11 @@ class Toolset(Serializable):
                 if self.rootless:
                     # Shared read only copy is kept, writable one is removed.
                     # Machine mounts must always be released before the disposable workspace is detached.
-                    if clean_squashfs_binding_dir or self.machine_cache_mounted or (self.squashfs_loop_mounted and self.machine):
+                    if (clean_squashfs_binding_dir or self.rootless_writable_copy or self.machine_cache_mounted
+                            or (self.squashfs_loop_mounted and self.machine)):
                         self._release_squashfs_binding_dir()
+                elif self.rootless_writable_copy or self.root_helper_temporary_copy:
+                    self._release_squashfs_binding_dir()
                 elif self.squashfs_binding_dir and clean_squashfs_binding_dir:
                     if self.squashfs_loop_mounted:
                         loop_umount_squashfs(mount_point=self.squashfs_binding_dir)
@@ -557,6 +589,7 @@ class Toolset(Serializable):
                 self.squashfs_binding_dir = None
                 self.squashfs_loop_mounted = False
                 self.machine_cache_mounted = False
+                self.root_helper_temporary_copy = False
                 self.work_dir = None
                 self.current_bindings = None
                 self.additional_bindings = None

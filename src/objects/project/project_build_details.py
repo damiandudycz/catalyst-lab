@@ -171,12 +171,45 @@ tail -n 300 "$C/var/log/emerge.log" > "$FAILURE/emerge.log" 2>/dev/null
     in_chroot /bin/bash -c '
         AS=$(gcc -print-prog-name=as)
         printf "gcc selected assembler: %s\\n" "$AS"
-        printf "resolved assembler: "; readlink -f "$AS"
-        stat -Lc "%A %a %U:%G %n" "$AS" "$(readlink -f "$AS")" 2>&1
-        echo "--- assembler filesystem mount"
-        findmnt -T "$AS" -o TARGET,FSTYPE,OPTIONS 2>&1
-        echo "--- Portage temporary filesystem mount"
-        findmnt -T /var/tmp/portage -o TARGET,FSTYPE,OPTIONS 2>&1
+        RESOLVED=$(readlink -f "$AS")
+        printf "resolved assembler: %s\\n" "$RESOLVED"
+        echo "--- assembler and parent directory permissions"
+        namei -l "$AS" 2>&1 || true
+        stat -Lc "%A %a %U:%G %n" "$AS" "$RESOLVED" 2>&1
+        echo "--- mount entries visible inside chroot"
+        if [ -r /proc/self/mountinfo ]; then
+            cat /proc/self/mountinfo
+        else
+            echo "/proc/self/mountinfo is unavailable"
+        fi
+        echo "--- executing assembler as root"
+        "$AS" --version 2>&1 | head -n 2
+        echo "--- executing assembler as Portage user"
+        python3 - "$RESOLVED" <<"PY_AS_EXEC"
+import os, pwd, subprocess, sys
+path = sys.argv[1]
+account = pwd.getpwnam("portage")
+directories = []
+directory = os.path.dirname(path)
+while directory != "/":
+    directories.append(directory)
+    directory = os.path.dirname(directory)
+directories.append("/")
+for directory in reversed(directories):
+    print(f"root sees {{directory}}: searchable={{os.access(directory, os.X_OK)}}")
+try:
+    try:
+        os.setgroups([])
+    except OSError as error:
+        print(f"could not clear supplementary groups: {{error}}")
+    os.setgid(account.pw_gid)
+    os.setuid(account.pw_uid)
+    print(f"uid={{os.getuid()}} gid={{os.getgid()}} executable={{os.access(path, os.X_OK)}}")
+    result = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10)
+    print(f"assembler exit={{result.returncode}}; stdout={{result.stdout[:300]!r}}; stderr={{result.stderr[:300]!r}}")
+except Exception as error:
+    print(f"portage-user assembler probe failed: {{type(error).__name__}}: {{error}}")
+PY_AS_EXEC
     '
 }} > "$FAILURE/toolchain.txt" 2>&1
 {{

@@ -27,6 +27,7 @@ class MultiStageProcessStageState(Enum):
     IN_PROGRESS = auto() # Step started and is in progress.
     COMPLETED = auto()   # Step completed successfully.
     FAILED = auto()      # Step failed.
+    CANCELED = auto()    # Step was canceled before or during execution.
 
 # ------------------------------------------------------------------------------
 # Process/Stage events:

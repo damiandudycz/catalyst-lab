@@ -78,13 +78,15 @@ class ProjectBuildDetailsTests(unittest.TestCase):
 
         self.assertIsNone(failure["reason"])
 
-    def test_failure_logs_capture_assembler_permissions_and_mount_options(self):
+    def test_failure_logs_capture_assembler_access_for_portage_and_mounts(self):
         script = failure_logs_script('/stage/root', '/build/failure')
 
         self.assertIn('gcc -print-prog-name=as', script)
         self.assertIn('stat -Lc', script)
-        self.assertIn('findmnt -T "$AS"', script)
-        self.assertIn('findmnt -T /var/tmp/portage', script)
+        self.assertIn('cat /proc/self/mountinfo', script)
+        self.assertIn('namei -l "$AS"', script)
+        self.assertIn('executing assembler as Portage user', script)
+        self.assertIn('os.setuid(account.pw_uid)', script)
 
     def test_reads_unique_installed_packages_from_contents(self):
         with tempfile.TemporaryDirectory() as temporary:

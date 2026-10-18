@@ -111,15 +111,19 @@ target = "stage3"
             template = ProjectTemplate.load(str(path.parent))
             for init in ['openrc', 'systemd']:
                 with self.subTest(template=path.parent.name, init=init):
-                    names = template.resolve({'init': init, 'extra_stages': ['stage4', 'gnome', 'plasma', 'xfce', 'iso', 'iso_gui', 'livegui']})
+                    selection = {'init_systems': [init]} if any(variable.id == 'init_systems' for variable in template.variables) else {'init': init}
+                    names = template.resolve({**selection, 'extra_stages': ['stage4', 'gnome', 'plasma', 'xfce', 'iso', 'iso_gui', 'livegui']})
                     generated = template.generate(names)
                     stages = {s.template_id: s for s in generated.stages}
                     self.assertFalse(any('iso-seed' in key for key in stages))
-                    self.assertTrue(all(s.persistent_id == f'{s.template_id}:{init}' for s in stages.values()))
-                    self.assertEqual(stages['stage3'].parent, 'stage1')
+                    template_id_suffix = f'-{init}' if 'init_systems' in selection else ''
+                    persistent_id = lambda stage: f'{stage.template_id.removesuffix(template_id_suffix)}:{init}'
+                    self.assertTrue(all(s.persistent_id == persistent_id(s) for s in stages.values()))
+                    self.assertEqual(stages[f'stage3{template_id_suffix}'].parent, f'stage1{template_id_suffix}')
                     for child, parent in [('livecd-stage1', 'stage3'), ('livegui-stage1', 'stage3-desktop')]:
-                        if child in stages:
-                            self.assertEqual(stages[child].parent, parent)
+                        child_id = child + template_id_suffix
+                        if child_id in stages:
+                            self.assertEqual(stages[child_id].parent, parent + template_id_suffix)
                     if path.parent.name == 'gentoo-release':
                         self.assertTrue(any(dest.endswith('/portage') and 'stage4' in dest for _, dest in generated.files))
 

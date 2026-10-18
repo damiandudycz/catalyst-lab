@@ -175,29 +175,51 @@ class ExecutorTests(unittest.TestCase):
             is_machine = True
 
         executor = MachineFakeExecutor()
-        with patch.object(rootless, 'mount_squashfs_read_only', return_value='/workspace/toolsets/mount_abc') as mount, \
+        with patch.object(rootless, 'MOUNT_SQFS_DIRECTLY', True), \
+                patch.object(rootless, 'mount_squashfs_read_only', return_value='/workspace/toolsets/mount_abc') as mount, \
                 patch.object(rootless, 'extracted_squashfs') as extract:
-            path, mounted = rootless.prepare_toolset_squashfs(
+            path, mounted, temporary_copy = rootless.prepare_toolset_squashfs(
                 '/library/Toolsets/toolset.sqfs', lambda _line: None, executor=executor)
 
         self.assertEqual(path, '/workspace/toolsets/mount_abc')
         self.assertTrue(mounted)
+        self.assertFalse(temporary_copy)
         mount.assert_called_once_with('/library/Toolsets/toolset.sqfs', unittest.mock.ANY, None,
                                       executor, kind='toolsets')
         extract.assert_not_called()
 
-    def test_local_build_toolset_keeps_extracted_fallback(self):
+    def test_default_toolset_mode_copies_reusable_extraction_to_temporary(self):
         executor = FakeExecutor()
         with patch.object(rootless, 'extracted_squashfs', return_value='/library/Cache/Extracted/Toolsets/toolset.sqfs.d') as extract, \
+                patch.object(rootless, 'create_work_directory', return_value='/library/Temporary/Work/toolsets/copy_test'), \
+                patch.object(executor, 'run_in_namespace', return_value=True) as run, \
                 patch.object(rootless, 'mount_squashfs_read_only') as mount:
-            path, mounted = rootless.prepare_toolset_squashfs(
+            path, mounted, temporary_copy = rootless.prepare_toolset_squashfs(
                 '/library/Toolsets/toolset.sqfs', lambda _line: None, executor=executor)
 
-        self.assertEqual(path, '/library/Cache/Extracted/Toolsets/toolset.sqfs.d')
+        self.assertEqual(path, '/library/Temporary/Work/toolsets/copy_test')
         self.assertFalse(mounted)
+        self.assertTrue(temporary_copy)
         extract.assert_called_once_with('/library/Toolsets/toolset.sqfs', 'toolsets', unittest.mock.ANY, None,
                                         check_path='bin/bash', executor=executor)
+        run.assert_called_once()
         mount.assert_not_called()
+
+    def test_extracted_toolset_mode_copies_reusable_extraction_to_temporary(self):
+        executor = FakeExecutor()
+        with patch.object(rootless, 'extracted_squashfs', return_value='/library/Cache/Extracted/toolset.d') as extract, \
+                patch.object(rootless, 'create_work_directory', return_value='/library/Temporary/Work/toolsets/copy_test'), \
+                patch.object(executor, 'run_in_namespace', return_value=True) as run:
+            path, mounted, temporary_copy = rootless.prepare_toolset_squashfs(
+                '/library/Toolsets/toolset.sqfs', lambda _line: None, executor=executor)
+
+        self.assertEqual(path, '/library/Temporary/Work/toolsets/copy_test')
+        self.assertFalse(mounted)
+        self.assertTrue(temporary_copy)
+        extract.assert_called_once_with('/library/Toolsets/toolset.sqfs', 'toolsets', unittest.mock.ANY, None,
+                                        check_path='bin/bash', executor=executor)
+        run.assert_called_once()
+        self.assertIn('cp -a -- /library/Cache/Extracted/toolset.d/.', run.call_args.args[0])
 
     def test_build_session_prepares_bind_targets_in_overlay_upper_before_mount(self):
         executor = FakeExecutor()
