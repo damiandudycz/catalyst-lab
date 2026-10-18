@@ -293,6 +293,7 @@ class ProjectDetailsView(Gtk.Box):
             else f"Check {self._source} for changes")
         self.source_button.set_tooltip_text(f"{self.source_button.get_tooltip_text()}\n{details}")
 
+    @Gtk.Template.Callback()
     def _on_update_source_clicked(self, button):
         if self._source is None:
             return
