@@ -89,8 +89,12 @@ class PackagesDirectory(Serializable):
                 if project.metadata is not None and project.metadata.packages_directory_id == self.id]
 
     def compatibility(self, project) -> list[StatusDetail]:
-        """Problems of using this folder by project: other architecture (error, packages can't be used), other CPU
-        flags (warning, packages might not run on machines of project)."""
+        """Check only binary compatibility: architecture and CPU flags.
+
+        The toolset that happened to build the packages is not part of compatibility; toolsets are selected per action.
+        Other architecture is an error, while differing CPU flags are a warning because packages may not run on the
+        project's target machines.
+        """
         from .status import StatusIndicatorState, StatusDetail
         problems = []
         architecture = project.get_architecture()

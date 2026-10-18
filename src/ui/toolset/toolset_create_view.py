@@ -18,6 +18,7 @@ from .wizard_view import WizardView
 from .item_select_view import ItemSelectionViewEvent
 from .cl_toggle_group import CLToggle, CLToggleGroup
 from .name_suggestion import unique_name
+from .runner import default_runner, RunnerType
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/toolset/toolset_create_view.ui')
 class ToolsetCreateView(Gtk.Box):
@@ -33,6 +34,7 @@ class ToolsetCreateView(Gtk.Box):
     stages_list = Gtk.Template.Child()
     tools_list = Gtk.Template.Child()
     allow_binpkgs_checkbox = Gtk.Template.Child()
+    set_as_default_checkbox = Gtk.Template.Child()
     environment_name_row = Gtk.Template.Child()
     name_used_label = Gtk.Template.Child()
 
@@ -48,15 +50,11 @@ class ToolsetCreateView(Gtk.Box):
         self.tools_selection_versions: Dict[ToolsetApplication, ToolsetApplicationSelection] = {app: app.versions[0] for app in ToolsetApplication.ALL}
         self.tools_selection_patches: Dict[ToolsetApplication, list[GLocalFile]] = {app: [] for app in ToolsetApplication.ALL}
         self.allow_binpkgs_checkbox.set_active(self.allow_binpkgs)
+        self.set_as_default_checkbox.set_active(True)
         self._load_applications_rows()
-        # Toolsets run on this computer only on Linux, elsewhere only virtual machines are listed (first one is selected).
-        self.local_unsupported_reason = None if sys.platform.startswith("linux") else "Not available on this system, select virtual machine"
-        self.machine_selection_view.set_property("display_none", self.local_unsupported_reason is None)
-        self.machine_selection_view.set_property("none_subtitle", "Runs directly on this computer")
-        self.machine_selection_view.set_property("autoselect_default", self.local_unsupported_reason is not None)
+        self.machine_selection_view.set_property("autoselect_default", True)
+        self.machine_selection_view.preferred_item = default_runner()
         self.machine_selection_view.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, lambda view: self.wizard_view._refresh_buttons_state())
-        if not virtual_machines_supported():
-            self.wizard_view.remove_page(self.runs_on_page) # Toolsets run on this computer.
         if installation_in_progress is None or installation_in_progress.status == MultiStageProcessState.SETUP:
             threading.Thread(target=self._load_stage3_urls, daemon=True).start()
         self.connect("realize", self.on_realize)
@@ -70,7 +68,7 @@ class ToolsetCreateView(Gtk.Box):
     def is_page_ready_to_continue(self, sender, page) -> bool:
         match page:
             case self.runs_on_page:
-                return self.machine_selection_view.selected_item is not None or self.local_unsupported_reason is None
+                return self.machine_selection_view.selected_item is not None
             case self.configuration_page:
                 return self.selected_stage is not None
             case self.tools_page:
@@ -79,8 +77,10 @@ class ToolsetCreateView(Gtk.Box):
 
     @Gtk.Template.Callback()
     def begin_installation(self, view):
+        runner = self.machine_selection_view.selected_item
+        machine = runner if runner.runner_type == RunnerType.VM else None
         authorize_toolset_action(callback=lambda authorization_keeper: self._start_installation(authorization_keeper=authorization_keeper),
-                                 machine=self.machine_selection_view.selected_item)
+                                 machine=machine)
 
     @Gtk.Template.Callback()
     def is_machine_selectable(self, sender, machine) -> bool:
@@ -107,7 +107,8 @@ class ToolsetCreateView(Gtk.Box):
             stage_url=self.selected_stage,
             allow_binpkgs=self.allow_binpkgs,
             apps_selection=apps_selection,
-            machine=self.machine_selection_view.selected_item
+            runner=self.machine_selection_view.selected_item,
+            set_as_default=self.set_as_default_checkbox.get_active()
         )
         installation_in_progress.start()
         self.wizard_view.set_installation(installation_in_progress)

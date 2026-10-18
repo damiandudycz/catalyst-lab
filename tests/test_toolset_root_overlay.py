@@ -3,7 +3,7 @@ import sys
 import types
 import unittest
 import uuid
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if 'catalystlab' not in sys.modules:
@@ -35,7 +35,8 @@ class ToolsetRootOverlayTests(unittest.TestCase):
                 toolset = object.__new__(Toolset)
                 toolset.rootless = True
                 machine, executor = object(), Mock()
-                toolset.machine_id = uuid.uuid4()
+                toolset.runner_id = uuid.uuid4()
+                toolset.runner_type = "vm"
                 toolset.squashfs_binding_dir = (
                     '/temporary/cache/toolset.sqfs.d' if mounted_attribute == 'machine_cache_mounted'
                     else '/temporary/toolset'
@@ -44,8 +45,8 @@ class ToolsetRootOverlayTests(unittest.TestCase):
                 toolset.squashfs_loop_mounted = mounted_attribute == 'squashfs_loop_mounted'
                 toolset.rootless_writable_copy = None
 
-                with patch('catalystlab.build_machine.build_machine_for_id', return_value=machine), \
-                        patch('catalystlab.toolset.executor_for_machine', return_value=executor), \
+                with patch('catalystlab.build_machine.vm_runner_for_id', return_value=machine), \
+                        patch.object(Toolset, 'executor', new_callable=PropertyMock, return_value=executor), \
                         patch('catalystlab.toolset.unmount_read_only_mount') as unmount:
                     toolset._release_squashfs_binding_dir()
 

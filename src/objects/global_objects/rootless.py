@@ -334,9 +334,6 @@ echo "Machine is ready: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname 
 
 LOCAL_EXECUTOR = LocalExecutor()
 
-def executor_for_machine(machine) -> Executor:
-    return MachineExecutor(machine) if machine else LOCAL_EXECUTOR
-
 # ------------------------------------------------------------------------------
 # Local support.
 
@@ -452,7 +449,7 @@ def mount_cached_machine_toolset(squashfs_path: str, output_handler, process_hol
     """Mount a reusable ext4 extraction read-only; its ext4 image lives in the library cache."""
     executor = executor or LOCAL_EXECUTOR
     if not executor.is_machine:
-        raise RuntimeError("Persistent extracted toolset caches require a build machine")
+        raise RuntimeError("Persistent extracted toolset caches require a VM runner")
 
     image = machine_toolset_cache_image(squashfs_path, executor)
     cache = os.path.dirname(image)
@@ -519,10 +516,10 @@ fi
 
 def mount_squashfs_read_only(squashfs_path: str, output_handler, process_holder: list | None = None,
                              executor: Executor | None = None, kind: str = "toolsets") -> str:
-    """Mounts a SquashFS image read-only in a Linux build machine, without extracting its files."""
+    """Mounts a SquashFS image read-only in a Linux VM runner, without extracting its files."""
     executor = executor or LOCAL_EXECUTOR
     if not executor.is_machine:
-        raise RuntimeError("Read-only image mounts are only supported in build machines")
+        raise RuntimeError("Read-only image mounts are only supported in VM runners")
     q = shlex.quote
     mount_point = create_work_directory(f"{kind}/mount_", executor)
     output_handler(f"Mounting {os.path.basename(squashfs_path)} read-only")
@@ -542,7 +539,7 @@ rmdir -- {q(mount_point)} 2>/dev/null || true
 
 def prepare_squashfs(squashfs_path: str, kind: str, check_path: str, output_handler,
                      process_holder: list | None = None, executor: Executor | None = None) -> tuple[str, bool]:
-    """Prepare a read-only SquashFS lower layer: mount in a build machine, or use the extracted cache locally."""
+    """Prepare a read-only SquashFS lower layer: mount in a VM runner, or use the extracted cache locally."""
     executor = executor or LOCAL_EXECUTOR
     if executor.is_machine:
         return mount_squashfs_read_only(squashfs_path, output_handler, process_holder, executor, kind=kind), True
@@ -587,10 +584,10 @@ def prepare_snapshot_squashfs(squashfs_path: str, output_handler, process_holder
 
 def unmount_read_only_mount(mount_point: str, output_handler, process_holder: list | None = None,
                             executor: Executor | None = None) -> None:
-    """Unmounts a read-only SquashFS or extracted cache mounted in a Linux build machine."""
+    """Unmounts a read-only SquashFS or extracted cache mounted in a Linux VM runner."""
     executor = executor or LOCAL_EXECUTOR
     if not executor.is_machine:
-        raise RuntimeError("Direct SquashFS mounts are only supported in build machines")
+        raise RuntimeError("Direct SquashFS mounts are only supported in VM runners")
     q = shlex.quote
     script = f"""
 set -uo pipefail

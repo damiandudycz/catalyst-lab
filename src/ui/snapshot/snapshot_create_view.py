@@ -8,6 +8,8 @@ from .toolset_application import ToolsetApplication
 from .snapshot_installation import SnapshotInstallation
 from .item_select_view import ItemSelectionViewEvent
 from .wizard_view import WizardView
+from .toolset_selection import sorted_toolsets
+from .runner import default_runner, RunnerType
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/snapshot/snapshot_create_view.ui')
 class SnapshotCreateView(Gtk.Box):
@@ -18,12 +20,19 @@ class SnapshotCreateView(Gtk.Box):
     # Setup view elements:
     config_page = Gtk.Template.Child()
     toolset_selection_view = Gtk.Template.Child()
+    runner_selection_view = Gtk.Template.Child()
 
     def __init__(self, installation_in_progress: SnapshotInstallation | None = None, content_navigation_view: Adw.NavigationView | None = None):
         super().__init__()
         self.installation_in_progress = installation_in_progress
         self.content_navigation_view = content_navigation_view
         self.apps_requirements = [ToolsetApplication.CATALYST]
+        self.toolset_selection_view.set_static_list(sorted_toolsets(applications=self.apps_requirements))
+        self.runner_selection_view.preferred_item = default_runner()
+        self.runner_selection_view.event_bus.subscribe(
+            ItemSelectionViewEvent.ITEM_CHANGED,
+            self.runner_changed
+        )
         self.connect("realize", self.on_realize)
         self.toolset_selection_view.event_bus.subscribe(
             ItemSelectionViewEvent.ITEM_CHANGED,
@@ -31,6 +40,9 @@ class SnapshotCreateView(Gtk.Box):
         )
 
     def toolset_changed(self, data):
+        self.wizard_view._refresh_buttons_state()
+
+    def runner_changed(self, _data):
         self.wizard_view._refresh_buttons_state()
 
     def on_realize(self, widget):
@@ -64,6 +76,7 @@ class SnapshotCreateView(Gtk.Box):
             case self.config_page:
                 return (
                     self.toolset_selection_view.selected_item is not None
+                    and self.runner_selection_view.selected_item is not None
                     and self.is_item_usable(self.toolset_selection_view, self.toolset_selection_view.selected_item)
                     and self.is_item_selectable(self.toolset_selection_view, self.toolset_selection_view.selected_item)
                 )
@@ -72,14 +85,21 @@ class SnapshotCreateView(Gtk.Box):
     @Gtk.Template.Callback()
     def begin_installation(self, view):
         selected_toolset = self.toolset_selection_view.selected_item
-        authorize_toolset_action(callback=lambda authorization_keeper: self._start_installation(authorization_keeper=authorization_keeper, selected_toolset=selected_toolset),
-                                 machine=selected_toolset.machine if selected_toolset else None)
+        selected_runner = self.runner_selection_view.selected_item
+        authorize_toolset_action(callback=lambda authorization_keeper: self._start_installation(
+            authorization_keeper=authorization_keeper,
+            selected_toolset=selected_toolset,
+            selected_runner=selected_runner,
+        ),
+                                 machine=selected_runner if selected_runner and selected_runner.runner_type == RunnerType.VM else None)
 
-    def _start_installation(self, authorization_keeper: AuthorizationKeeper, selected_toolset: Toolset | None = None, selected_file: Gio.File | None = None):
+    def _start_installation(self, authorization_keeper: AuthorizationKeeper, selected_toolset: Toolset | None = None,
+                            selected_runner=None, selected_file: Gio.File | None = None):
         if not authorization_keeper:
             return
         installation_in_progress = SnapshotInstallation(
             toolset=selected_toolset,
+            runner=selected_runner,
             file=selected_file
         )
         installation_in_progress.start()
@@ -111,4 +131,18 @@ class SnapshotCreateView(Gtk.Box):
         filters = create_filter_list()
         file_dialog.set_filters(filters)
         file_dialog.open(self.get_root(), None, on_file_open_response)
+
+    @Gtk.Template.Callback()
+    def is_runner_selectable(self, _sender, _runner) -> bool:
+        return True
+
+    @Gtk.Template.Callback()
+    def setup_runner_monitoring(self, sender, items):
+        from .event_bus import SharedEvent
+        if hasattr(self, "monitored_runners"):
+            for runner in self.monitored_runners:
+                runner.event_bus.unsubscribe(SharedEvent.STATE_UPDATED, self)
+        self.monitored_runners = items
+        for runner in items:
+            runner.event_bus.subscribe(SharedEvent.STATE_UPDATED, sender.refresh_items_state, self)
 

@@ -1,36 +1,41 @@
 from __future__ import annotations
 import os, tempfile
 from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessStageState, MultiStageProcessState
-from .build_machine import BuildMachine
-from .build_machine_manager import BuildMachineManager, shared_paths
+from .build_machine import VMRunner
+from .build_machine_manager import VMRunnerManager, shared_paths
 from .lima import lima_unavailable_reason, machine_configuration, run_limactl
 from .rootless import MachineExecutor
 
 # ------------------------------------------------------------------------------
-# Creating build machine.
+# Creating a VM runner.
 # ------------------------------------------------------------------------------
 
-class BuildMachineInstallation(MultiStageProcess):
+class VMRunnerInstallation(MultiStageProcess):
     """Creates Alpine Linux virtual machine with Lima, prepared for building without root privileges."""
 
-    def __init__(self, name: str, cpus: int, memory_gib: int, workspace_gib: int, swap_gib: int = BuildMachine.DEFAULT_SWAP_GIB):
-        self.machine = BuildMachine(name=name, cpus=cpus, memory_gib=memory_gib, workspace_gib=workspace_gib, swap_gib=swap_gib)
-        super().__init__(title="Virtual machine creation")
+    def __init__(self, name: str, cpus: int, memory_gib: int, workspace_gib: int,
+                 swap_gib: int = VMRunner.DEFAULT_SWAP_GIB, set_as_default: bool = True):
+        self.machine = VMRunner(name=name, cpus=cpus, memory_gib=memory_gib, workspace_gib=workspace_gib, swap_gib=swap_gib)
+        self.set_as_default = set_as_default
+        super().__init__(title="VM runner creation")
 
     def setup_stages(self):
-        self.stages.append(BuildMachineStepCheckLima(multistage_process=self))
-        self.stages.append(BuildMachineStepCreate(multistage_process=self))
-        self.stages.append(BuildMachineStepStart(multistage_process=self))
-        self.stages.append(BuildMachineStepVerify(multistage_process=self))
+        self.stages.append(VMRunnerStepCheckLima(multistage_process=self))
+        self.stages.append(VMRunnerStepCreate(multistage_process=self))
+        self.stages.append(VMRunnerStepStart(multistage_process=self))
+        self.stages.append(VMRunnerStepVerify(multistage_process=self))
 
     def complete_process(self, success: bool):
         if success:
-            BuildMachineManager.shared().add_machine(self.machine)
+            VMRunnerManager.shared().add_runner(self.machine)
+            if self.set_as_default:
+                from .repository import Repository
+                Repository.Settings.value.default_runner_id = str(self.machine.id)
 
     def name(self) -> str:
         return self.machine.name
 
-class BuildMachineStep(MultiStageProcessStage):
+class VMRunnerStep(MultiStageProcessStage):
     def start(self):
         self.processes = [] # Lima processes, terminated when canceled.
         super().start()
@@ -40,9 +45,9 @@ class BuildMachineStep(MultiStageProcessStage):
             if hasattr(process, "terminate"):
                 process.terminate()
 
-class BuildMachineStepCheckLima(BuildMachineStep):
+class VMRunnerStepCheckLima(VMRunnerStep):
     def __init__(self, multistage_process: MultiStageProcess):
-        super().__init__(name="Check virtual machine tools", description="Checks that Lima is installed", multistage_process=multistage_process)
+        super().__init__(name="Check VM runner tools", description="Checks that Lima is installed", multistage_process=multistage_process)
     def start(self):
         super().start()
         try:
@@ -53,9 +58,9 @@ class BuildMachineStepCheckLima(BuildMachineStep):
             print(f"Error during '{self.name}': {e}")
             self.complete(MultiStageProcessStageState.FAILED)
 
-class BuildMachineStepCreate(BuildMachineStep):
+class VMRunnerStepCreate(VMRunnerStep):
     def __init__(self, multistage_process: MultiStageProcess):
-        super().__init__(name="Create virtual machine", description="Downloads Alpine Linux image and creates machine", multistage_process=multistage_process)
+        super().__init__(name="Create VM runner", description="Downloads Alpine Linux image and creates a runner", multistage_process=multistage_process)
         self.created = False
     def start(self):
         super().start()
@@ -69,7 +74,7 @@ class BuildMachineStepCreate(BuildMachineStep):
                 configuration_path = file.name
             try:
                 if not run_limactl(["create", f"--name={machine.instance_name}", configuration_path], self.log, self.processes, home=machine.lima_home):
-                    raise RuntimeError("Failed to create virtual machine")
+                    raise RuntimeError("Failed to create VM runner")
             finally:
                 os.remove(configuration_path)
             self.created = True
@@ -86,11 +91,11 @@ class BuildMachineStepCreate(BuildMachineStep):
             self.multistage_process.machine.delete_swap_disk()
         return True
 
-class BuildMachineStepStart(BuildMachineStep):
+class VMRunnerStepStart(VMRunnerStep):
     # Machine is used by creation until it finishes, so it's not stopped (when idle) between steps and booted again.
     USER = "Machine creation"
     def __init__(self, multistage_process: MultiStageProcess):
-        super().__init__(name="Start virtual machine", description="Boots machine and installs required packages", multistage_process=multistage_process)
+        super().__init__(name="Start VM runner", description="Boots the runner and installs required packages", multistage_process=multistage_process)
         self.used = False
     def start(self):
         super().start()
@@ -114,9 +119,9 @@ class BuildMachineStepStart(BuildMachineStep):
                 machine.stop_if_started_automatically()
         return True
 
-class BuildMachineStepVerify(BuildMachineStep):
+class VMRunnerStepVerify(VMRunnerStep):
     def __init__(self, multistage_process: MultiStageProcess):
-        super().__init__(name="Verify machine", description="Checks that toolsets can run in machine without root", multistage_process=multistage_process)
+        super().__init__(name="Verify runner", description="Checks that toolsets can run in the runner without root", multistage_process=multistage_process)
     def start(self):
         super().start()
         try:

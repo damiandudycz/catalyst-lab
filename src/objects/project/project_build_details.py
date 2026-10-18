@@ -43,12 +43,16 @@ def run_details(process) -> dict:
                              "catalyst": str(catalyst.version) if catalyst else None}
     if project := _project_commit(process.project_directory):
         inputs["project"] = project
+    runner = getattr(process, "runner", None)
     machine = process.machine
     if machine:
-        environment.update({"runs_on": machine.name, "virtual_machine": True, "cpus": machine.cpus,
+        environment.update({"runs_on": runner.name, "runner_type": runner.runner_type.value,
+                            "virtual_machine": True, "cpus": machine.cpus,
                             "memory_gib": machine.memory_gib, "swap_gib": getattr(machine, "swap_gib", 0)})
     else:
-        environment.update({"runs_on": os.uname().nodename, "virtual_machine": False, "cpus": os.cpu_count(),
+        environment.update({"runs_on": runner.name if runner else os.uname().nodename,
+                            "runner_type": runner.runner_type.value if runner else "host",
+                            "virtual_machine": False, "cpus": os.cpu_count(),
                             "memory_gib": _memory_gib()})
     environment["rootless"] = process.rootless
     return details

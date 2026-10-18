@@ -47,6 +47,12 @@ class BuildQueueTests(unittest.TestCase):
             self.queue.add(self.project, [uuid.uuid4()], None, cleanup_previous_builds=True)
         self.assertTrue(self.queue.entries[0].cleanup_previous_builds)
 
+    def test_selected_runner_is_kept_with_queued_build(self):
+        runner = types.SimpleNamespace(id="host")
+        with patch.object(module, "running_build", return_value=None):
+            self.queue.add(self.project, [uuid.uuid4()], None, runner=runner)
+        self.assertEqual(self.queue.entries[0].runner_id, "host")
+
     def test_project_being_built_cannot_be_queued(self):
         build = types.SimpleNamespace(project_directory=self.project)
         with patch.object(module, "running_build", return_value=build):

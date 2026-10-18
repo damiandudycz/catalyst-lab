@@ -31,9 +31,8 @@ def build_button_state(project_directory) -> BuildButtonState:
         error = project_directory.configuration_error
         return BuildButtonState(True, error is None, GLib.markup_escape_text(error) if error else "Add build to queue",
                                 error or f"Starts after build of {running.project_directory.name} and queued builds", None)
-    toolset = project_directory.get_toolset()
-    reason = toolset.busy_reason if toolset else "Select toolset in project configuration"
-    return BuildButtonState(True, reason is None, GLib.markup_escape_text(reason) if reason else "Create build", reason, None)
+    error = project_directory.configuration_error
+    return BuildButtonState(True, error is None, GLib.markup_escape_text(error) if error else "Create build", error, None)
 
 def present_queued_build(entry: QueuedBuild):
     app_event_bus.emit(AppEvents.PRESENT_VIEW, QueuedBuildView(entry), "Build stages", 640, 480)
@@ -65,7 +64,8 @@ class QueuedBuildPreview(MultiStageProcess):
         from .project_build_process import ProjectBuild
         stage_ids = {stage.id for stage in project.stages} & set(self.entry.stage_ids)
         try:
-            build = ProjectBuild(project_directory=project, plan=StageBuildPlan(project, stage_ids),
+            build = ProjectBuild(project_directory=project, plan=StageBuildPlan(project, stage_ids), toolset=self.entry.toolset,
+                                 runner=self.entry.runner,
                                  fetch_snapshot=self.entry.snapshot == LATEST,
                                  cleanup_previous_builds=self.entry.cleanup_previous_builds)
             self.stages = [_PlannedStep(step.name, step.description, self) for step in build.stages]

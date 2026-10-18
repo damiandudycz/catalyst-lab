@@ -3,12 +3,14 @@ from gi.repository import Gtk, Adw
 from .project_installation import ProjectInstallation
 # Imported to register custom widgets referenced by this view's template.
 from .wizard_view import WizardView
-from .item_select_view import ItemSelectionView
+from .item_select_view import ItemSelectionView, ItemSelectionViewEvent
 from .project_stage import stage_target_icon
 from .project_stage import load_catalyst_targets, load_releng_templates
 from .project_stage_installation import ProjectStageInstallation
 from .project_manager import ProjectManager
 from .name_suggestion import unique_name
+from .toolset_application import ToolsetApplication
+from .toolset_selection import sorted_toolsets, toolset_has_applications
 import os, uuid
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/project/project_stage_create_view.ui')
@@ -18,6 +20,8 @@ class ProjectStageCreateView(Gtk.Box):
     # Main views:
     wizard_view = Gtk.Template.Child()
     # Setup view elements:
+    toolset_page = Gtk.Template.Child()
+    toolset_selection_view = Gtk.Template.Child()
     spec_type_page = Gtk.Template.Child()
     releng_base_page = Gtk.Template.Child()
     options_page = Gtk.Template.Child()
@@ -33,6 +37,8 @@ class ProjectStageCreateView(Gtk.Box):
         self.installation_in_progress = installation_in_progress
         self.content_navigation_view = content_navigation_view
         self.filename_is_free = False
+        self.toolset_selection_view.set_static_list(sorted_toolsets(applications=[ToolsetApplication.CATALYST]))
+        self.toolset_selection_view.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self._toolset_changed)
         self.connect("realize", self.on_realize)
 
     def on_realize(self, widget):
@@ -48,10 +54,19 @@ class ProjectStageCreateView(Gtk.Box):
     # --------------------------------------------------------------------------
 
     def load_targets(self):
-        values = load_catalyst_targets(toolset=self.project_directory.get_toolset())
+        toolset = self.toolset_selection_view.selected_item
+        values = load_catalyst_targets(toolset=toolset) if toolset and toolset_has_applications(toolset, [ToolsetApplication.CATALYST]) else []
         self.spec_type_selection_view.select(None)
         self.spec_type_selection_view.item_icon_resolver = stage_target_icon
         self.spec_type_selection_view.set_static_list(values)
+
+    def _toolset_changed(self, *_):
+        self.load_targets()
+        self.wizard_view._refresh_buttons_state()
+
+    @Gtk.Template.Callback()
+    def is_toolset_selectable(self, sender, item) -> bool:
+        return toolset_has_applications(item, [ToolsetApplication.CATALYST])
 
     def load_releng_templates(self):
         releng_directory = self.project_directory.get_releng_directory()
@@ -104,6 +119,9 @@ class ProjectStageCreateView(Gtk.Box):
     @Gtk.Template.Callback()
     def is_page_ready_to_continue(self, sender, page) -> bool:
         match page:
+            case self.toolset_page:
+                item = self.toolset_selection_view.selected_item
+                return item is not None and self.is_toolset_selectable(self.toolset_selection_view, item)
             case self.spec_type_page:
                 return self.spec_type_selection_view.selected_item is not None
             case self.releng_base_page:
@@ -155,7 +173,8 @@ class ProjectStageCreateView(Gtk.Box):
                 else None
             ),
             stage_name=self.stage_name_row.get_text(),
-            parent_id=self.seed_list_selection_view.selected_item.id if self.seed_list_selection_view.selected_item else None
+            parent_id=self.seed_list_selection_view.selected_item.id if self.seed_list_selection_view.selected_item else None,
+            toolset=self.toolset_selection_view.selected_item
         )
 
     # Helper functions
@@ -186,14 +205,16 @@ class ProjectStageCreateView(Gtk.Box):
         target_name: str,
         releng_template_name: str | None,
         stage_name: str,
-        parent_id: uuid.UUID | None
+        parent_id: uuid.UUID | None,
+        toolset
     ):
         installation_in_progress = ProjectStageInstallation(
             project_directory=project_directory,
             target_name=target_name,
             releng_template_name=releng_template_name,
             stage_name=stage_name,
-            parent_id=parent_id
+            parent_id=parent_id,
+            toolset=toolset
         )
         installation_in_progress.start()
         self.wizard_view.set_installation(installation_in_progress)

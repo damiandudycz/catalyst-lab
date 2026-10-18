@@ -66,6 +66,56 @@ button.small-button {
   padding: 2px 10px;
   border-radius: 6px;
 }
+button.stage-toolset-change-button {
+  min-height: 20px;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  background-color: transparent;
+  background-image: none;
+}
+button.stage-toolset-change-button:hover {
+  background-color: alpha(@window_fg_color, 0.08);
+  background-image: none;
+}
+button.stage-toolset-change-button label {
+  font-size: 11px;
+  font-weight: normal;
+}
+.project-actions-panel {
+  background-color: transparent;
+}
+button.project-action-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+button.project-action-button.suggested-action {
+  background-color: #3584e4;
+  background-image: none;
+  color: white;
+}
+button.project-action-button.suggested-action:hover {
+  background-color: #4b94ec;
+}
+button.project-action-button.suggested-action:disabled {
+  background-color: rgba(53, 132, 228, 0.3);
+  color: rgba(255, 255, 255, 0.65);
+}
+.toolset-chooser.boxed-list > row.default-toolset-row {
+  background-color: alpha(@accent_bg_color, 0.28);
+  background-image: none;
+}
+.toolset-chooser.boxed-list > row.default-toolset-row:hover {
+  background-color: alpha(@accent_bg_color, 0.42);
+  background-image: none;
+}
+.toolset-chooser.boxed-list > row.default-toolset-row image,
+.toolset-chooser.boxed-list > row.default-toolset-row label.title {
+  color: @accent_fg_color;
+}
 /* Expander rows nested in expanded expander row (eg. list settings of kernel): Adwaita styles arrows of all rows
    inside expanded row as expanded, collapsed nested rows get normal arrow again. */
 row.expander:checked row.expander:not(:checked) image.expander-row-arrow { opacity: var(--dim-opacity); color: inherit; }

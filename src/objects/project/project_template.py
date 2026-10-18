@@ -1009,11 +1009,14 @@ def _copy_template_files(source: str, destination: str, names: dict[str, Any], l
     else:
         shutil.copyfile(source, destination)
 
-def _stage_argument_names(project_directory, target: str) -> set[str] | None:
+def _stage_argument_names(project_directory, target: str, toolset=None) -> set[str] | None:
     """Names of arguments of catalyst target (attribute names in stages), None when they can't be loaded."""
     from .project_stage import load_catalyst_stage_arguments_details
     try:
-        arguments = load_catalyst_stage_arguments_details(toolset=project_directory.get_toolset(), target_name=target)
+        if toolset is None:
+            from .toolset_selection import default_toolset
+            toolset = default_toolset()
+        arguments = load_catalyst_stage_arguments_details(toolset=toolset, target_name=target)
         return {argument.attribute_name for argument in arguments.values()}
     except Exception:
         return None
@@ -1084,7 +1087,7 @@ def ensure_template_overlays(overlays: list[TemplateOverlay], log: Callable[[str
 def apply_project_template(project_directory, template: ProjectTemplate, names: dict[str, Any],
                            log: Callable[[str], None], replace_content: bool = False,
                            overlay_ids: dict[str, uuid.UUID] | None = None,
-                           stage_ids: dict[str, uuid.UUID] | None = None) -> dict[str, uuid.UUID]:
+                           stage_ids: dict[str, uuid.UUID] | None = None, toolset=None) -> dict[str, uuid.UUID]:
     """Creates files and stages of template in project directory. Project needs configuration (toolset, releng) set
     already, default arguments of stages are set like for stages added in app. With replace_content other files of
     directory (eg. cloned template repository) are removed first, Git directory is kept."""
@@ -1134,9 +1137,10 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
             id=known_stage_ids.get(generated_stage.persistent_id or generated_stage.template_id),
             parent_id=stage_ids[generated_stage.parent] if generated_stage.parent else None,
             name=generated_stage.name, target_name=generated_stage.target,
-            releng_template_name=generated_stage.releng_template
+            releng_template_name=generated_stage.releng_template,
+            toolset_id=str(toolset.uuid) if toolset else None
         )
-        valid_arguments = _stage_argument_names(project_directory, generated_stage.target)
+        valid_arguments = _stage_argument_names(project_directory, generated_stage.target, toolset=toolset)
         for key, value in generated_stage.arguments.items():
             # Kernel settings are not argument of target, they are used by targets with kernels (boot/kernel).
             argument_name = StageArgumentDetails.boot_kernel.name if key == BOOT_KERNELS_ATTRIBUTE else key
@@ -1155,10 +1159,10 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
                     log(f"Warning: releng template {generated_stage.releng_template} not found in {releng_directory.name}")
         # Parent can't give values of arguments its target doesn't have (eg. root overlay of stage3).
         from .project_stage import remove_unsupported_parent_options
-        if changed := remove_unsupported_parent_options(project_directory, stage):
+        if changed := remove_unsupported_parent_options(project_directory, stage, toolset=toolset):
             log(f"Not inheriting {', '.join(changed)} of {stage.name} from parent, its target doesn't have them")
         try:
-            apply_default_stage_arguments(project_directory=project_directory, stage=stage)
+            apply_default_stage_arguments(project_directory=project_directory, stage=stage, toolset=toolset)
         except Exception as e:
             # Stage can still be configured manually.
             log(f"Failed to set default values of {stage.name}: {e}")

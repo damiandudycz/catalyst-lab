@@ -6,6 +6,7 @@ from .multistage_process import (
     MultiStageProcess, MultiStageProcessStage, MultiStageProcessState, MultiStageProcessStageState,
     MultiStageProcessEvent, MultiStageProcessStageEvent
 )
+from .runner_operation import PrepareRunnerStage, StopRunnerStage
 from .root_function import root_function
 from .repository import Repository, resolve_path
 from .event_bus import SharedEvent
@@ -50,16 +51,19 @@ class ProjectBuild(MultiStageProcess):
     Builds use snapshot selected for build (project snapshot by default), or latest snapshot generated with project
     toolset before building. Selected snapshot can be stored in project too."""
 
-    def __init__(self, project_directory, plan: StageBuildPlan, snapshot=None, fetch_snapshot: bool = False,
+    def __init__(self, project_directory, plan: StageBuildPlan, toolset, runner, snapshot=None, fetch_snapshot: bool = False,
                  update_project_snapshot: bool = False, cleanup_previous_builds: bool = False):
         self.project_directory = project_directory
         self.plan = plan
         self._build_order = plan.build_order()
+        from .toolset_selection import build_toolset_requirements, toolset_has_applications
+        if toolset is None or not toolset_has_applications(toolset, build_toolset_requirements(project_directory)):
+            raise RuntimeError("Selected toolset does not contain all tools required for this build")
         self.snapshot = None if fetch_snapshot else (snapshot or project_directory.get_snapshot()) # Set when fetched.
         self.fetch_snapshot = fetch_snapshot
         self.update_project_snapshot = update_project_snapshot
         self.cleanup_previous_builds = cleanup_previous_builds
-        self.toolset = project_directory.get_toolset()
+        self.toolset = toolset
         self.timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") # @TIMESTAMP@ for all stages of this build.
         self.builds_directory = project_builds_directory(project_directory)
         self.catalyst_builds_directory = os.path.join(self.builds_directory, "Catalyst")
@@ -73,8 +77,11 @@ class ProjectBuild(MultiStageProcess):
         # Builds run without root privileges in user namespace when system supports it, otherwise in toolset spawned
         # by root helper.
         # Builds of toolsets linked to virtual machine run in that machine (always without root privileges).
-        self.machine = self.toolset.machine if self.toolset else None
-        self.executor = self.toolset.executor if self.toolset else None
+        self.runner = runner
+        # Lima-specific workspace and startup operations remain VM-only; primary
+        # commands use the runner's transport-neutral executor.
+        self.machine = self.runner if self.runner and self.runner.runner_type.value == "vm" else None
+        self.executor = self.runner.executor if self.runner else None
         self._rosetta_amd64: bool | None = None
         self.rootless_unsupported_reason = self.executor.unsupported_reason() if self.executor and not self.machine else None
         self.rootless = self.machine is not None or self.rootless_unsupported_reason is None
@@ -117,6 +124,8 @@ class ProjectBuild(MultiStageProcess):
 
     def setup_stages(self):
         # Latest snapshot is generated in toolset prepared for build, so toolset is prepared once.
+        self.runner_prepared = False
+        self.stages.append(PrepareRunnerStage(self))
         self.stages.append(ProjectBuildStepPrepareToolset(multistage_process=self))
         if self.fetch_snapshot:
             self.stages.append(ProjectBuildStepFetchSnapshot(multistage_process=self))
@@ -128,6 +137,7 @@ class ProjectBuild(MultiStageProcess):
             if self.cleanup_previous_builds:
                 self.stages.append(ProjectBuildStepCleanupPreviousBuilds(
                     stage=stage, build_step=build_step, multistage_process=self))
+        self.stages.append(StopRunnerStage(self))
 
     @property
     def seed_cache_directory(self) -> str:
@@ -346,7 +356,7 @@ class ProjectBuild(MultiStageProcess):
         from .project_build_record import save_build_record
         save_build_record(self)
 
-def start_project_build(project_directory, plan: StageBuildPlan, snapshot=None, fetch_snapshot: bool = False,
+def start_project_build(project_directory, plan: StageBuildPlan, toolset, runner, snapshot=None, fetch_snapshot: bool = False,
                         update_project_snapshot: bool = False, cleanup_previous_builds: bool = False, done=None):
     """Starts build of project (used by build view and build queue). Builds that can't run in user namespace get root
     privileges first (user is asked). Done is called on main thread with started build, or None when it didn't start."""
@@ -355,7 +365,7 @@ def start_project_build(project_directory, plan: StageBuildPlan, snapshot=None, 
     def start(authorization_keeper):
         build = None
         try:
-            build = ProjectBuild(project_directory=project_directory, plan=plan, snapshot=snapshot,
+            build = ProjectBuild(project_directory=project_directory, plan=plan, toolset=toolset, runner=runner, snapshot=snapshot,
                                  fetch_snapshot=fetch_snapshot, update_project_snapshot=update_project_snapshot,
                                  cleanup_previous_builds=cleanup_previous_builds)
             build.start(authorization_keeper=authorization_keeper)
@@ -369,8 +379,8 @@ def start_project_build(project_directory, plan: StageBuildPlan, snapshot=None, 
         if done:
             done(build)
         return False
-    toolset = project_directory.get_toolset()
-    if (toolset and toolset.machine) or rootless_unsupported_reason() is None:
+    from .runner import RunnerType
+    if (runner and runner.runner_type == RunnerType.VM) or rootless_unsupported_reason() is None:
         # Builds run in user namespace, root privileges are not needed.
         GLib.idle_add(start, None)
         return
@@ -415,7 +425,7 @@ class ProjectBuildStepFetchSnapshot(ProjectBuildStep):
     prepared for build, and uses it in this build. Snapshot is stored with other snapshots, and in project when user
     chose that."""
     def __init__(self, multistage_process: ProjectBuild):
-        super().__init__(name="Get latest snapshot", description="Generates snapshot of Gentoo repository with project toolset", multistage_process=multistage_process)
+        super().__init__(name="Get latest snapshot", description="Generates snapshot of Gentoo repository with the selected toolset", multistage_process=multistage_process)
     def start(self):
         super().start()
         try:
@@ -509,7 +519,7 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
             self.loop_devices = prepare_loop_devices()
             for binding in self.required_bindings():
                 self.log(f"Binding {binding.host_path} -> {binding.mount_path}")
-            toolset.spawn(additional_bindings=self.required_bindings())
+            toolset.spawn(runner=process.runner, additional_bindings=self.required_bindings())
             if not toolset.spawned:
                 raise RuntimeError("Failed to spawn toolset")
             self.spawned = True
@@ -523,7 +533,6 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
         executor = process.executor
         if process.machine:
             self.log(f"Building in virtual machine {process.machine.name}, without root privileges")
-            process.machine.ensure_running(self.log, self.namespace_processes)
             self.workspace_user = f"Build of {process.project_directory.name}"
             process.machine.acquire_workspace(self.log, self.namespace_processes, user=self.workspace_user)
             self.workspace_acquired = True
@@ -722,6 +731,7 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
                 timestamp=process.timestamp,
                 source_subpath=source_subpath,
                 portage_confdir=process.container_path(portage_path) if has_confdir else None,
+                toolset=process.toolset,
                 root_overlay=process.container_path(root_overlay_path) if has_root_overlay else None,
                 iso_overlay=process.container_path(iso_overlay_path) if has_iso_overlay else None,
                 cache_paths={argument: process.container_path(path) for argument, path in cache_paths.items()},

@@ -79,6 +79,76 @@ def _update_stage_card_status(status: StageNodeStatus | None, spinner: Adw.Spinn
         if not status or status.css_class != css_class:
             icon.remove_css_class(css_class)
 
+
+class StagesListView(Gtk.Box):
+    """Flat, scrollable list of every stage, retaining each stage's target and live build status."""
+    __gtype_name__ = "StagesListView"
+
+    __gsignals__ = {
+        "stage-selected": (GObject.SignalFlags.RUN_FIRST, None, (GObject.TYPE_PYOBJECT,))
+    }
+
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.root_nodes = []
+        self.statuses: dict = {}
+        self.set_margin_start(24)
+        self.set_margin_end(24)
+        self.set_margin_top(12)
+        self.set_margin_bottom(12)
+        self.set_hexpand(True)
+        self.set_vexpand(True)
+        self.list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.list_box.set_hexpand(True)
+        self.list_box.add_css_class("boxed-list")
+        self.append(self.list_box)
+
+    def set_root_nodes(self, root_nodes: list[TreeNode]):
+        self.root_nodes = root_nodes
+        self._rebuild()
+
+    def set_statuses(self, statuses: dict):
+        if statuses == self.statuses:
+            return
+        self.statuses = statuses
+        self._rebuild()
+
+    def _rebuild(self):
+        while row := self.list_box.get_first_child():
+            self.list_box.remove(row)
+        for node, _depth in walk_tree(self.root_nodes):
+            stage = node.value
+            target = getattr(stage, "target", None) or ""
+            broken = getattr(stage, "is_broken", False)
+            subtitle = getattr(stage, "warning_message", None) if broken else target.replace("_", "-")
+            status = self.statuses.get(getattr(stage, "id", None))
+            if status:
+                subtitle = f"{subtitle} · {status.title}" if subtitle else status.title
+            row = Adw.ActionRow(title=stage.name, subtitle=subtitle or "")
+            row.set_use_markup(False)
+            row.set_title_lines(1)
+            row.set_subtitle_lines(1)
+            row.set_activatable(not broken)
+            if not broken:
+                row.connect("activated", lambda _row, selected_stage=stage: self.emit("stage-selected", selected_stage))
+            icon_name = "danger-triangle-svgrepo-com-symbolic" if broken else stage_target_icon(target)
+            prefix = Gtk.Image.new_from_icon_name(icon_name)
+            prefix.set_pixel_size(16)
+            row.add_prefix(prefix)
+            if broken:
+                row.add_css_class("warning")
+                prefix.add_css_class("warning")
+                row.set_tooltip_text(getattr(stage, "warning_message", None) or "This stage is unavailable")
+            status_box = Gtk.Box()
+            spinner = Adw.Spinner()
+            spinner.set_size_request(16, 16)
+            icon = Gtk.Image()
+            status_box.append(spinner)
+            status_box.append(icon)
+            row.add_suffix(status_box)
+            _update_stage_card_status(status, spinner, icon)
+            self.list_box.append(row)
+
 def _lerp(start: float, end: float, progress: float) -> float:
     return start + (end - start) * progress
 
@@ -267,9 +337,10 @@ class StagesTreeView(Gtk.Fixed):
 
     expand_all_default = False # Last choice, used by new trees while app runs.
 
-    def set_expand_all(self, expand_all: bool):
+    def set_expand_all(self, expand_all: bool, remember: bool = True):
         """Shows all nodes in full instead of compact nodes expanded while hovered."""
-        StagesTreeView.expand_all_default = expand_all
+        if remember:
+            StagesTreeView.expand_all_default = expand_all
         if expand_all == self.expand_all:
             return
         self.expand_all = expand_all

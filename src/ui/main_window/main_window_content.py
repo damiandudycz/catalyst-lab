@@ -28,6 +28,8 @@ class CatalystlabWindowContent(Gtk.Box):
         section_view = section(content_navigation_view=navigation_view)
 
         header = Adw.HeaderBar()
+        for widget in getattr(section_view, "header_bar_end_widgets", lambda: [])():
+            header.pack_end(widget)
 
         toolbar_view = Adw.ToolbarView()
         toolbar_view.set_content(section_view)

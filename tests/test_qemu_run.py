@@ -33,11 +33,11 @@ class QemuRunTests(unittest.TestCase):
                      'QemuBuildKind': qemu.QemuBuildKind}
         exec(compile(ast.Module(body=[setup], type_ignores=[]), 'qemu_run.py', 'exec'), namespace)
 
-        for kernel_package, expected in ((None, [('Prepare build VM', 'machine'),
+        for kernel_package, expected in ((None, [('Prepare Runner', 'machine'),
                                                   ('Prepare stage image', 'cache'),
                                                   ('Create writable VM image', 'image'),
                                                   ('Configure guest networking', 'network')]),
-                                         ('sys-kernel/gentoo-kernel', [('Prepare build VM', 'machine'),
+                                         ('sys-kernel/gentoo-kernel', [('Prepare Runner', 'machine'),
                                                                        ('Prepare stage image', 'cache'),
                                                                        ('Create writable VM image', 'image'),
                                                                        ('Build and install custom kernel', 'kernel'),
@@ -60,7 +60,7 @@ class QemuRunTests(unittest.TestCase):
                                         host_resolv_conf=None, backend='apple', network_enabled=False)
         view = types.SimpleNamespace(support=support, stages=[])
         namespace['setup_stages'](view)
-        self.assertEqual(view.stages[-1], ('Stop build VM', 'shutdown'))
+        self.assertEqual(view.stages[-1], ('Stop Runner', 'shutdown'))
 
         support = types.SimpleNamespace(kind=qemu.QemuBuildKind.STAGE, kernel_package=None, local_users=[], root_password=None,
                                         host_resolv_conf='nameserver 192.0.2.1\n', backend='qemu', network_enabled=False)
@@ -223,26 +223,24 @@ class QemuRunTests(unittest.TestCase):
         self.assertIn('/temporary/image/rootfs/lib/modules', script)
         self.assertNotIn('cp -a', script)
 
-    def test_kernel_build_lists_free_external_toolsets_after_project_toolset(self):
-        from catalystlab.toolset import ToolsetEnv
+    def test_kernel_build_lists_all_toolsets_for_disabled_choice_display(self):
         project_toolset = types.SimpleNamespace(busy_reason=None)
-        alternative = types.SimpleNamespace(busy_reason=None, env=ToolsetEnv.EXTERNAL)
-        project = types.SimpleNamespace(get_toolset=lambda: project_toolset)
+        alternative = types.SimpleNamespace(busy_reason=None)
+        project = types.SimpleNamespace()
         toolsets = types.SimpleNamespace(value=[project_toolset, alternative])
 
         with patch.object(repository.Repository, "Toolset", toolsets, create=True):
             self.assertEqual(qemu.kernel_build_toolsets(project), [project_toolset, alternative])
 
-    def test_kernel_build_offers_free_external_toolsets_when_project_toolset_is_busy(self):
-        from catalystlab.toolset import ToolsetEnv
+    def test_kernel_build_keeps_busy_toolsets_visible_for_disabled_choice_display(self):
         busy = types.SimpleNamespace(busy_reason="in use")
-        alternative = types.SimpleNamespace(busy_reason=None, env=ToolsetEnv.EXTERNAL)
-        unavailable = types.SimpleNamespace(busy_reason="in use", env=ToolsetEnv.EXTERNAL)
-        project = types.SimpleNamespace(get_toolset=lambda: busy)
+        alternative = types.SimpleNamespace(busy_reason=None)
+        unavailable = types.SimpleNamespace(busy_reason="in use")
+        project = types.SimpleNamespace()
         toolsets = types.SimpleNamespace(value=[busy, alternative, unavailable])
 
         with patch.object(repository.Repository, "Toolset", toolsets, create=True):
-            self.assertEqual(qemu.kernel_build_toolsets(project), [alternative])
+            self.assertEqual(qemu.kernel_build_toolsets(project), [busy, alternative, unavailable])
 
     def test_custom_kernel_cache_resolves_tilde_in_library_location(self):
         settings = types.SimpleNamespace(cache_location='~/CatalystLab/Cache')

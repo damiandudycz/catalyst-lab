@@ -1,17 +1,17 @@
 from __future__ import annotations
 import os, threading
 from gi.repository import Gtk, Adw, GLib
-from .build_machine import BuildMachine
-from .build_machine_manager import BuildMachineManager
+from .build_machine import VMRunner
+from .build_machine_manager import VMRunnerManager
 from .repository import Repository, collapse_home
 from .event_bus import SharedEvent
 from .usage_graph import USAGE_INTERVAL_SECONDS, usage_row, format_gib
 
-class BuildMachineDetailsView(Gtk.Box):
-    """Details of virtual machine, laid out like toolset details: basic information, status, actions (start, stop,
+class VMRunnerDetailsView(Gtk.Box):
+    """Details of a VM runner: basic information, status, actions (start, stop,
     delete), resources (changed while machine is stopped) and toolsets running in it."""
 
-    def __init__(self, machine: BuildMachine, content_navigation_view: Adw.NavigationView | None = None):
+    def __init__(self, machine: VMRunner, content_navigation_view: Adw.NavigationView | None = None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.machine = machine
         self.content_navigation_view = content_navigation_view
@@ -24,11 +24,11 @@ class BuildMachineDetailsView(Gtk.Box):
 
         # Basic information
         information_group = Adw.PreferencesGroup(title="Basic information")
-        self.name_row = Adw.EntryRow(title="Machine name", show_apply_button=True, text=machine.name)
+        self.name_row = Adw.EntryRow(title="Runner name", show_apply_button=True, text=machine.name)
         self.name_row.connect("changed", self.on_name_changed)
         self.name_row.connect("apply", self.on_name_apply)
         information_group.add(self.name_row)
-        self.name_used_row = Adw.ActionRow(title="This machine name is already used.", visible=False)
+        self.name_used_row = Adw.ActionRow(title="This runner name is already used.", visible=False)
         self.name_used_row.add_css_class("error")
         information_group.add(self.name_used_row)
         information_group.add(Adw.ActionRow(title="Lima instance", subtitle=machine.instance_name, subtitle_selectable=True))
@@ -52,13 +52,13 @@ class BuildMachineDetailsView(Gtk.Box):
         self.tag_workspace = self._tag(tags, "Working space mounted")
         status_row.add_suffix(tags)
         status_group.add(status_row)
-        # Operations using machine, like reservations of toolsets.
+        # Operations using the runner, like reservations of toolsets.
         self.users_row = Adw.ExpanderRow(title="Used by")
         self.user_rows: list[Adw.ActionRow] = []
         status_group.add(self.users_row)
         content.append(status_group)
 
-        # Usage of running machine, read every few seconds while view is shown.
+        # Usage of the running VM, read every few seconds while the view is shown.
         self.usage_group = Adw.PreferencesGroup(title="Usage", visible=False)
         self.cpu_usage_row = usage_row("Processors", "…")
         self.memory_usage_row = usage_row("Memory", "…")
@@ -89,8 +89,8 @@ class BuildMachineDetailsView(Gtk.Box):
         # Resources
         resources_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.resources_group = Adw.PreferencesGroup(title="Resources")
-        self.cpus_row = self._spin_row("Processors", "Cores used by machine, builds run as many jobs in parallel", 1, max(1, os.cpu_count() or 1))
-        self.memory_row = self._spin_row("Memory", "GiB, taken from this computer while machine runs", 2, 256)
+        self.cpus_row = self._spin_row("Processors", "Cores available to this runner", 1, max(1, os.cpu_count() or 1))
+        self.memory_row = self._spin_row("Memory", "GiB reserved from this computer while the runner runs", 2, 256)
         self.workspace_row = self._spin_row("Working space limit", "GiB, created while toolsets run and deleted when they finish", 20, 2048)
         self.swap_row = self._spin_row("Swap limit", "GiB, used when builds need more memory, takes space only while used. 0 disables swap", 0, 512)
         for row in (self.cpus_row, self.memory_row, self.swap_row, self.workspace_row):
@@ -104,15 +104,6 @@ class BuildMachineDetailsView(Gtk.Box):
         self.resources_actions.append(self.apply_button)
         resources_container.append(self.resources_actions)
         content.append(resources_container)
-
-        # Toolsets
-        toolsets_group = Adw.PreferencesGroup(title="Toolsets", description="Toolsets loaded inside this machine. Select machine in toolset details to move toolset here.")
-        toolsets = [toolset for toolset in Repository.Toolset.value if getattr(toolset, "machine_id", None) == machine.id]
-        for toolset in toolsets:
-            toolsets_group.add(Adw.ActionRow(title=GLib.markup_escape_text(toolset.name), subtitle=GLib.markup_escape_text(toolset.short_details), icon_name="toolbox-symbolic"))
-        if not toolsets:
-            toolsets_group.add(Adw.ActionRow(title="No toolsets run in this machine yet"))
-        content.append(toolsets_group)
 
         machine.event_bus.subscribe(SharedEvent.STATE_UPDATED, self._on_machine_updated)
         self.connect("map", lambda widget: self._refresh_in_background())
@@ -139,7 +130,7 @@ class BuildMachineDetailsView(Gtk.Box):
         self._previous_cpu = None
 
     def _read_usage(self) -> bool:
-        if self._reading_usage or self.machine._status != BuildMachine.STATUS_RUNNING:
+        if self._reading_usage or self.machine._status != VMRunner.STATUS_RUNNING:
             return True
         self._reading_usage = True
         def work():
@@ -150,7 +141,7 @@ class BuildMachineDetailsView(Gtk.Box):
 
     def _show_usage(self, usage: dict | None):
         self._reading_usage = False
-        running = self.machine._status == BuildMachine.STATUS_RUNNING
+        running = self.machine._status == VMRunner.STATUS_RUNNING
         self.usage_group.set_visible(running and usage is not None)
         if not running or usage is None:
             if not running:
@@ -221,14 +212,14 @@ class BuildMachineDetailsView(Gtk.Box):
 
     def _update_display(self):
         status = self.machine._status
-        running = status == BuildMachine.STATUS_RUNNING
-        stopped = status == BuildMachine.STATUS_STOPPED
+        running = status == VMRunner.STATUS_RUNNING
+        stopped = status == VMRunner.STATUS_STOPPED
         # Status
-        self.spinner.set_visible(self.working is not None or status in (None, BuildMachine.STATUS_STARTING, BuildMachine.STATUS_STOPPING))
+        self.spinner.set_visible(self.working is not None or status in (None, VMRunner.STATUS_STARTING, VMRunner.STATUS_STOPPING))
         self.tag_state.set_label(self.working or status or "Checking")
         for style in ("success", "error"):
             self.tag_state.remove_css_class(style)
-        if not self.working and (running or status == BuildMachine.STATUS_MISSING):
+        if not self.working and (running or status == VMRunner.STATUS_MISSING):
             self.tag_state.add_css_class("success" if running else "error")
         self.tag_in_use.set_visible(running and self.machine.is_used)
         self.tag_automatic.set_visible(running and self.machine.stops_when_unused and not self.machine.stop_scheduled)
@@ -289,11 +280,11 @@ class BuildMachineDetailsView(Gtk.Box):
 
     def on_name_changed(self, row):
         name = row.get_text().strip()
-        self.name_used_row.set_visible(name != self.machine.name and not BuildMachineManager.shared().is_name_available(name, machine=self.machine))
+        self.name_used_row.set_visible(name != self.machine.name and not VMRunnerManager.shared().is_name_available(name, machine=self.machine))
 
     def on_name_apply(self, row):
         name = row.get_text().strip()
-        if name == self.machine.name or not BuildMachineManager.shared().is_name_available(name, machine=self.machine):
+        if name == self.machine.name or not VMRunnerManager.shared().is_name_available(name, machine=self.machine):
             row.set_text(self.machine.name)
             self.name_used_row.set_visible(False)
             return
@@ -322,11 +313,8 @@ class BuildMachineDetailsView(Gtk.Box):
     # Delete
 
     def on_delete_clicked(self, button):
-        toolsets = [toolset.name for toolset in Repository.Toolset.value if getattr(toolset, "machine_id", None) == self.machine.id]
-        body = f"Virtual machine \"{self.machine.name}\" will be deleted with its disk, including extracted toolsets and package caches stored in it. Files in shared folders are kept."
-        if toolsets:
-            body += f"\n\nToolsets {', '.join(toolsets)} will be moved to this computer."
-        dialog = Adw.AlertDialog(heading="Delete virtual machine?", body=body)
+        body = f"VM runner \"{self.machine.name}\" will be deleted with its disk, including extracted toolsets and package caches stored in it. Files in shared folders are kept."
+        dialog = Adw.AlertDialog(heading="Delete VM runner?", body=body)
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("delete", "Delete")
         dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -338,6 +326,6 @@ class BuildMachineDetailsView(Gtk.Box):
     def on_delete_response(self, dialog, response: str):
         if response != "delete":
             return
-        BuildMachineManager.shared().remove_machine(self.machine)
+        VMRunnerManager.shared().remove_runner(self.machine)
         if self.content_navigation_view:
             self.content_navigation_view.pop()

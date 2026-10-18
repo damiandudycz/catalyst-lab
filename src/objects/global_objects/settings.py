@@ -2,7 +2,7 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import final
 from .event_bus import EventBus
-from .repository import Serializable, Repository, library_path
+from .repository import Serializable, Repository, library_path, DEFAULT_LIBRARY_DIRECTORY, collapse_home
 
 
 @final
@@ -12,6 +12,8 @@ class SettingsEvents(Enum):
     AUTO_CLEAN_SNAPSHOTS_CHANGED = auto()
     NAVIGATION_STYLE_CHANGED = auto()
     PAUSE_QUEUE_ON_FAILURE_CHANGED = auto()
+    DEFAULT_TOOLSET_CHANGED = auto()
+    DEFAULT_RUNNER_CHANGED = auto()
 
 
 @final
@@ -34,6 +36,9 @@ class Settings(Serializable):
         pause_queue_on_failure: bool = False,
         qemu_memory_gib: int = 4,
         qemu_cpus: int = 4,
+        default_toolset_id: str | None = None,
+        default_runner_id: str | None = None,
+        library_location: str | None = None,
     ):
         self._initial_setup_done = initial_setup_done
         self._keep_root_unlocked = keep_root_unlocked
@@ -42,6 +47,10 @@ class Settings(Serializable):
         self._pause_queue_on_failure = pause_queue_on_failure
         self._qemu_memory_gib = qemu_memory_gib
         self._qemu_cpus = qemu_cpus
+        self._default_toolset_id = default_toolset_id
+        self._default_runner_id = default_runner_id
+        # None lets older preferences files fall back to the default Library path.
+        self._library_location = library_location
         self.event_bus = EventBus[SettingsEvents]()
 
     @classmethod
@@ -54,6 +63,9 @@ class Settings(Serializable):
             pause_queue_on_failure=data.get("pause_queue_on_failure", False),
             qemu_memory_gib=data.get("qemu_memory_gib", 4),
             qemu_cpus=data.get("qemu_cpus", 4),
+            default_toolset_id=data.get("default_toolset_id"),
+            default_runner_id=data.get("default_runner_id"),
+            library_location=data.get("library_location"),
         )
 
     def serialize(self) -> dict:
@@ -65,6 +77,9 @@ class Settings(Serializable):
             "pause_queue_on_failure": self.pause_queue_on_failure,
             "qemu_memory_gib": self.qemu_memory_gib,
             "qemu_cpus": self.qemu_cpus,
+            "default_toolset_id": self.default_toolset_id,
+            "default_runner_id": self.default_runner_id,
+            "library_location": collapse_home(self.library_location),
         }
 
     # Data folders are fixed within the selected Library; these are convenience
@@ -92,6 +107,19 @@ class Settings(Serializable):
     @property
     def builds_location(self) -> str:
         return library_path("Builds")
+
+    @property
+    def runners_location(self) -> str:
+        return library_path("Runners")
+
+    @property
+    def library_location(self) -> str:
+        return self._library_location or DEFAULT_LIBRARY_DIRECTORY
+
+    @library_location.setter
+    def library_location(self, value: str):
+        value = collapse_home(value)
+        self._set("library_location", value)
 
     @property
     def cache_location(self) -> str:
@@ -169,6 +197,24 @@ class Settings(Serializable):
     @qemu_cpus.setter
     def qemu_cpus(self, value: int):
         self._set("qemu_cpus", int(value))
+
+    @property
+    def default_toolset_id(self) -> str | None:
+        return self._default_toolset_id
+
+    @default_toolset_id.setter
+    def default_toolset_id(self, value: str | None):
+        self._set("default_toolset_id", str(value) if value is not None else None,
+                  SettingsEvents.DEFAULT_TOOLSET_CHANGED)
+
+    @property
+    def default_runner_id(self) -> str | None:
+        return self._default_runner_id
+
+    @default_runner_id.setter
+    def default_runner_id(self, value: str | None):
+        self._set("default_runner_id", str(value) if value is not None else None,
+                  SettingsEvents.DEFAULT_RUNNER_CHANGED)
 
 
 def _navigation_style(value) -> NavigationStyle:

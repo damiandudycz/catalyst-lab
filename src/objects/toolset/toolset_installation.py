@@ -5,8 +5,11 @@ from gi.repository import Gio
 from .root_function import root_function, local_for_rootless_paths
 from .root_helper_server import ServerResponse, ServerResponseStatusCode
 from .toolset import Toolset, ToolsetEnv
+from .repository import Repository
 from .helper_functions import create_work_directory, delete_work_directory, extract
-from .rootless import rootless_toolset_unsupported_reason, extract_tarball, executor_for_machine, toolset_stages_directory
+from .rootless import rootless_toolset_unsupported_reason, extract_tarball, toolset_stages_directory
+from .runner import HOST_RUNNER, RunnerType
+from .runner_operation import PrepareRunnerStage, StopRunnerStage
 from .rootless import create_work_directory as create_rootless_work_directory
 from .toolset_manager import ToolsetManager
 from .toolset_application import order_selected_applications
@@ -38,19 +41,25 @@ def _webrsync_progress(line: str) -> float | None:
 @final
 class ToolsetInstallation(MultiStageProcess):
     """Handles the full toolset installation lifecycle."""
-    def __init__(self, alias: str, stage_url: ParseResult, allow_binpkgs: bool, apps_selection: list[ToolsetApplicationSelection], machine=None):
+    def __init__(self, alias: str, stage_url: ParseResult, allow_binpkgs: bool,
+                 apps_selection: list[ToolsetApplicationSelection], runner=None, machine=None,
+                 set_as_default: bool = True):
         self.alias = alias
         self.stage_url = stage_url
         self.allow_binpkgs = allow_binpkgs
         self.apps_selection = order_selected_applications(apps_selection)
-        # Toolset is installed in virtual machine when given, or on this computer. It's installed without root
-        # privileges (in user namespace) in machines and when this computer supports it.
-        self.machine = machine
-        self.executor = executor_for_machine(machine)
-        self.rootless = machine is not None or rootless_toolset_unsupported_reason() is None
+        self.set_as_default = set_as_default
+        # `machine` remains a compatibility argument for existing VM callers. Toolset
+        # installation itself uses a runner endpoint and its executor transport.
+        self.runner = runner or machine or HOST_RUNNER
+        self.machine = self.runner if self.runner.runner_type == RunnerType.VM else None
+        self.executor = self.runner.executor
+        self.rootless = self.machine is not None or rootless_toolset_unsupported_reason() is None
         super().__init__(title="Toolset installation")
 
     def setup_stages(self):
+        self.runner_prepared = False
+        self.stages.append(PrepareRunnerStage(self))
         self.stages.append(ToolsetInstallationStepDownload(url=self.stage_url, multistage_process=self))
         self.stages.append(ToolsetInstallationStepExtract(multistage_process=self))
         self.stages.append(ToolsetInstallationStepSpawn(multistage_process=self))
@@ -59,6 +68,7 @@ class ToolsetInstallation(MultiStageProcess):
             self.stages.append(ToolsetInstallationStepInstallApp(app_selection=app_selection, multistage_process=self))
         self.stages.append(ToolsetInstallationStepVerify(multistage_process=self))
         self.stages.append(ToolsetInstallationStepCompress(multistage_process=self))
+        self.stages.append(StopRunnerStage(self))
 
     def complete_process(self, success: bool):
         if success:
@@ -66,6 +76,8 @@ class ToolsetInstallation(MultiStageProcess):
             for app_selection in self.apps_selection:
                 self.toolset.metadata.setdefault(app_selection.app.package, {})["version_id"] = str(app_selection.version.id)
             ToolsetManager.shared().add_toolset(self.toolset)
+            if self.set_as_default:
+                Repository.Settings.value.default_toolset_id = str(self.toolset.uuid)
 
     def name(self) -> str:
         return self.alias
@@ -194,8 +206,10 @@ class ToolsetInstallationStepSpawn(ToolsetInstallationStep):
         super().start()
         try:
             toolset_name = self.multistage_process.name()
-            self.multistage_process.toolset = Toolset(ToolsetEnv.EXTERNAL, uuid.uuid4(), toolset_name, squashfs_binding_dir=self.multistage_process.tmp_stage_extract_dir,
-                machine_id=self.multistage_process.machine.id if self.multistage_process.machine else None)
+            self.multistage_process.toolset = Toolset(
+                ToolsetEnv.EXTERNAL, uuid.uuid4(), toolset_name,
+                squashfs_binding_dir=self.multistage_process.tmp_stage_extract_dir,
+            )
             now = int(time.time())
             self.multistage_process.toolset.metadata['date_created'] = now
             self.multistage_process.toolset.metadata['date_updated'] = now
@@ -203,7 +217,7 @@ class ToolsetInstallationStepSpawn(ToolsetInstallationStep):
             self.multistage_process.toolset.metadata['allow_binpkgs'] = self.multistage_process.allow_binpkgs
             if not self.multistage_process.toolset.reserve():
                 raise RuntimeError("Failed to reserve toolset")
-            self.multistage_process.toolset.spawn(store_changes=True)
+            self.multistage_process.toolset.spawn(runner=self.multistage_process.runner, store_changes=True)
             commands = [
                 "env-update && source /etc/profile",
                 "getuto"

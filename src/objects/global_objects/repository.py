@@ -20,21 +20,17 @@ def _system_config_directory() -> str:
         return os.path.expanduser(f"~/.var/app/{os.environ.get('FLATPAK_ID')}/config")
     return os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
 
-def _library_location_file() -> str:
-    return os.path.join(_system_config_directory(), "catalystlab-library.json")
-
 _library_directory: str | None = None
 
 def library_directory() -> str:
     """Absolute path of library. Read once, app is restarted when library changes."""
     global _library_directory
     if _library_directory is None:
-        location = DEFAULT_LIBRARY_DIRECTORY
-        try:
-            with open(_library_location_file(), encoding="utf-8") as file:
-                location = json.load(file).get("library") or location
-        except (OSError, ValueError, AttributeError):
-            pass
+        # The selected Library is now part of the same Settings object as every
+        # other preference. Import lazily because repositories.py registers the
+        # Settings repository before loading repositories that need this path.
+        from .repositories import Repository
+        location = Repository.Settings.value.library_location
         _library_directory = os.path.abspath(os.path.expanduser(location))
     return _library_directory
 
@@ -42,11 +38,8 @@ def store_library_directory(path: str):
     """Persist the selected Library and update this process's cached path."""
     global _library_directory
     path = os.path.abspath(os.path.expanduser(path))
-    os.makedirs(_system_config_directory(), exist_ok=True)
-    temporary = _library_location_file() + ".tmp"
-    with open(temporary, "w", encoding="utf-8") as file:
-        json.dump({"library": collapse_home(path)}, file, indent=4)
-    os.replace(temporary, _library_location_file())
+    from .repositories import Repository
+    Repository.Settings.value.library_location = path
     _library_directory = path
 
 def collapse_home(path: str) -> str:

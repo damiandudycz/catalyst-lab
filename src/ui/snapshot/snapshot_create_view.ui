@@ -38,7 +38,6 @@
                   <object class="ItemSelectionView" id="toolset_selection_view">
                     <property name="title">Generate snapshot</property>
                     <property name="description">Toolset used to generate snapshot of the latest Gentoo ebuild repository with Catalyst.</property>
-                    <property name="item_class_name">Toolset</property>
                     <property name="item_icon">toolbox-symbolic</property>
                     <property name="item_title_property_name">name</property>
                     <property name="item_subtitle_property_name">short_details</property>
@@ -47,6 +46,21 @@
                     <signal name="is-item-selectable" handler="is_item_selectable"/>
                     <signal name="is-item-usable" handler="is_item_usable"/>
                     <signal name="setup-items-monitoring" handler="setup_items_monitoring"/>
+                  </object>
+                </child>
+                <child>
+                  <object class="ItemSelectionView" id="runner_selection_view">
+                    <property name="title">Runner</property>
+                    <property name="description">Runner used to execute Catalyst and generate this snapshot.</property>
+                    <property name="item_class_name">Runner</property>
+                    <property name="include_host_runner">True</property>
+                    <property name="autoselect_default">True</property>
+                    <property name="item_icon">virtual-machine-symbolic</property>
+                    <property name="item_title_property_name">name</property>
+                    <property name="item_subtitle_property_name">short_details</property>
+                    <property name="item_status_property_name">status_indicator_values</property>
+                    <signal name="is-item-selectable" handler="is_runner_selectable"/>
+                    <signal name="setup-items-monitoring" handler="setup_runner_monitoring"/>
                   </object>
                 </child>
                 <child>

@@ -6,11 +6,10 @@ from .repository import Repository
 from .lima import (list_instances, run_limactl, run_as_root_in_instance, swap_activation_script,
                    MACHINE_DATA_DIRECTORY, kill_instance_processes, instance_process_ids,
                    move_lima_disk_to_temporary, remove_temporary_lima_disk_data,
-                   remove_empty_build_machine_temporary_directory, lima_home as default_new_lima_home)
+                   remove_empty_runner_temporary_directory, lima_home as default_new_lima_home)
 
-class BuildMachine:
-    """Virtual machine (Lima instance) where toolsets run, on systems that can't build stages themselves (macOS).
-    Toolsets linked to machine are spawned inside it, so their builds, updates and snapshots run there too."""
+class VMRunner:
+    """Virtual-machine execution runner for toolsets on systems that can't build stages on the host (macOS)."""
 
     STATUS_RUNNING = "Running"
     STATUS_STOPPED = "Stopped"
@@ -32,23 +31,31 @@ class BuildMachine:
 
     @classmethod
     def _metadata_path(cls, machine) -> str:
-        return os.path.join(machine.lima_home, machine.instance_name, "catalystlab.json")
+        return os.path.join(machine.lima_home, machine.instance_name, "runner.json")
 
     @classmethod
     def load_all(cls):
         items = []
-        root = cls.base_location()
-        if not os.path.isdir(root):
-            return items
-        for entry in os.scandir(root):
-            if not entry.is_dir(follow_symlinks=False) or not entry.name.startswith("catalystlab-"):
+        from .lima import runners_directory
+        roots = (runners_directory(), default_new_lima_home())
+        seen = set()
+        for root in dict.fromkeys(roots):
+            if not os.path.isdir(root):
                 continue
-            path = os.path.join(entry.path, "catalystlab.json")
-            try:
-                with open(path, encoding="utf-8") as file:
-                    items.append(cls.init_from(json.load(file)))
-            except (OSError, ValueError) as error:
-                print(f"Failed to load machine metadata in {entry.path}: {error}")
+            for entry in os.scandir(root):
+                if not entry.is_dir(follow_symlinks=False) or not entry.name.startswith("catalystlab-"):
+                    continue
+                path = os.path.join(entry.path, "runner.json")
+                if not os.path.isfile(path):
+                    continue
+                try:
+                    with open(path, encoding="utf-8") as file:
+                        item = cls.init_from(json.load(file))
+                    if item.id not in seen:
+                        items.append(item)
+                        seen.add(item.id)
+                except (OSError, ValueError) as error:
+                    print(f"Failed to load runner metadata in {entry.path}: {error}")
         return items
 
     @classmethod
@@ -86,12 +93,35 @@ class BuildMachine:
 
     def serialize(self) -> dict:
         return {"id": str(self.id), "name": self.name, "cpus": self.cpus, "memory_gib": self.memory_gib,
-                "workspace_gib": self.workspace_gib, "swap_gib": self.swap_gib, "lima_home": self.lima_home}
+                "workspace_gib": self.workspace_gib, "swap_gib": self.swap_gib, "lima_home": self.lima_home,
+                "runner_type": "vm"}
 
     @classmethod
     def init_from(cls, data: dict) -> Self:
         return cls(id=uuid.UUID(data["id"]), name=data["name"], cpus=data["cpus"], memory_gib=data["memory_gib"],
                    workspace_gib=data["workspace_gib"], swap_gib=data["swap_gib"], lima_home=data["lima_home"])
+
+    @property
+    def runner_type(self):
+        from .runner import RunnerType
+        return RunnerType.VM
+
+    @property
+    def executor(self):
+        from .rootless import MachineExecutor
+        return MachineExecutor(self)
+
+    def prepare(self, output_handler=print, process_holder=None, user="Operation"):
+        self.begin_use(user)
+        try:
+            output_handler(f"Prepare Runner: {self.name}")
+            self.ensure_running(output_handler, process_holder)
+        except Exception:
+            self.end_use(user)
+            raise
+
+    def release(self, user="Operation"):
+        self.end_use(user)
 
     # Status:
 
@@ -139,7 +169,7 @@ class BuildMachine:
             case self.STATUS_STOPPING:
                 return status_values(StatusIndicatorState.LOADED, blinking=True, description="Stopping")
             case self.STATUS_MISSING:
-                return status_values(StatusIndicatorState.ERROR, description="Virtual machine is missing (removed outside of Catalyst Lab)")
+                return status_values(StatusIndicatorState.ERROR, description="VM runner is missing (removed outside of Catalyst Lab)")
         return status_values(StatusIndicatorState.IDLE, description="Stopped")
 
     # Usage:
@@ -222,7 +252,7 @@ class BuildMachine:
             if self._users or not self._started_automatically:
                 return
             self._started_automatically = False
-        print(f"Stopping unused virtual machine {self.name}")
+        print(f"Stopping unused VM runner {self.name}")
         self.stop()
 
     def stop_if_started_automatically(self):
@@ -249,8 +279,8 @@ class BuildMachine:
             if self.is_running:
                 return True
             if self.status == self.STATUS_MISSING:
-                raise RuntimeError(f"Virtual machine {self.name} doesn't exist anymore")
-            output_handler(f"Starting virtual machine {self.name}...")
+                raise RuntimeError(f"VM runner {self.name} doesn't exist anymore")
+            output_handler(f"Starting VM runner {self.name}...")
             self._set_status(self.STATUS_STARTING)
             try:
                 self._update_mounts(output_handler, process_holder)
@@ -304,7 +334,7 @@ class BuildMachine:
     def ensure_running(self, output_handler=print, process_holder: list | None = None):
         """Starts machine if needed, raising when it can't be started."""
         if not self.start(output_handler, process_holder, automatically=True):
-            raise RuntimeError(f"Failed to start virtual machine {self.name}")
+            raise RuntimeError(f"Failed to start VM runner {self.name}")
 
     # Swap:
     # Raw disk attached to machine (Lima additional disk), used only as swap, so builds needing more memory than
@@ -377,7 +407,7 @@ class BuildMachine:
 
     def rename(self, name: str):
         self.name = name
-        Repository.BuildMachine.save()
+        Repository.Runner.save()
         self.event_bus.emit(SharedEvent.STATE_UPDATED, self)
 
     def change_resources(self, cpus: int, memory_gib: int, workspace_gib: int, swap_gib: int, output_handler=print):
@@ -392,11 +422,11 @@ class BuildMachine:
                 if not run_limactl(arguments, output_handler, home=self.lima_home):
                     raise RuntimeError(f"Failed to change resources of virtual machine {self.name}")
             self.cpus, self.memory_gib, self.workspace_gib, self.swap_gib = cpus, memory_gib, workspace_gib, swap_gib
-        Repository.BuildMachine.save()
+        Repository.Runner.save()
         self.event_bus.emit(SharedEvent.STATE_UPDATED, self)
 
     # Working space:
-    # Ext4 image in Library/Temporary/BuildMachines/<instance>, mounted in the machine at MACHINE_DATA_DIRECTORY
+    # Ext4 image in Library/Temporary/Runners/<instance>, mounted in the VM runner at MACHINE_DATA_DIRECTORY
     # while operations use it. The temporary swap disk lives beside it; each is removed at the end of its lifecycle.
 
     @property
@@ -479,7 +509,7 @@ sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
         try:
             if os.path.exists(image):
                 os.remove(image)
-            remove_empty_build_machine_temporary_directory(self.instance_name)
+            remove_empty_runner_temporary_directory(self.instance_name)
         except OSError as e:
             output_handler(f"Failed to remove working space of {self.name}: {e}")
 
@@ -489,7 +519,9 @@ sudo chown "$(id -u):$(id -g)" {MACHINE_DATA_DIRECTORY}
             return
         self._delete_workspace(output_handler)
 
-def build_machine_for_id(machine_id: uuid.UUID | None) -> BuildMachine | None:
-    if machine_id is None:
+
+
+def vm_runner_for_id(runner_id: uuid.UUID | None) -> VMRunner | None:
+    if runner_id is None:
         return None
-    return next((machine for machine in Repository.BuildMachine.value if machine.id == machine_id), None)
+    return next((runner for runner in Repository.Runner.value if runner.id == runner_id), None)

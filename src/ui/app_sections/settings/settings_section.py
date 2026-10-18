@@ -2,9 +2,11 @@ import os, threading, time
 from gi.repository import Gtk, Adw, Gio, GLib, Pango
 from .app_section import app_section, AppSection
 from .repository import Repository, library_directory, collapse_home
-from .settings import NavigationStyle
+from .settings import NavigationStyle, SettingsEvents
+from .repository import RepositoryEvent
 from .library import LibraryChange, library_target, change_problem, change_library
 from .status_indicator import StatusIndicatorState
+from .runner import HOST_RUNNER, runner_is_supported
 
 @app_section(title="Settings", icon="settings-svgrepo-com-symbolic", order=9_000)
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/app_sections/settings/settings_section.ui')
@@ -17,6 +19,8 @@ class SettingsSection(Gtk.Box):
     pause_queue_row = Gtk.Template.Child()
     qemu_cpus_row = Gtk.Template.Child()
     qemu_memory_row = Gtk.Template.Child()
+    default_toolset_list = Gtk.Template.Child()
+    default_runner_list = Gtk.Template.Child()
 
     # Options of navigation style row, in order.
     NAVIGATION_STYLES = [NavigationStyle.MODAL, NavigationStyle.PUSH]
@@ -34,6 +38,79 @@ class SettingsSection(Gtk.Box):
         self.qemu_cpus_row.connect("notify::value", lambda row, _: setattr(settings, "qemu_cpus", round(row.get_value())))
         self.qemu_memory_row.set_value(settings.qemu_memory_gib)
         self.qemu_memory_row.connect("notify::value", lambda row, _: setattr(settings, "qemu_memory_gib", round(row.get_value())))
+        self._default_toolset_rows = []
+        self._load_default_toolset_choices()
+        self._default_runner_rows = []
+        self._load_default_runner_choices()
+        Repository.Toolset.event_bus.subscribe(RepositoryEvent.VALUE_CHANGED, self._toolsets_changed, self)
+        Repository.Runner.event_bus.subscribe(RepositoryEvent.VALUE_CHANGED, self._runners_changed, self)
+        settings.event_bus.subscribe(SettingsEvents.DEFAULT_TOOLSET_CHANGED, self._default_toolset_changed, self)
+        settings.event_bus.subscribe(SettingsEvents.DEFAULT_RUNNER_CHANGED, self._default_runner_changed, self)
+
+    def _load_default_toolset_choices(self, *_):
+        for row in self._default_toolset_rows:
+            self.default_toolset_list.remove(row)
+        self._default_toolset_rows.clear()
+        settings = Repository.Settings.value
+        group = Gtk.CheckButton()
+        choices = [(None, "Automatic (newest compatible)", "Uses the newest toolset that has the tools an action needs")]
+        choices.extend((str(toolset.uuid), toolset.name, toolset.short_details)
+                       for toolset in sorted(Repository.Toolset.value, key=lambda item: item.name.lower()))
+        for identifier, title, subtitle in choices:
+            row = Adw.ActionRow(title=title, subtitle=subtitle)
+            button = Gtk.CheckButton(valign=Gtk.Align.CENTER)
+            button.set_group(group)
+            button.set_active(identifier == settings.default_toolset_id)
+            button.connect("toggled", self._on_default_toolset_toggled, identifier)
+            row.add_prefix(button)
+            row.set_activatable_widget(button)
+            self.default_toolset_list.append(row)
+            self._default_toolset_rows.append(row)
+
+    def _toolsets_changed(self, *_):
+        self._load_default_toolset_choices()
+
+    def _default_toolset_changed(self, *_):
+        self._load_default_toolset_choices()
+
+    def _on_default_toolset_toggled(self, button, identifier):
+        if button.get_active():
+            Repository.Settings.value.default_toolset_id = identifier
+
+    def _load_default_runner_choices(self, *_):
+        for row in self._default_runner_rows:
+            self.default_runner_list.remove(row)
+        self._default_runner_rows.clear()
+        settings = Repository.Settings.value
+        choices = [(None, "Automatic (platform default)", "Uses Host on Linux or a VM runner on macOS", None)]
+        choices.append(("host", "Host", "Runs primary tools directly on this computer", HOST_RUNNER))
+        choices.extend((str(runner.id), runner.name, runner.short_details, runner)
+                       for runner in sorted(Repository.Runner.value, key=lambda item: item.name.lower()))
+        choice_ids = {identifier for identifier, *_ in choices}
+        selected_id = settings.default_runner_id if settings.default_runner_id in choice_ids else None
+        group = Gtk.CheckButton()
+        for identifier, title, subtitle, runner in choices:
+            row = Adw.ActionRow(title=title, subtitle=subtitle or "")
+            button = Gtk.CheckButton(valign=Gtk.Align.CENTER)
+            button.set_group(group)
+            button.set_active(identifier == selected_id)
+            button.connect("toggled", self._on_default_runner_toggled, identifier)
+            row.add_prefix(button)
+            row.set_activatable_widget(button)
+            if runner is not None and not runner_is_supported(runner):
+                row.set_sensitive(False)
+            self.default_runner_list.append(row)
+            self._default_runner_rows.append(row)
+
+    def _runners_changed(self, *_):
+        self._load_default_runner_choices()
+
+    def _default_runner_changed(self, *_):
+        self._load_default_runner_choices()
+
+    def _on_default_runner_toggled(self, button, identifier):
+        if button.get_active():
+            Repository.Settings.value.default_runner_id = identifier
 
     def _on_navigation_style_selected(self, row, _param):
         Repository.Settings.value.navigation_style = self.NAVIGATION_STYLES[row.get_selected()]

@@ -27,7 +27,7 @@ from .tree_node import walk_tree
 
 class ProjectStage(Serializable):
 
-    def __init__(self, id: uuid.UUID | None = None, parent_id: uuid.UUID | None = None, name: str = None, target_name: str | None = None, releng_template_name: str | None = None, profile: PortageProfile | None = None, data: dict | None = None):
+    def __init__(self, id: uuid.UUID | None = None, parent_id: uuid.UUID | None = None, name: str = None, target_name: str | None = None, releng_template_name: str | None = None, profile: PortageProfile | None = None, toolset_id: str | None = None, data: dict | None = None):
         self.event_bus = EventBus[ProjectStageEvent]()
         # Required variables in case not set in json:
         self.id = id or uuid.uuid4()
@@ -36,6 +36,7 @@ class ProjectStage(Serializable):
         self.name = name
         self.releng_template = releng_template_name
         self.profile = profile
+        self.toolset_id = str(toolset_id) if toolset_id else None
         # Load available values from data dictionary
         for key, value in (data or {}).items():
             setattr(self, key, ProjectStageArgumentSerialization.deserialize(value))
@@ -258,7 +259,7 @@ def target_argument_names(toolset: Toolset | None, target_name: str) -> frozense
             return None
     return _target_arguments_cache[key]
 
-def parent_supports_argument(project_directory, stage, argument: StageArgumentDetails | None) -> bool:
+def parent_supports_argument(project_directory, stage, argument: StageArgumentDetails | None, toolset=None) -> bool:
     """Stage has parent whose target has the argument too, so its value can be inherited. Root overlay of parent is
     root overlay argument of its target (eg. stage4/root_overlay for livecd/root_overlay)."""
     parent = parent_stage(project_directory, stage)
@@ -268,10 +269,13 @@ def parent_supports_argument(project_directory, stage, argument: StageArgumentDe
         argument = root_overlay_argument(parent)
         if argument is None:
             return False
-    names = target_argument_names(project_directory.get_toolset(), parent.target)
+    if toolset is None:
+        from .toolset_selection import default_toolset
+        toolset = default_toolset()
+    names = target_argument_names(toolset, parent.target) if toolset else None
     return True if names is None else argument.value in names # Assumed supported when arguments can't be read.
 
-def remove_unsupported_parent_options(project_directory, stage) -> list[str]:
+def remove_unsupported_parent_options(project_directory, stage, toolset=None) -> list[str]:
     """Removes inheriting from parent (inherit option, parent overlay source) from arguments whose value parent can't
     give (its target doesn't have the argument). Arguments left empty are cleared. Returns changed arguments."""
     from .project_stage_portage_confdir import StagePortageConfdirSource
@@ -282,7 +286,7 @@ def remove_unsupported_parent_options(project_directory, stage) -> list[str]:
         values = value if isinstance(value, list) else [value]
         if not any(item in parent_values for item in values if isinstance(item, (StageAutomaticOption, StagePortageConfdirSource))):
             continue
-        if parent_supports_argument(project_directory, stage, argument):
+        if parent_supports_argument(project_directory, stage, argument, toolset):
             continue
         kept = [item for item in values if not (isinstance(item, (StageAutomaticOption, StagePortageConfdirSource)) and item in parent_values)]
         setattr(stage, argument.name, (kept if isinstance(value, list) else kept[0]) if kept else None)
@@ -318,13 +322,17 @@ def load_catalyst_stage_arguments_details(toolset: Toolset, target_name: str | N
     }
     return dict(sorted(arguments_details.items()))
 
-def load_catalyst_stage_arguments_options(project_directory, stage: ProjectStage, arg_details: StageArgumentTargetDetails | None) -> list[StageArgumentOption] | None:
+def load_catalyst_stage_arguments_options(project_directory, stage: ProjectStage, arg_details: StageArgumentTargetDetails | None,
+                                          toolset=None) -> list[StageArgumentOption] | None:
     """Load possible list of options to select if argument allows it."""
     if not arg_details:
         return None
     match arg_details.details:
         case StageArgumentDetails.target:
-            values = load_catalyst_targets(toolset=project_directory.get_toolset())
+            if toolset is None:
+                from .toolset_selection import default_toolset
+                toolset = default_toolset()
+            values = load_catalyst_targets(toolset=toolset) if toolset else []
             return [StageArgumentOption(raw=value, display=value, subtitle=None, value=value, argument=arg_details.details) for value in values]
         case StageArgumentDetails.portage_confdir:
             return portage_confdir_options(project_directory=project_directory, stage=stage)
@@ -349,13 +357,18 @@ def load_catalyst_stage_arguments_options(project_directory, stage: ProjectStage
             values = Repository.OverlayDirectory.value
             return [StageArgumentOption(raw=value, display=value.name, subtitle=None, value=value.id, argument=arg_details.details) for value in values]
         case StageArgumentDetails.interpreter:
-            values = project_directory.get_toolset().metadata.get(ToolsetApplication.QEMU.package, {}).get('interpreters', [])
+            from .toolset_selection import default_toolset
+            qemu_toolset = default_toolset([ToolsetApplication.QEMU])
+            values = qemu_toolset.metadata.get(ToolsetApplication.QEMU.package, {}).get('interpreters', []) if qemu_toolset else []
             return [StageArgumentOption(raw=value, display=value, subtitle=None, value=value, argument=arg_details.details) for value in values]
         case StageArgumentDetails.parent:
             values = load_stage_possible_seeds(stage=stage, project_directory=project_directory)
             return [StageArgumentOption(raw=value, display=value.name, subtitle=None, value=value.id, argument=arg_details.details, icon_name=stage_target_icon(value.target)) for value in values]
         case StageArgumentDetails.subarch:
-            values = load_catalyst_subarches(toolset=project_directory.get_toolset(), architecture=project_directory.get_architecture())
+            if toolset is None:
+                from .toolset_selection import default_toolset
+                toolset = default_toolset()
+            values = load_catalyst_subarches(toolset=toolset, architecture=project_directory.get_architecture()) if toolset else []
             return [StageArgumentOption(raw=value.name, display=value.name, subtitle=value.chost or value.common_flags, value=value.name, argument=arg_details.details) for value in values]
     return None
 
@@ -403,7 +416,7 @@ def load_catalyst_stage_automatic_arguments_options(stage: ProjectStage, arg_det
     }
     return [options[automatic_option] for automatic_option in arg_details.details.automatic_options]
 
-def apply_default_stage_arguments(project_directory, stage: ProjectStage) -> dict[str, Any]:
+def apply_default_stage_arguments(project_directory, stage: ProjectStage, toolset=None) -> dict[str, Any]:
     """Sets default automatic options (inherit from parent, releng template...) for arguments valid for stage target.
     From default options of argument available for the stage (parent selected, releng template selected...), first one
     that resolves to some value is used. If none of them does, first available is used anyway, as releng template or
@@ -414,7 +427,7 @@ def apply_default_stage_arguments(project_directory, stage: ProjectStage) -> dic
     def is_available(argument: StageArgumentDetails, option: StageAutomaticOption) -> bool:
         match option:
             case StageAutomaticOption.INHERIT_FROM_PARENT:
-                return has_parent and parent_supports_argument(project_directory, stage, argument)
+                return has_parent and parent_supports_argument(project_directory, stage, argument, toolset)
             case StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE:
                 return has_template # Even if template doesn't define it now, templates can define any argument.
             case StageAutomaticOption.GENERATE_AUTOMATICALLY:
@@ -425,7 +438,12 @@ def apply_default_stage_arguments(project_directory, stage: ProjectStage) -> dic
             return True # Determined when building, even if not known yet.
         value = resolve_stage_argument(project_directory, stage, argument.value, option=option)
         return value is not UNRESOLVED and value not in (None, "", [])
-    arguments = load_catalyst_stage_arguments_details(toolset=project_directory.get_toolset(), target_name=stage.target)
+    if toolset is None:
+        from .toolset_selection import default_toolset
+        toolset = default_toolset()
+    if toolset is None:
+        return {}
+    arguments = load_catalyst_stage_arguments_details(toolset=toolset, target_name=stage.target)
     applied = {}
     for name, argument in arguments.items():
         if argument.details is None or getattr(stage, argument.attribute_name, None) is not None:
@@ -436,7 +454,7 @@ def apply_default_stage_arguments(project_directory, stage: ProjectStage) -> dic
             continue
         if argument.details in FILE_OVERLAY_ARGUMENTS:
             setattr(stage, argument.attribute_name, default_portage_confdir_sources(
-                has_parent=has_parent and parent_supports_argument(project_directory, stage, argument.details)))
+                has_parent=has_parent and parent_supports_argument(project_directory, stage, argument.details, toolset)))
             applied[name] = getattr(stage, argument.attribute_name)
             continue
         if argument.details == StageArgumentDetails.boot_kernel:

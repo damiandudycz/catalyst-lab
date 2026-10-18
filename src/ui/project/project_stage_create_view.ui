@@ -19,7 +19,39 @@
         <property name="welcome_screen_description">Add a stage to the project. Select its Catalyst target, optionally a Releng template providing default settings, and the parent stage used as its seed.</property>
         <property name="install_button_label">Create stage</property>
 
-        <!-- Page 1: Spec type screen -->
+        <!-- Page 1: Toolset -->
+        <child>
+          <object class="GtkScrolledWindow" id="toolset_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="toolset_selection_view">
+                    <property name="title">Toolset</property>
+                    <property name="description">Toolset used to read available Catalyst targets. Toolsets without Catalyst are shown but disabled.</property>
+                    <property name="item_icon">toolbox-symbolic</property>
+                    <property name="item_title_property_name">name</property>
+                    <property name="item_subtitle_property_name">short_details</property>
+                    <property name="item_status_property_name">status_indicator_values</property>
+                    <property name="autoselect_default">True</property>
+                    <signal name="is-item-selectable" handler="is_toolset_selectable"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 2: Spec type screen -->
         <child>
           <object class="GtkScrolledWindow" id="spec_type_page">
             <property name="hscrollbar-policy">never</property>
@@ -49,7 +81,7 @@
           </object>
         </child>
 
-        <!-- Page 2: Releng base spec screen -->
+        <!-- Page 3: Releng base spec screen -->
         <child>
           <object class="GtkScrolledWindow" id="releng_base_page">
             <property name="hscrollbar-policy">never</property>
@@ -84,7 +116,7 @@ If you prefer not to use a template, select None and configure all values manual
           </object>
         </child>
 
-        <!-- Page 3: Options name -->
+        <!-- Page 4: Options name -->
         <child>
           <object class="GtkScrolledWindow" id="options_page">
             <property name="hscrollbar-policy">never</property>

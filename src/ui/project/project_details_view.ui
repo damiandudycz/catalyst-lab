@@ -24,6 +24,7 @@
     <!-- Content container -->
     <child>
       <object class="AdwViewStack" id="stack">
+        <property name="vexpand">True</property>
 
         <!-- Pages []: -->
 
@@ -34,115 +35,64 @@
             <property name="title">Stages</property>
             <property name="icon-name">checklist-minimalistic-svgrepo-com-symbolic</property>
             <property name="child">
-              <object class="GtkScrolledWindow">
-                <property name="hscrollbar-policy">never</property>
-                <property name="vscrollbar-policy">automatic</property>
+              <object class="GtkStack" id="stage_content_stack">
                 <property name="hexpand">True</property>
                 <property name="vexpand">True</property>
+                <property name="visible-child-name">compact</property>
                 <child>
-                  <object class="GtkBox">
-                    <property name="orientation">vertical</property>
-                    <child>
+                  <object class="GtkStackPage">
+                    <property name="name">compact</property>
+                    <property name="child">
                       <object class="GtkScrolledWindow">
                         <property name="hscrollbar-policy">automatic</property>
                         <property name="vscrollbar-policy">automatic</property>
                         <property name="hexpand">True</property>
                         <property name="vexpand">True</property>
                         <child>
-                          <object class="StagesTreeView" id="stages_tree_view">
+                          <object class="StagesTreeView" id="stages_compact_view">
                             <signal name="stage-selected" handler="on_stage_selected"/>
                           </object>
                         </child>
                       </object>
-                    </child>
-                    <child>
-                      <object class="GtkListBox">
-                        <property name="margin-start">24</property>
-                        <property name="margin-end">24</property>
-                        <property name="margin-top">12</property>
-                        <property name="margin-bottom">12</property>
-                        <property name="selection-mode">none</property>
-                        <style>
-                          <class name="boxed-list"/>
-                        </style>
+                    </property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">full</property>
+                    <property name="child">
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">automatic</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <property name="hexpand">True</property>
+                        <property name="vexpand">True</property>
                         <child>
-                          <object class="AdwButtonRow">
-                            <property name="title">Add stage</property>
-                            <property name="start-icon-name">list-add-symbolic</property>
-                            <property name="activatable">True</property>
-                            <signal name="activated" handler="on_add_stage_activated"/>
-                            <style>
-                              <class name="suggested-action"/>
-                            </style>
+                          <object class="StagesTreeView" id="stages_full_view">
+                            <signal name="stage-selected" handler="on_stage_selected"/>
                           </object>
                         </child>
                       </object>
-                    </child>
-                    <!-- Build buttons in one row, visible ones share it. -->
-                    <child>
-                      <object class="GtkBox">
-                        <property name="margin-start">24</property>
-                        <property name="margin-end">24</property>
-                        <property name="margin-bottom">12</property>
-                        <property name="spacing">12</property>
-                        <property name="homogeneous">True</property>
+                    </property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">list</property>
+                    <property name="child">
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <property name="hexpand">True</property>
+                        <property name="vexpand">True</property>
                         <child>
-                          <object class="GtkListBox" id="build_progress_list">
+                          <object class="StagesListView" id="stages_list_view">
                             <property name="hexpand">True</property>
-                            <property name="selection-mode">none</property>
-                            <property name="visible">False</property>
-                            <style>
-                              <class name="boxed-list"/>
-                            </style>
-                            <child>
-                              <object class="AdwButtonRow" id="build_progress_row">
-                                <property name="title">Show build progress</property>
-                                <property name="start-icon-name">checklist-minimalistic-svgrepo-com-symbolic</property>
-                                <property name="activatable">True</property>
-                                <signal name="activated" handler="on_build_progress_activated"/>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkListBox">
-                            <property name="hexpand">True</property>
-                            <property name="selection-mode">none</property>
-                            <style>
-                              <class name="boxed-list"/>
-                            </style>
-                            <child>
-                              <object class="AdwButtonRow">
-                                <property name="title">Builds list</property>
-                                <property name="start-icon-name">box-minimalistic-svgrepo-com-symbolic</property>
-                                <property name="activatable">True</property>
-                                <signal name="activated" handler="on_builds_activated"/>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkListBox" id="build_list">
-                            <property name="hexpand">True</property>
-                            <property name="selection-mode">none</property>
-                            <style>
-                              <class name="boxed-list"/>
-                            </style>
-                            <child>
-                              <object class="AdwButtonRow" id="build_row">
-                                <property name="title">Create build</property>
-                                <property name="start-icon-name">sledgehammer-svgrepo-com-symbolic</property>
-                                <property name="activatable">True</property>
-                                <signal name="activated" handler="on_build_activated"/>
-                                <style>
-                                  <class name="suggested-action"/>
-                                </style>
-                              </object>
-                            </child>
+                            <property name="vexpand">True</property>
+                            <signal name="stage-selected" handler="on_stage_selected"/>
                           </object>
                         </child>
                       </object>
-                    </child>
+                    </property>
                   </object>
                 </child>
               </object>
@@ -168,19 +118,6 @@
                     <property name="margin-end">24</property>
                     <!-- <property name="margin-top">24</property> -->
                     <property name="margin-bottom">24</property>
-                    <child>
-                      <object class="ItemSelectionExpanderRow" id="toolset_selection_view">
-                        <property name="title">Toolset</property>
-                        <property name="item_class_name">Toolset</property>
-                        <property name="item_icon">toolbox-symbolic</property>
-                        <property name="item_title_property_name">name</property>
-                        <property name="item_subtitle_property_name">short_details</property>
-                        <property name="item_status_property_name">status_indicator_values</property>
-                        <signal name="is-item-selectable" handler="is_item_selectable"/>
-                        <signal name="is-item-usable" handler="is_item_usable"/>
-                        <signal name="setup-items-monitoring" handler="setup_items_monitoring"/>
-                      </object>
-                    </child>
                     <child>
                       <object class="ItemSelectionExpanderRow" id="releng_selection_view">
                         <property name="title">Releng directory</property>
@@ -275,6 +212,125 @@
       </object>
     </child>
     <!-- [END] Content container -->
+
+    <!-- One shared action panel below the Stages tab. -->
+    <child>
+      <object class="GtkBox" id="source_banner">
+        <property name="orientation">vertical</property>
+        <property name="visible">False</property>
+        <child><object class="GtkSeparator"/></child>
+        <child>
+          <object class="GtkBox" id="stage_actions">
+            <property name="orientation">vertical</property>
+            <property name="spacing">10</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">12</property>
+            <style><class name="project-actions-panel"/></style>
+            <child>
+              <object class="GtkBox" id="build_actions_row">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">12</property>
+                <property name="homogeneous">True</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <child>
+                  <object class="GtkButton" id="add_stage_row">
+                    <property name="hexpand">True</property>
+                    <signal name="clicked" handler="on_add_stage_activated"/>
+                    <style><class name="suggested-action"/><class name="project-action-button"/></style>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+                        <child><object class="GtkImage"><property name="icon-name">list-add-symbolic</property></object></child>
+                        <child><object class="GtkLabel"><property name="label">Add stage</property></object></child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="builds_row">
+                    <property name="hexpand">True</property>
+                    <signal name="clicked" handler="on_builds_activated"/>
+                    <style><class name="project-action-button"/></style>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+                        <child><object class="GtkImage"><property name="icon-name">box-minimalistic-svgrepo-com-symbolic</property></object></child>
+                        <child><object class="GtkLabel"><property name="label">Builds list</property></object></child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="build_row">
+                    <property name="hexpand">True</property>
+                    <signal name="clicked" handler="on_build_activated"/>
+                    <style><class name="suggested-action"/><class name="project-action-button"/></style>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+                        <child><object class="GtkImage"><property name="icon-name">sledgehammer-svgrepo-com-symbolic</property></object></child>
+                        <child><object class="GtkLabel" id="build_row_label"><property name="label">Create build</property></object></child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="build_progress_row">
+                    <property name="visible">False</property>
+                    <property name="hexpand">True</property>
+                    <signal name="clicked" handler="on_build_progress_activated"/>
+                    <style><class name="project-action-button"/></style>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+                        <child><object class="GtkImage"><property name="icon-name">checklist-minimalistic-svgrepo-com-symbolic</property></object></child>
+                        <child><object class="GtkLabel"><property name="label">Show build progress</property></object></child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="height-request">32</property>
+                <property name="valign">center</property>
+                <style><class name="toolbar"/></style>
+                <child>
+                  <object class="GtkButton" id="source_button">
+                    <property name="hexpand">False</property>
+                    <property name="valign">center</property>
+                    <signal name="clicked" handler="_on_update_source_clicked"/>
+                    <style><class name="flat"/><class name="caption"/><class name="stage-toolset-change-button"/></style>
+                    <child>
+                      <object class="GtkLabel" id="source_button_label">
+                        <property name="xalign">0</property>
+                        <property name="ellipsize">end</property>
+                        <style><class name="dim-label"/><class name="caption"/></style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child><object class="GtkLabel"><property name="hexpand">True</property></object></child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
 
   </template>
 </interface>

@@ -235,23 +235,36 @@ class ProjectTemplateOptionsView(Gtk.Box):
         row.set_show_enable_switch(True)
         row.set_enable_expansion(enabled)
         row.connect("notify::enable-expansion", lambda row, _: self._set_group(group.id, enabled=row.get_enable_expansion()))
-        generated = {stage.template_id: stage for stage in self.generated.stages}
+        def logical_stage_id(stage):
+            # Multi-init templates generate one stage per init system (for example
+            # ``stage4-openrc``) while groups continue to reference the logical
+            # template id (``stage4``). The persistent id retains both pieces.
+            return (stage.persistent_id or stage.template_id).partition(":")[0]
+
         for stage_id in group.stages:
-            stage = generated.get(stage_id)
-            if stage is None:
-                continue # Not created for selected options.
-            stage_row = Adw.ActionRow(title=GLib.markup_escape_text(stage.name))
-            if inherited_from := self.template.group_inherited_from(group.id, stage_id, names):
-                # Built from stage that gets group, it has its packages and files already.
-                stage_row.set_subtitle(GLib.markup_escape_text(f"Included from {generated[inherited_from].name}"))
-                stage_row.add_prefix(Gtk.CheckButton(active=True, sensitive=False))
+            # A logical stage can have multiple generated variants. Show each one
+            # so the group remains understandable when templates generate parallel
+            # init-system graphs.
+            stages = [stage for stage in self.generated.stages if logical_stage_id(stage) == stage_id]
+            for stage in stages:
+                stage_row = Adw.ActionRow(title=GLib.markup_escape_text(stage.name))
+                if inherited_from := self.template.group_inherited_from(group.id, stage_id, names):
+                    # Built from a stage that gets this group, so it already has
+                    # the group's packages and files.
+                    variant = (stage.persistent_id or "").partition(":")[2]
+                    inherited_stage = next((candidate for candidate in self.generated.stages
+                                            if logical_stage_id(candidate) == inherited_from
+                                            and (candidate.persistent_id or "").partition(":")[2] == variant), None)
+                    stage_row.set_subtitle(GLib.markup_escape_text(
+                        f"Included from {inherited_stage.name}" if inherited_stage else "Included from parent stage"))
+                    stage_row.add_prefix(Gtk.CheckButton(active=True, sensitive=False))
+                    row.add_row(stage_row)
+                    continue
+                check_button = Gtk.CheckButton(active=stage_id in selected_stages)
+                check_button.connect("toggled", lambda button, stage_id=stage_id: self._set_group_stage(group.id, stage_id, button.get_active()))
+                stage_row.add_prefix(check_button)
+                stage_row.set_activatable_widget(check_button)
                 row.add_row(stage_row)
-                continue
-            check_button = Gtk.CheckButton(active=stage_id in selected_stages)
-            check_button.connect("toggled", lambda button, stage_id=stage_id: self._set_group_stage(group.id, stage_id, button.get_active()))
-            stage_row.add_prefix(check_button)
-            stage_row.set_activatable_widget(check_button)
-            row.add_row(stage_row)
         self.groups_group.add(row)
         self._group_rows.append(row)
 

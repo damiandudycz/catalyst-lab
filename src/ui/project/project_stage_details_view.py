@@ -21,7 +21,7 @@ from .item_select_expander_row import ItemSelectionExpanderRow
 from .event_bus import EventBus
 from .project_stage_automatic_option import StageAutomaticOption
 from .project_stage_argument_descriptions import stage_argument_description
-from .project_stage_value_resolver import resolved_stage_argument_display, resolve_stage_argument, split_additions
+from .project_stage_value_resolver import UNRESOLVED, resolved_stage_argument_display, resolve_stage_argument, split_additions
 from .project_stage_portage_confdir import (
     StagePortageConfdirSource, stage_overlay_path, stage_root_overlay_path, root_overlay_values, FILE_OVERLAY_ARGUMENTS
 )
@@ -68,9 +68,13 @@ class ProjectStageDetailsView(Gtk.Box):
     live_image_pref_group = Gtk.Template.Child()
     live_system_pref_group = Gtk.Template.Child()
     build_behavior_pref_group = Gtk.Template.Child()
+    other_pref_group = Gtk.Template.Child()
     kernels_pref_group = Gtk.Template.Child()
     row_warnings_group = Gtk.Template.Child()
     row_warnings_row = Gtk.Template.Child()
+    toolset_footer_label = Gtk.Template.Child()
+    toolset_footer_button = Gtk.Template.Child()
+    unsupported_options_group = Gtk.Template.Child()
 
     # Basic or advanced settings (STAGE_ARGUMENT_LEVELS), last choice is used by stages opened later while app runs.
     advanced_default = False
@@ -81,6 +85,9 @@ class ProjectStageDetailsView(Gtk.Box):
         self.stage = stage
         self.content_navigation_view = content_navigation_view
         self.advanced = ProjectStageDetailsView.advanced_default
+        self.stage_toolsets = []
+        self.active_stage_toolset = None
+        self._unsupported_option_rows = []
         self._setup_mode_toggle()
         self.connect("realize", self.on_realize)
         # Reapply the selected mode once the page is mapped. Rows are populated during
@@ -131,7 +138,7 @@ class ProjectStageDetailsView(Gtk.Box):
                 hidden_custom += [f"{row.kernel_name}: {title}" for title in row.set_advanced(self.advanced)]
         groups = (self.architecture_pref_group, self.release_pref_group, self.packages_pref_group,
                   self.stage_setup_pref_group, self.live_image_pref_group,
-                  self.live_system_pref_group, self.build_behavior_pref_group)
+                  self.live_system_pref_group, self.build_behavior_pref_group, self.other_pref_group)
         for group in groups:
             # Determine visibility from the stage arguments and selected mode, rather than GTK's
             # effective child visibility. That value can be false while the group is hidden and
@@ -160,6 +167,78 @@ class ProjectStageDetailsView(Gtk.Box):
     def load_stage_details(self):
         self.stage_name_row.set_text(self.stage.name)
         set_row_description(self.stage_name_row, stage_argument_description(StageArgumentDetails.name.value))
+        self._load_stage_toolset()
+
+    def _load_stage_toolset(self):
+        from .toolset_selection import sorted_toolsets, toolset_has_applications, default_toolset
+        from .toolset_application import ToolsetApplication
+        available = sorted_toolsets()
+        self.stage_toolsets = [toolset for toolset in available
+                               if toolset_has_applications(toolset, [ToolsetApplication.CATALYST])
+                               and os.path.isfile(toolset.file_path())]
+        remembered = next((item for item in self.stage_toolsets if str(item.uuid) == str(self.stage.toolset_id)), None)
+        fallback = default_toolset(applications=[ToolsetApplication.CATALYST], toolsets=self.stage_toolsets)
+        self.active_stage_toolset = remembered or fallback or (self.stage_toolsets[0] if self.stage_toolsets else None)
+        name = self.active_stage_toolset.name if self.active_stage_toolset else "No Catalyst toolset available"
+        self.toolset_footer_label.set_label(f"Catalyst toolset · {name}")
+        self.toolset_footer_button.set_sensitive(bool(self.stage_toolsets))
+        if self.active_stage_toolset and str(self.stage.toolset_id) != str(self.active_stage_toolset.uuid):
+            self.stage.toolset_id = str(self.active_stage_toolset.uuid)
+            ProjectManager.shared().save_stage(self.project_directory, self.stage)
+
+    @Gtk.Template.Callback()
+    def _on_change_toolset_clicked(self, button):
+        dialog = Adw.Dialog(
+            title="Change Catalyst toolset",
+            content_width=420,
+            presentation_mode=Adw.DialogPresentationMode.FLOATING,
+        )
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                          margin_top=18, margin_bottom=12, margin_start=18, margin_end=18)
+        dialog.set_child(content)
+        content.append(Gtk.Label(
+            label="Choose a toolset to reload the available stage settings.",
+            wrap=True,
+            xalign=0,
+            css_classes=["dim-label"],
+        ))
+
+        scroller = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                                      hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                      max_content_height=320, propagate_natural_height=True)
+        list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE,
+                               css_classes=["boxed-list", "toolset-chooser"])
+        scroller.set_child(list_box)
+        content.append(scroller)
+
+        def choose_toolset(_list, row):
+            toolset = row.toolset
+            self.active_stage_toolset = toolset
+            self.stage.toolset_id = str(toolset.uuid)
+            ProjectManager.shared().save_stage(self.project_directory, self.stage)
+            self.toolset_footer_label.set_label(f"Catalyst toolset · {toolset.name}")
+            self.load_configuration_rows()
+            dialog.close()
+
+        list_box.connect("row-activated", choose_toolset)
+        from .toolset_selection import default_toolset
+        default = default_toolset(toolsets=self.stage_toolsets)
+        for toolset in self.stage_toolsets:
+            versions = toolset.short_details
+            row = Adw.ActionRow(title=toolset.name, subtitle=versions or "Catalyst version unavailable",
+                                activatable=True)
+            row.add_prefix(Gtk.Image.new_from_icon_name("toolbox-symbolic"))
+            if toolset is default:
+                row.add_css_class("default-toolset-row")
+            row.toolset = toolset
+            list_box.append(row)
+
+        actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        cancel = Gtk.Button(label="Cancel", hexpand=True)
+        cancel.connect("clicked", lambda *_: dialog.close())
+        actions.append(cancel)
+        content.append(actions)
+        dialog.present(self.get_root())
 
     def load_configuration_rows(self):
         # Reset configuration rows
@@ -169,10 +248,17 @@ class ProjectStageDetailsView(Gtk.Box):
         self.configuration_rows = []
         self._row_load_warnings = []
         self.boot_kernel_argument = None
+        for row in self._unsupported_option_rows:
+            self.unsupported_options_group.remove(row)
+        self._unsupported_option_rows = []
         # Load arguments rows
         try:
+            toolset = self.active_stage_toolset
+            if toolset is None:
+                from .toolset_selection import default_toolset
+                toolset = default_toolset()
             arguments_details = load_catalyst_stage_arguments_details(
-                toolset=self.project_directory.get_toolset(),
+                toolset=toolset,
                 target_name=self.stage.target
             )
         except Exception as error:
@@ -180,6 +266,32 @@ class ProjectStageDetailsView(Gtk.Box):
             self._update_row_load_warnings()
             self.apply_mode()
             return
+        supported_names = {argument.attribute_name for argument in arguments_details.values()}
+        structural = {"event_bus", "id", "parent", "target", "name", "releng_template", "toolset_id"}
+        stored_names = {
+            name for name, value in self.stage.__dict__.items()
+            if name not in structural and value is not None
+        }
+        missing_names = stored_names - supported_names
+        for name in sorted(missing_names):
+            # Keep a saved setting from another Catalyst version only when its
+            # effective value is still meaningful. In particular, an inherited
+            # setting whose parent/template resolves to None is not an active
+            # unsupported setting and should not clutter the editor.
+            value = resolve_stage_argument(self.project_directory, self.stage, name)
+            if value is None or value is UNRESOLVED or value == "" or value == []:
+                continue
+            details = StageArgumentDetails.named(name)
+            if details is not None:
+                arguments_details[name] = StageArgumentTargetDetails(name=name, required=False, details=details)
+            else:
+                row = Adw.ActionRow(title=name, subtitle=f"Saved value: {value!r} · Not recognized by this Catalyst toolset")
+                icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
+                icon.add_css_class("warning")
+                row.add_prefix(icon)
+                self.unsupported_options_group.add(row)
+                self._unsupported_option_rows.append(row)
+        self.unsupported_options_group.set_visible(bool(self._unsupported_option_rows))
         for name, arg in arguments_details.items():
             if arg.details == StageArgumentDetails.boot_kernel:
                 # Edited as list of kernels in Kernels group (load_kernel_rows).
@@ -188,7 +300,13 @@ class ProjectStageDetailsView(Gtk.Box):
             try:
                 group = self.pref_group_for_argument(argument=arg)
                 if group:
-                    row = self.create_row_for_argument(argument=arg)
+                    row = self.create_row_for_argument(argument=arg, toolset=toolset)
+                    if name in missing_names:
+                        warning_icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
+                        warning_icon.add_css_class("warning")
+                        if hasattr(row, "add_prefix"):
+                            row.add_prefix(warning_icon)
+                        row.set_tooltip_text("This saved setting is not recognized by the selected Catalyst toolset. Its value is preserved.")
                     set_row_description(row, stage_argument_description(arg.name))
                     row.pref_group = group
                     row.level = stage_argument_level(arg.details)
@@ -326,7 +444,7 @@ class ProjectStageDetailsView(Gtk.Box):
         remove_kernel(self.project_directory, self.stage, name)
         self.load_kernel_rows(True)
 
-    def create_row_for_argument(self, argument: StageArgumentTargetDetails) -> Adw.PreferencesRow:
+    def create_row_for_argument(self, argument: StageArgumentTargetDetails, toolset=None) -> Adw.PreferencesRow:
         if argument.details in CACHE_ARGUMENTS:
             return StageCacheRow(project_directory=self.project_directory, stage=self.stage, argument=argument)
         match argument.type:
@@ -335,7 +453,8 @@ class ProjectStageDetailsView(Gtk.Box):
                     project_directory=self.project_directory,
                     stage=self.stage,
                     argument=argument,
-                    is_item_selectable_handler=self.is_config_option_selectable
+                    is_item_selectable_handler=self.is_config_option_selectable,
+                    toolset=toolset
                 )
             case StageArgumentType.string_list | StageArgumentType.raw:
                 return StageTextListRow(project_directory=self.project_directory, stage=self.stage, argument=argument,
@@ -361,7 +480,7 @@ class ProjectStageDetailsView(Gtk.Box):
 
     def pref_group_for_argument(self, argument: StageArgumentTargetDetails) -> Adw.PreferencesGroup | None:
         if not argument.details:
-            return self.build_behavior_pref_group
+            return self.other_pref_group
         match argument.details:
             case (
                 # Hidden, set by CatalystLab: name has own row, snapshot is selected for project and source_subpath is
@@ -434,9 +553,11 @@ class ProjectStageDetailsView(Gtk.Box):
                 return self.stage_setup_pref_group
             case (StageArgumentDetails.catalyst_use | StageArgumentDetails.decompressor_search_order |
                   StageArgumentDetails.hostuse | StageArgumentDetails.install_mask |
-                  StageArgumentDetails.portage_prefix | StageArgumentDetails.rename_regexp |
+                  StageArgumentDetails.portage_prefix |
                   StageArgumentDetails.update_seed | StageArgumentDetails.update_seed_command):
                 return self.build_behavior_pref_group
+            case StageArgumentDetails.rename_regexp:
+                return self.other_pref_group
             case _:
                 return self.build_behavior_pref_group
 
@@ -600,7 +721,7 @@ def include_unsupported_options(options: list[StageArgumentOption], values: list
 
 class StageOptionExpanderRow(ItemSelectionExpanderRow):
 
-    def __init__(self, project_directory: ProjectDirectory, stage: ProjectStage, argument: StageArgumentTargetDetails, is_item_selectable_handler):
+    def __init__(self, project_directory: ProjectDirectory, stage: ProjectStage, argument: StageArgumentTargetDetails, is_item_selectable_handler, toolset=None):
         super().__init__()
         self.title = argument.display_name
         self.item_title_property_name = 'display'
@@ -609,6 +730,7 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
         self.argument = argument
         self.project_directory = project_directory
         self.stage = stage
+        self.toolset = toolset
         self.display_none = not argument.required
         self.allow_multiselect = argument.details.type == StageArgumentType.multiselect if argument.details else False
         self.connect("is-item-selectable", is_item_selectable_handler)
@@ -620,6 +742,10 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
         warning_icon.add_css_class("warning")
         self.unsupported_value_row.add_prefix(warning_icon)
         self.unsupported_value_row.set_visible(False)
+        self.unsupported_selection_icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
+        self.unsupported_selection_icon.add_css_class("warning")
+        self.unsupported_selection_icon.set_visible(False)
+        self.add_suffix(self.unsupported_selection_icon)
         # Insert before the selectable values so the reason and recovery path are
         # immediately visible when this row is expanded.
         self.add_row(self.unsupported_value_row)
@@ -659,7 +785,8 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
         )
         available = (load_catalyst_stage_arguments_options_for_boolean(arg_details=self.argument) if boolean else
                      load_catalyst_stage_arguments_options(
-                         project_directory=self.project_directory, stage=self.stage, arg_details=self.argument
+                         project_directory=self.project_directory, stage=self.stage, arg_details=self.argument,
+                         toolset=self.toolset
                      ) or [])
         return automatic + available
 
@@ -701,7 +828,9 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
     def display_selected_item(self):
         super().display_selected_item()
         selected = (self.selected_items or []) if self.allow_multiselect else ([self.selected_item] if self.selected_item else [])
-        self.unsupported_value_row.set_visible(any(getattr(item, "unsupported", False) for item in selected))
+        has_unsupported = any(getattr(item, "unsupported", False) for item in selected)
+        self.unsupported_value_row.set_visible(has_unsupported)
+        self.unsupported_selection_icon.set_visible(has_unsupported)
         if any(isinstance(item.value, StageAutomaticOption) for item in selected):
             self.set_subtitle(", ".join(GLib.markup_escape_text(self._item_display(item)) for item in selected))
 

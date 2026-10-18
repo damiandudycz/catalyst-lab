@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os
+import os, sys
 from dataclasses import dataclass, field
 from enum import Enum
 from .multistage_process import MultiStageProcess, MultiStageProcessEvent
@@ -12,6 +12,8 @@ from .deploy_boot import Bootloader, Kernel, FIRMWARE_PACKAGE, StageContents, pa
 from .deploy_system import (
     NetworkService, NetworkSettings, LocalizationSettings, network_script, localization_script, authorized_keys_script, init_system_script
 )
+from .runner_operation import PrepareRunnerStage, StopRunnerStage
+from .runner import HOST_RUNNER
 
 # ------------------------------------------------------------------------------
 # Deploying stage build (stage3/stage4 tarball) to machine booted from Gentoo LiveCD, through SSH, or to disk of this
@@ -177,6 +179,11 @@ class DeployInstallation(MultiStageProcess):
         self.project_name = project_name
         self.project_id = None # Set by wizard, for status of project in Deploy section.
         self.connection = connection
+        # Image creation executes in a VM on macOS and directly on the Host runner on Linux.
+        # Disk/SSH targets are deployment endpoints, not runners.
+        self.runner = (getattr(connection, "machine", None) or HOST_RUNNER) if plan.image and sys.platform.startswith("linux") else (
+            getattr(connection, "machine", None) if plan.image else None)
+        self.runner_prepared = False
         self.machine = machine
         self.plan = plan
         self.settings = settings
@@ -201,6 +208,8 @@ class DeployInstallation(MultiStageProcess):
         self._notify_project()
 
     def setup_stages(self):
+        if self.runner is not None:
+            self.stages.append(PrepareRunnerStage(self))
         if self.plan.image:
             from .deploy_image_steps import DeployStepCreateImage
             self.stages.append(DeployStepCreateImage(multistage_process=self))
@@ -230,6 +239,8 @@ class DeployInstallation(MultiStageProcess):
                 self.stages.append(DeployStepCompressImage(multistage_process=self))
             from .deploy_image_steps import DeployStepSaveImage
             self.stages.append(DeployStepSaveImage(multistage_process=self))
+        if self.runner is not None:
+            self.stages.append(StopRunnerStage(self))
 
     @property
     def target_name(self) -> str:

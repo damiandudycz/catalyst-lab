@@ -38,6 +38,8 @@ class ToolsetManager:
         if os.path.isdir(os.path.dirname(toolset.file_path())):
             shutil.rmtree(os.path.dirname(toolset.file_path()))
         Repository.Toolset.value.remove(toolset)
+        if Repository.Settings.value.default_toolset_id == str(toolset.uuid):
+            Repository.Settings.value.default_toolset_id = None
 
     def is_name_available(self, name: str) -> bool:
         if not name:

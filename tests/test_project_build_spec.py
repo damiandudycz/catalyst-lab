@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if 'catalystlab' not in sys.modules:
@@ -11,7 +12,10 @@ if 'catalystlab' not in sys.modules:
     package.__path__ = [str(ROOT / 'src')] + [str(path) for path in (ROOT / 'src').rglob('*') if path.is_dir()]
     sys.modules['catalystlab'] = package
 
-from catalystlab.project_build_spec import _copy_folders, _format_spec_line, select_seed_url
+from catalystlab.project_build_spec import (
+    StageSpecContext, _copy_folders, _format_spec_line, generate_stage_spec, select_seed_url,
+)
+from catalystlab.project_stage_arguments import StageArgumentDetails, StageArgumentTargetDetails
 
 
 class StageSpecFormattingTests(unittest.TestCase):
@@ -48,6 +52,28 @@ class StageSpecFormattingTests(unittest.TestCase):
 
         self.assertIs(urls[0], select_seed_url(urls, "stage3-arm64-openrc"))
         self.assertIsNone(select_seed_url(urls[1:], "stage3-arm64-openrc"))
+
+    def test_build_spec_omits_values_not_supported_by_selected_toolset(self):
+        toolset = object()
+        project = types.SimpleNamespace(get_releng_directory=lambda: None, get_snapshot=lambda: None,
+                                        directory_path=lambda: "/project",
+                                        stage_directory_path=lambda name: f"/project/stages/{name}")
+        stage = types.SimpleNamespace(target="stage1", name="stage1", version_stamp="20261018",
+                                      rename_regexp="s/foo/bar/")
+        supported = {
+            "target": StageArgumentTargetDetails("target", False, StageArgumentDetails.target),
+            "version_stamp": StageArgumentTargetDetails("version_stamp", False, StageArgumentDetails.version_stamp),
+        }
+        with patch("catalystlab.project_build_spec.load_catalyst_stage_arguments_details",
+                   return_value=supported) as load_arguments:
+            spec = generate_stage_spec(project, stage, StageSpecContext(
+                timestamp="20261018T210000Z", source_subpath="seed", portage_confdir=None,
+                toolset=toolset, path_mapper=str,
+            ))
+
+        load_arguments.assert_called_once_with(toolset=toolset, target_name="stage1")
+        self.assertIn("version_stamp: 20261018", spec)
+        self.assertNotIn("rename_regexp", spec)
 
 
 if __name__ == '__main__':

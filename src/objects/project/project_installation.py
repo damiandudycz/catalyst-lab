@@ -91,7 +91,6 @@ class ProjectInstallationStepSaveConfig(MultiStageProcessStage):
         super().start()
         try:
             self.multistage_process.directory.metadata = ProjectConfiguration(
-                toolset_id=self.toolset.uuid,
                 releng_directory_id=self.releng_directory.id,
                 snapshot_id=self.multistage_process.snapshot.filename if self.multistage_process.snapshot else None,
                 latest_snapshot=self.multistage_process.latest_snapshot, # Builds get latest snapshot.
@@ -163,7 +162,8 @@ class ProjectInstallationStepApplyTemplate(MultiStageProcessStage):
                 # Cloned template repository is replaced with generated content, its history is kept.
                 stage_ids = apply_project_template(project_directory=directory, template=template, names=names, log=self.log,
                                                    replace_content=is_repository_template,
-                                                   overlay_ids=getattr(self.multistage_process, "template_overlay_ids", None))
+                                                   overlay_ids=getattr(self.multistage_process, "template_overlay_ids", None),
+                                                   toolset=self.multistage_process.toolset)
                 # Template and generated files are remembered, so project can be updated when template changes.
                 record_template_state(directory.directory_path(), template, dict(selection.selected), template_commit, stage_ids,
                                       template_directory_tree)

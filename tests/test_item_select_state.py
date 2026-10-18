@@ -10,6 +10,7 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab.item_select_state import ItemSelectionData, no_valid_items_visible
+from catalystlab.item_select_view import update_selection_messages
 
 
 class SelectionData(ItemSelectionData):
@@ -38,6 +39,32 @@ class EmptySelectionStateTests(unittest.TestCase):
 
     def test_shows_empty_state_for_unsupported_current_item_without_valid_choices(self):
         self.assertTrue(no_valid_items_visible([], display_none=False, has_supported_selection=False))
+
+    def test_shared_message_helper_supports_expander_rows(self):
+        class Label:
+            def set_visible(self, visible):
+                self.visible = visible
+
+        class Expander:
+            def __init__(self):
+                self.selected_item = None
+                self.display_none = False
+                self.no_valid_entries_label = Label()
+                self.is_not_usable_label = Label()
+                self.available = object()
+                self.items_list = [self.available, object()]
+
+            def items(self):
+                return self.items_list
+
+            def emit(self, signal, item):
+                return signal == "is-item-selectable" and item is self.available
+
+        view = Expander()
+        update_selection_messages(view)
+
+        self.assertFalse(view.no_valid_entries_label.visible)
+        self.assertFalse(view.is_not_usable_label.visible)
 
 
 class ItemSelectionDataTests(unittest.TestCase):

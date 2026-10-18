@@ -11,6 +11,7 @@ from gi.repository import Gio
 from .toolset_installation import (
     _emerge_progress, _webrsync_progress, app_portage_files, portage_config_path, portage_patch_path,
 )
+from .runner_operation import PrepareRunnerStage, StopRunnerStage
 
 # ------------------------------------------------------------------------------
 # Toolset update.
@@ -20,6 +21,8 @@ class ToolsetUpdate(MultiStageProcess):
     """Handles the toolset update lifecycle. Also supports changing app selection, versions and patches."""
     def __init__(self, toolset: Toolset, allow_binpkgs: bool, update_packages: bool = True, apps_selection: list[ToolsetApplicationSelection] | None = None):
         self.toolset = toolset
+        self.runner = toolset.runner
+        self.runner_prepared = False
         self.allow_binpkgs = allow_binpkgs
         self.update_packages = update_packages
         self.apps_selection = apps_selection
@@ -32,6 +35,7 @@ class ToolsetUpdate(MultiStageProcess):
         super().start(authorization_keeper=authorization_keeper)
 
     def setup_stages(self):
+        self.stages.append(PrepareRunnerStage(self))
         self.stages.append(ToolsetUpdateStepPrepareToolset(toolset=self.toolset, multistage_process=self))
         self.stages.append(ToolsetUpdateStepRefreshEnv(toolset=self.toolset, multistage_process=self))
         if self.update_packages:
@@ -46,6 +50,7 @@ class ToolsetUpdate(MultiStageProcess):
             self.stages.append(ToolsetUpdateStepUpdatePackages(toolset=self.toolset, multistage_process=self))
         self.stages.append(ToolsetUpdateStepVerify(toolset=self.toolset, multistage_process=self))
         self.stages.append(ToolsetUpdateStepStepCompress(toolset=self.toolset, multistage_process=self))
+        self.stages.append(StopRunnerStage(self))
     def complete_process(self, success: bool):
         if success:
             # Update version_id of selected apps

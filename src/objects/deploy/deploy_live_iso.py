@@ -7,6 +7,8 @@ from .multistage_process import MultiStageProcess, MultiStageProcessEvent
 from .ssh_connection import quote
 from .deploy_log import write_log_line
 from .deploy_step import DeployStep, check_tools_script
+from .runner import HOST_RUNNER
+from .runner_operation import PrepareRunnerStage, StopRunnerStage
 
 # ------------------------------------------------------------------------------
 # Deploying live CD builds (ISO images): written to disk of this computer (USB drive, SD card), or saved as new ISO
@@ -179,6 +181,14 @@ class LiveIsoDeployment(MultiStageProcess):
         self.disk_connection = disk_connection
         self.raspberry_pi = raspberry_pi
         self.system = system # DeploySystemSettings applied to live system (repacked), None keeps it unchanged.
+        self.runner = None
+        if self.raspberry_pi is not None or self.system is not None:
+            if sys.platform.startswith("linux"):
+                self.runner = HOST_RUNNER
+            else:
+                from .deploy_image import image_machine
+                self.runner = image_machine(project_directory)
+        self.runner_prepared = False
         self.iso_path = build.artifact_path
         self.live_directory = None # Live system unpacked and packed again, where tools run.
         self._workspace_machine = None
@@ -217,6 +227,8 @@ class LiveIsoDeployment(MultiStageProcess):
         return self.raspberry_pi is not None or self.system is not None
 
     def setup_stages(self):
+        if self.runner is not None:
+            self.stages.append(PrepareRunnerStage(self))
         if self.modified:
             self.stages.append(_StepPrepare(multistage_process=self))
         if self.raspberry_pi is not None:
@@ -231,6 +243,8 @@ class LiveIsoDeployment(MultiStageProcess):
             self.stages.append(_StepWriteDisk(multistage_process=self))
         else:
             self.stages.append(_StepSaveIso(multistage_process=self))
+        if self.runner is not None:
+            self.stages.append(StopRunnerStage(self))
 
     @property
     def target_name(self) -> str:

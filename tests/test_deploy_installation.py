@@ -146,9 +146,9 @@ class DeploymentPlanTests(unittest.TestCase):
     def test_image_plan_adds_image_growth_shrink_compress_and_save_steps(self):
         process = self.installation(image=True, compress=True)
         self.assertEqual([stage.name for stage in process.stages], [
-            'Create image', 'Partition disk', 'Format partitions', 'Mount partitions',
+            'Prepare Runner', 'Create image', 'Partition disk', 'Format partitions', 'Mount partitions',
             'Install stage', 'Configure system', 'Grow at first start', 'Finish',
-            'Shrink image', 'Compress image', 'Save image',
+            'Shrink image', 'Compress image', 'Save image', 'Stop Runner',
         ])
 
     def test_uncompressed_image_skips_compress_step(self):

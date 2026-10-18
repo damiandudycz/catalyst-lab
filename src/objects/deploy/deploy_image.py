@@ -26,15 +26,13 @@ def image_supported_reason(project_directory) -> str | None:
     return None
 
 def image_machine(project_directory):
-    """Virtual machine creating images on systems other than Linux: machine of project toolset, or first one."""
+    """Virtual machine creating images on systems other than Linux, or the host on Linux."""
     from .lima import virtual_machines_supported
-    from .repository import Repository
     if sys.platform.startswith("linux") or not virtual_machines_supported():
         return None
-    toolset = project_directory.get_toolset() if project_directory else None
-    if toolset is not None and getattr(toolset, "machine", None) is not None:
-        return toolset.machine
-    return next(iter(Repository.BuildMachine.value), None)
+    from .runner import default_runner, RunnerType
+    runner = default_runner()
+    return runner if runner is not None and runner.runner_type == RunnerType.VM else None
 
 def image_connection(project_directory, user: str = "Deploy image"):
     """Connection running scripts as root where image is created."""

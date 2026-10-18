@@ -23,14 +23,33 @@
             <property name="margin-bottom">24</property>
 
             <child>
+              <object class="AdwPreferencesGroup" id="host_runner_group">
+                <property name="title">Runners</property>
+                <property name="visible">False</property>
+                <child>
+                  <object class="AdwActionRow" id="host_runner_row">
+                    <property name="title">Host</property>
+                    <property name="subtitle">This Linux machine runs primary tools and loads toolsets directly.</property>
+                    <child type="prefix">
+                      <object class="GtkImage">
+                        <property name="icon-name">computer-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <child>
               <object class="RepositoryListView" id="machines_list">
-                <property name="title">Virtual machines</property>
-                <property name="item_class_name">BuildMachine</property>
-                <property name="add_button_title">Add virtual machine</property>
-                <property name="item_installation_class_name">BuildMachineInstallation</property>
+                <property name="title">VM runners</property>
+                <property name="item_class_name">Runner</property>
+                <property name="add_button_title">Add VM runner</property>
+                <property name="item_installation_class_name">VMRunnerInstallation</property>
                 <property name="item_icon">virtual-machine-symbolic</property>
                 <property name="item_title_property_name">name</property>
                 <property name="item_subtitle_property_name">short_details</property>
+                <property name="description">Choose a runner's radio button to make it the default for actions that need one.</property>
                 <property name="item_status_property_name">status_indicator_values</property>
                 <signal name="item-row-pressed" handler="on_machine_row_pressed"/>
                 <signal name="installation-row-pressed" handler="on_machine_installation_row_pressed"/>
@@ -41,6 +60,7 @@
             <child>
               <object class="RepositoryListView">
                 <property name="title">Toolsets</property>
+                <property name="description">Choose a toolset's radio button to make it the default for actions that need one.</property>
                 <property name="item_class_name">Toolset</property>
                 <property name="add_button_title">Add toolset</property>
                 <property name="item_installation_class_name">ToolsetInstallation</property>
@@ -48,6 +68,7 @@
                 <property name="item_title_property_name">name</property>
                 <property name="item_subtitle_property_name">short_details</property>
                 <property name="item_status_property_name">status_indicator_values</property>
+                <property name="show_default_toolset">True</property>
                 <signal name="item-row-pressed" handler="on_item_row_pressed"/>
                 <signal name="installation-row-pressed" handler="on_installation_row_pressed"/>
                 <signal name="add-new-item-pressed" handler="on_add_new_item_pressed"/>

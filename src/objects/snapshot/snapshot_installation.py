@@ -12,6 +12,8 @@ from .root_function import root_function
 from .repository import Repository, resolve_path
 from datetime import datetime
 from .helper_functions import parse_strict_rfc_datetime
+from .runner_operation import PrepareRunnerStage, StopRunnerStage
+from .runner import default_runner
 
 # ------------------------------------------------------------------------------
 # Installation process.
@@ -20,9 +22,12 @@ from .helper_functions import parse_strict_rfc_datetime
 @final
 class SnapshotInstallation(MultiStageProcess):
     """Handles the full snapshot generation lifecycle."""
-    def __init__(self, toolset: Toolset | None = None, file: GLocalFile | None = None, custom_filename: str | None = None):
+    def __init__(self, toolset: Toolset | None = None, runner=None, file: GLocalFile | None = None,
+                 custom_filename: str | None = None):
         """Use either file or toolset, not both."""
         self.toolset = toolset
+        self.runner = (runner or default_runner()) if toolset else None
+        self.runner_prepared = False
         self.file = file
         self.custom_filename = custom_filename # Works only with file
         self.snapshot: Snapshot | None = None
@@ -31,12 +36,22 @@ class SnapshotInstallation(MultiStageProcess):
 
     def setup_stages(self):
         if self.toolset:
+            self.stages.append(PrepareRunnerStage(self))
             self.stages.append(SnapshotInstallationStepPrepareToolset(toolset=self.toolset, multistage_process=self))
             self.stages.append(SnapshotInstallationStepGenerateSnapshot(multistage_process=self))
         if self.file:
             self.stages.append(SnapshotInstallationStepCopyFile(file=self.file, custom_filename=self.custom_filename, multistage_process=self))
         self.stages.append(SnapshotInstallationStepSetupPermissions(multistage_process=self))
         self.stages.append(SnapshotInstallationStepAnalyze(multistage_process=self))
+        if self.toolset:
+            self.stages.append(StopRunnerStage(self))
+
+    def should_prepare_runner(self, output_handler):
+        if snapshot := existing_latest_snapshot(output_handler):
+            self.snapshot = snapshot
+            self.reused_snapshot = True
+            return False
+        return True
 
     def complete_process(self, success: bool):
         if success:
@@ -61,10 +76,7 @@ class SnapshotInstallationStepPrepareToolset(MultiStageProcessStage):
     def start(self):
         super().start()
         try:
-            # Snapshot of current commit of Gentoo repository is used when it exists, toolset is not needed then.
-            if snapshot := existing_latest_snapshot(self.log):
-                self.multistage_process.snapshot = snapshot
-                self.multistage_process.reused_snapshot = True
+            if self.multistage_process.reused_snapshot:
                 self.complete(MultiStageProcessStageState.COMPLETED)
                 return
             if self.toolset.in_use:
@@ -92,8 +104,11 @@ class SnapshotInstallationStepPrepareToolset(MultiStageProcessStage):
             if self.toolset.spawned and not toolset_has_required_binding():
                 # Toolset needs to be respawned to get correct bindings
                 self.toolset.unspawn()
+            if self.toolset.spawned and self.toolset.runner is not self.multistage_process.runner:
+                self.toolset.unspawn()
             if not self.toolset.spawned:
-                self.toolset.spawn(additional_bindings=self.required_bindings())
+                self.toolset.spawn(runner=self.multistage_process.runner,
+                                   additional_bindings=self.required_bindings())
                 self.unspawn = True
             else:
                 self.unspawn = False

@@ -11,13 +11,14 @@ from .event_bus import EventBus, SharedEvent
 from .root_helper_server import ServerResponse, ServerResponseStatusCode
 from .repository import Serializable, Repository, resolve_path
 from .toolset_application import ToolsetApplication, ToolsetApplicationInstall
+from .runner import Runner, RunnerType, default_runner, runner_is_supported
 from .helper_functions import (create_temp_workdir, delete_temp_workdir, mount_squashfs, umount_squashfs,
                                create_squashfs, loop_mount_squashfs, loop_umount_squashfs,
                                cached_squashfs_copy)
 from .rootless import (
     MOUNT_SQFS_DIRECTLY, rootless_toolset_unsupported_reason, rootless_unsupported_reason, run_in_namespace, extracted_squashfs, mount_cached_machine_toolset,
     writable_squashfs_copy, prepare_toolset_squashfs,
-    remove_in_namespace, squashfs_process, sessions_directory, executor_for_machine,
+    remove_in_namespace, squashfs_process, sessions_directory,
     unmount_read_only_mount
 )
 
@@ -31,12 +32,13 @@ class Toolset(Serializable):
     """Class containing details of the Toolset instances."""
     """Only metadata, no functionalities."""
     """Functionalities are handled by ToolsetContainer."""
-    def __init__(self, env: ToolsetEnv, uuid: UUID, name: str, metadata: dict[str, Any] = {}, squashfs_binding_dir: str | None = None, machine_id: uuid.UUID | None = None, **kwargs):
+    def __init__(self, env: ToolsetEnv, uuid: UUID, name: str, metadata: dict[str, Any] = {},
+                 squashfs_binding_dir: str | None = None):
         self.uuid = uuid
         self.env = env
         self.name = name
         self.metadata = metadata
-        self.machine_id = machine_id # Virtual machine where toolset runs, None for this computer.
+        self._active_runner: Runner | None = None
         self.squashfs_binding_dir = squashfs_binding_dir # Directory used as toolset_root, mounted when setting up or spawning.
         self.squashfs_loop_mounted = False # squashfs_binding_dir is read only loop mount of squashfs file (not extracted copy).
         self.machine_cache_mounted = False # Extracted toolset cache mounted read-only from the library ext4 image.
@@ -76,15 +78,12 @@ class Toolset(Serializable):
 
     @property
     def status_indicator_values(self) -> StatusIndicatorValues:
-        """Mounted (environment open, also with changes kept) is loaded. Missing file or virtual machine is error,
+        """Mounted (environment open, also with changes kept) is loaded. Missing file or runner is error,
         missing Catalyst is warning (projects can't be built with toolset). Blinks while used by operation."""
         from .status import StatusIndicatorState, StatusIndicatorValues, StatusDetail, item_status
-        machine = self.machine
         details = []
         if not os.path.exists(self.file_path()):
             details.append(StatusDetail(StatusIndicatorState.ERROR, "File of toolset is missing"))
-        if self.machine_id and (machine is None or machine.status == machine.STATUS_MISSING):
-            details.append(StatusDetail(StatusIndicatorState.ERROR, "Virtual machine of toolset is missing"))
         if self.get_app_install(ToolsetApplication.CATALYST) is None:
             details.append(StatusDetail(StatusIndicatorState.WARNING, "Catalyst is not installed, projects can't be built"))
         if self.spawned:
@@ -104,10 +103,9 @@ class Toolset(Serializable):
             env = ToolsetEnv[data["env"]]
             name = str(data["name"])
             metadata = data.get("metadata", {})
-            machine_id = uuid.UUID(data["machine_id"]) if data.get("machine_id") else None
         except KeyError:
             raise ValueError(f"Failed to parse {data}")
-        return cls(env, uuid_value, name, metadata, machine_id=machine_id)
+        return cls(env, uuid_value, name, metadata)
 
     def serialize(self) -> dict:
         data = {
@@ -116,20 +114,24 @@ class Toolset(Serializable):
             "name": self.name,
             "metadata": self.metadata
         }
-        if self.machine_id:
-            data["machine_id"] = str(self.machine_id)
         return data
 
     @property
     def machine(self):
-        """Virtual machine where toolset runs, None when it runs on this computer."""
-        from .build_machine import build_machine_for_id
-        return build_machine_for_id(self.machine_id)
+        """VM adapter for the runner selected by the current operation, if any."""
+        runner = getattr(self, "_active_runner", None)
+        return runner if runner and runner.runner_type == RunnerType.VM else None
+
+    @property
+    def runner(self) -> Runner | None:
+        """Execution endpoint selected for the current operation."""
+        return getattr(self, "_active_runner", None)
 
     @property
     def executor(self):
-        """Runs rootless commands of toolset, on this computer or in its machine."""
-        return executor_for_machine(self.machine)
+        """Execution transport for toolset commands, independent of the runner kind."""
+        runner = self.runner
+        return runner.executor if runner is not None else None
 
     @property
     def busy_reason(self) -> str | None:
@@ -139,18 +141,16 @@ class Toolset(Serializable):
         if self.spawned:
             return f"Environment of toolset {self.name} is open, close it first"
         machine = self.machine
-        if self.machine_id and machine is None:
-            return f"Virtual machine of toolset {self.name} was removed"
         if machine and machine._status in (machine.STATUS_STARTING, machine.STATUS_STOPPING):
-            return f"Virtual machine {machine.name} is {machine._status.lower()}"
+            return f"VM runner {machine.name} is {machine._status.lower()}"
         if machine and machine._status == machine.STATUS_MISSING:
-            return f"Virtual machine {machine.name} doesn't exist"
+            return f"VM runner {machine.name} doesn't exist"
         return None
 
     @property
     def runs_on_name(self) -> str:
-        machine = self.machine
-        return machine.name if machine else "This computer"
+        runner = self.runner
+        return runner.name if runner else "Unavailable runner"
 
     @staticmethod
     def create_system() -> Toolset:
@@ -172,9 +172,13 @@ class Toolset(Serializable):
     # --------------------------------------------------------------------------
     # Spawning cycle:
 
-    def spawn(self, store_changes: bool = False, additional_bindings: list[BindMount] | None = None,
+    def spawn(self, runner: Runner | None = None, store_changes: bool = False, additional_bindings: list[BindMount] | None = None,
               writable_root_overlay: bool = False):
         """Prepare /tmp folders for bwrap calls. Toolsets of machines use working space of machine while spawned."""
+        self._active_runner = runner or default_runner()
+        if self._active_runner is None or not runner_is_supported(self._active_runner):
+            self._active_runner = None
+            raise RuntimeError("No supported runner is available for this operation")
         machine = self.machine
         if machine:
             self._workspace_user = f"Toolset {self.name} mounted"
@@ -188,6 +192,8 @@ class Toolset(Serializable):
             if not self.spawned and getattr(self, "_workspace_machine", None):
                 self._workspace_machine.release_workspace(user=self._workspace_user)
                 self._workspace_machine = None
+            if not self.spawned:
+                self._active_runner = None
 
     def _spawn(self, store_changes: bool = False, additional_bindings: list[BindMount] | None = None,
                writable_root_overlay: bool = False):
@@ -201,8 +207,8 @@ class Toolset(Serializable):
             # Prepare /tmp directories and bind_options
             runtime_env = RuntimeEnv.current()
             machine = self.machine
-            if self.machine_id and machine is None:
-                raise RuntimeError("Virtual machine of toolset was removed")
+            if self._active_runner is None or not runner_is_supported(self._active_runner):
+                raise RuntimeError("Selected runner is unavailable")
             # Toolsets of machines always run without root, in machine.
             self.rootless = machine is not None or (self.env == ToolsetEnv.EXTERNAL and rootless_toolset_unsupported_reason() is None)
             executor = self.executor
@@ -537,7 +543,7 @@ class Toolset(Serializable):
             self.squashfs_binding_dir = None
             return
         if self.rootless:
-            if (self.machine_cache_mounted or (self.squashfs_loop_mounted and self.machine)) and self.squashfs_binding_dir:
+            if (self.machine_cache_mounted or self.squashfs_loop_mounted) and self.squashfs_binding_dir:
                 mount_point = os.path.dirname(self.squashfs_binding_dir) if self.machine_cache_mounted else self.squashfs_binding_dir
                 unmount_read_only_mount(mount_point, print, executor=self.executor)
                 self.machine_cache_mounted = self.squashfs_loop_mounted = False
@@ -574,7 +580,7 @@ class Toolset(Serializable):
                     # Shared read only copy is kept, writable one is removed.
                     # Machine mounts must always be released before the disposable workspace is detached.
                     if (clean_squashfs_binding_dir or self.rootless_writable_copy or self.machine_cache_mounted
-                            or (self.squashfs_loop_mounted and self.machine)):
+                            or self.squashfs_loop_mounted):
                         self._release_squashfs_binding_dir()
                 elif self.rootless_writable_copy or self.root_helper_temporary_copy:
                     self._release_squashfs_binding_dir()
@@ -599,6 +605,7 @@ class Toolset(Serializable):
                 self.spawned = False
                 self.rootless = False
                 self.rootless_writable_copy = None
+                self._active_runner = None
                 if getattr(self, "_workspace_machine", None):
                     self._workspace_machine.release_workspace(user=self._workspace_user)
                     self._workspace_machine = None

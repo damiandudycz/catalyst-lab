@@ -22,6 +22,8 @@ LATEST = "latest" # Snapshot option: latest snapshot is generated before buildin
 class QueuedBuild:
     project_id: uuid.UUID
     stage_ids: list[uuid.UUID]
+    toolset_id: uuid.UUID | None
+    runner_id: str | None
     snapshot: str | None # LATEST, filename of snapshot, or None (snapshot of project).
     cleanup_previous_builds: bool = False
     queued: datetime = field(default_factory=datetime.now)
@@ -31,6 +33,16 @@ class QueuedBuild:
     def project_directory(self):
         from .repository import Repository
         return next((project for project in Repository.ProjectDirectory.value if project.id == self.project_id), None)
+
+    @property
+    def toolset(self):
+        from .repository import Repository
+        return next((item for item in Repository.Toolset.value if item.uuid == self.toolset_id), None)
+
+    @property
+    def runner(self):
+        from .runner import runner_by_id
+        return runner_by_id(self.runner_id)
 
     @property
     def stage_names(self) -> list[str]:
@@ -81,10 +93,12 @@ class BuildQueue:
         return None
 
     def add(self, project_directory, stage_ids: list[uuid.UUID], snapshot: str | None,
-            cleanup_previous_builds: bool = False):
+            cleanup_previous_builds: bool = False, toolset=None, runner=None):
         if reason := self.queue_unavailable_reason(project_directory):
             raise RuntimeError(reason)
-        self.entries.append(QueuedBuild(project_id=project_directory.id, stage_ids=list(stage_ids), snapshot=snapshot,
+        self.entries.append(QueuedBuild(project_id=project_directory.id, stage_ids=list(stage_ids),
+                                        toolset_id=toolset.uuid if toolset else None,
+                                        runner_id=str(runner.id) if runner else None, snapshot=snapshot,
                                         cleanup_previous_builds=cleanup_previous_builds))
         self._changed()
 
@@ -150,12 +164,24 @@ class BuildQueue:
             print("Queued project was removed, its build is skipped")
             self.remove(entry)
             return False
-        toolset = project.get_toolset()
+        toolset = entry.toolset
+        if toolset is None:
+            self.pause(f"Toolset for build of {project.name} was removed")
+            return False
+        from .toolset_selection import build_toolset_requirements, toolset_has_applications
+        if not toolset_has_applications(toolset, build_toolset_requirements(project)):
+            self.pause(f"Toolset {toolset.name} no longer has the tools required to build {project.name}")
+            return False
+        runner = entry.runner
+        from .runner import runner_is_supported
+        if runner is None or not runner_is_supported(runner):
+            self.pause(f"Runner for build of {project.name} is missing or unavailable")
+            return False
         if toolset is not None and toolset.is_reserved:
             # Previous build still releases toolset (or other operation uses it), checked again later.
             self._schedule_check_later()
             return False
-        if reason := (project.configuration_error or (toolset.busy_reason if toolset else "Project has no toolset")):
+        if reason := (project.configuration_error or toolset.busy_reason):
             print(f"Queued build of {project.name} can't start: {reason}")
             self.pause(f"Build of {project.name} can't start: {reason}")
             return False
@@ -184,5 +210,5 @@ class BuildQueue:
             if build is None:
                 print(f"Queued build of {project.name} didn't start")
                 self.pause(f"Build of {project.name} didn't start")
-        start_project_build(project, plan, snapshot=snapshot, fetch_snapshot=entry.snapshot == LATEST,
+        start_project_build(project, plan, toolset=entry.toolset, runner=entry.runner, snapshot=snapshot, fetch_snapshot=entry.snapshot == LATEST,
                             cleanup_previous_builds=entry.cleanup_previous_builds, done=started)

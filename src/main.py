@@ -41,7 +41,7 @@ class CatalystlabApplication(Adw.Application):
         from .repository import Repository
         repositories = (
             Repository.Toolset, Repository.Snapshot, Repository.RelengDirectory, Repository.OverlayDirectory,
-            Repository.ProjectDirectory, Repository.BuildMachine, Repository.PackagesDirectory,
+            Repository.ProjectDirectory, Repository.Runner, Repository.PackagesDirectory,
         )
         if reload_repositories:
             for repository in repositories:
@@ -56,7 +56,7 @@ class CatalystlabApplication(Adw.Application):
             clear_temporary_directory()
             # A killed app can leave the large sparse workspace image behind. It is safe to
             # remove at startup because operation registrations are not restored across runs.
-            for machine in Repository.BuildMachine.value:
+            for machine in Repository.Runner.value:
                 try:
                     machine.cleanup_workspace()
                 except Exception as e:
@@ -108,7 +108,7 @@ class CatalystlabApplication(Adw.Application):
         from .repository import Repository
         from .qemu_run import stop_all_runs
         stop_all_runs()
-        for machine in Repository.BuildMachine.value:
+        for machine in Repository.Runner.value:
             try:
                 machine.stop_if_started_automatically()
             except Exception as e:

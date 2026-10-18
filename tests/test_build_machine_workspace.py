@@ -16,21 +16,21 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab import lima
-from catalystlab.build_machine import BuildMachine
+from catalystlab.build_machine import VMRunner
 
 
-class BuildMachineWorkspaceTests(unittest.TestCase):
+class VMRunnerWorkspaceTests(unittest.TestCase):
     def test_empty_workspace_cleanup_stops_at_first_nonempty_directory(self):
         with tempfile.TemporaryDirectory() as root:
-            run_directory = os.path.join(root, 'BuildMachines', 'catalystlab-test')
+            run_directory = os.path.join(root, 'Runners', 'catalystlab-test')
             os.makedirs(run_directory)
-            with patch('catalystlab.lima.build_machine_temporary_directory', return_value=run_directory):
-                lima.remove_empty_build_machine_temporary_directory('catalystlab-test')
+            with patch('catalystlab.lima.runner_temporary_directory', return_value=run_directory):
+                lima.remove_empty_runner_temporary_directory('catalystlab-test')
                 self.assertFalse(os.path.exists(os.path.dirname(run_directory)))
 
                 os.makedirs(run_directory)
                 Path(run_directory, 'swap-disk').mkdir()
-                lima.remove_empty_build_machine_temporary_directory('catalystlab-test')
+                lima.remove_empty_runner_temporary_directory('catalystlab-test')
 
             self.assertTrue(os.path.isdir(run_directory))
             self.assertTrue(os.path.isdir(os.path.dirname(run_directory)))
@@ -54,7 +54,7 @@ class BuildMachineWorkspaceTests(unittest.TestCase):
         repository.resolve_path = lambda path: os.path.realpath(os.path.expanduser(path))
         with patch.dict(sys.modules, {'catalystlab.repository': repository}):
             self.assertEqual(lima.workspace_image_path('catalystlab-00000000'),
-                             '/library/Temporary/BuildMachines/catalystlab-00000000/workspace.img')
+                             '/library/Temporary/Runners/catalystlab-00000000/workspace.img')
             self.assertEqual(os.path.dirname(lima.workspace_image_path('catalystlab-00000000')),
                              os.path.dirname(lima.temporary_swap_disk_path('catalystlab-00000000-swap')))
 
@@ -62,11 +62,11 @@ class BuildMachineWorkspaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             home = os.path.join(root, 'Machines')
             managed = os.path.join(home, '_disks', 'catalystlab-test-swap')
-            temporary = os.path.join(root, 'Temporary', 'BuildMachines', 'catalystlab-test', 'swap-disk')
+            temporary = os.path.join(root, 'Temporary', 'Runners', 'catalystlab-test', 'swap-disk')
             os.makedirs(managed)
             Path(managed, 'datadisk').write_text('raw disk')
             with patch('catalystlab.lima.temporary_swap_disk_path', return_value=os.path.realpath(temporary)), \
-                    patch('catalystlab.lima.remove_empty_build_machine_temporary_directory'):
+                    patch('catalystlab.lima.remove_empty_runner_temporary_directory'):
                 result = lima.move_lima_disk_to_temporary('catalystlab-test-swap', home)
 
                 self.assertEqual(result, managed)
@@ -84,7 +84,7 @@ class BuildMachineWorkspaceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             image = os.path.join(temporary, "Library's $temporary", 'workspace.img')
-            machine = BuildMachine(name='test', workspace_gib=4, lima_home=temporary)
+            machine = VMRunner(name='test', workspace_gib=4, lima_home=temporary)
             commands = []
 
             class Executor:
@@ -95,12 +95,12 @@ class BuildMachineWorkspaceTests(unittest.TestCase):
                     commands.append(script)
                     return True
 
-            with patch.object(BuildMachine, 'workspace_image_path', new=property(lambda _: image)), \
+            with patch.object(VMRunner, 'workspace_image_path', new=property(lambda _: image)), \
                     patch.object(rootless, 'MachineExecutor', Executor), \
-                    patch('catalystlab.build_machine.remove_empty_build_machine_temporary_directory'):
+                    patch('catalystlab.build_machine.remove_empty_runner_temporary_directory'):
                 machine._create_workspace(lambda *_: None, None)
                 Path(image).touch()
-                with patch.object(BuildMachine, 'is_running', new_callable=PropertyMock, return_value=True):
+                with patch.object(VMRunner, 'is_running', new_callable=PropertyMock, return_value=True):
                     machine._delete_workspace(lambda *_: None)
 
             quoted_image = shlex.quote(image)
@@ -110,7 +110,7 @@ class BuildMachineWorkspaceTests(unittest.TestCase):
             self.assertFalse(os.path.exists(image))
 
     def test_new_use_cancels_idle_stop_and_last_release_schedules_it_again(self):
-        machine = BuildMachine(name='test', lima_home='/tmp')
+        machine = VMRunner(name='test', lima_home='/tmp')
         machine._started_automatically = True
 
         class Timer:

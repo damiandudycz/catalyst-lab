@@ -12,7 +12,7 @@ from .repository import library_directory, store_library_directory, collapse_hom
 LIBRARY_FOLDER_NAME = "CatalystLab" # Library made in chosen folder that contains other files.
 _SKIPPED_FOLDERS = {"Temporary"} # Data of running operations, emptied when app starts.
 LIBRARY_DIRECTORIES = (
-    "Toolsets", "Snapshots", "Releng", "Overlays", "Projects", "Builds", "Packages", "Machines", "Cache",
+    "Toolsets", "Snapshots", "Releng", "Overlays", "Projects", "Builds", "Packages", "Runners", "Cache",
     "Temporary",
 )
 
@@ -81,8 +81,9 @@ def change_problem(target: LibraryTarget, change: LibraryChange) -> str | None:
         return None
     from .lima import virtual_machines_supported, lima_home_too_long
     old = library_directory()
-    if virtual_machines_supported() and os.path.isdir(os.path.join(old, "Machines")) and lima_home_too_long(os.path.join(target.path, "Machines")):
-        return "Path is too long for virtual machines of library. Choose a folder with shorter path."
+    if virtual_machines_supported() and os.path.isdir(os.path.join(old, "Runners")) \
+            and lima_home_too_long(os.path.join(target.path, "Runners")):
+        return "Path is too long for VM runners of library. Choose a folder with shorter path."
     if change == LibraryChange.COPY or not _same_device(old, ancestor):
         required = _library_size(old)
         free = shutil.disk_usage(ancestor).free

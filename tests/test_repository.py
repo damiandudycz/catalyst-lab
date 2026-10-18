@@ -14,6 +14,7 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab import repository
+from catalystlab.settings import Settings
 
 
 class SerializableItem:
@@ -119,36 +120,39 @@ class RepositoryPersistenceTests(unittest.TestCase):
 
 
 class LibraryLocationTests(unittest.TestCase):
-    def test_preferences_and_library_settings_share_config_root(self):
+    def test_library_location_and_preferences_use_one_file(self):
         with patch.object(repository, '_system_config_directory', return_value='/config'):
             self.assertEqual(repository.preferences_file(), '/config/catalystlab/preferences.json')
-            self.assertEqual(repository._library_location_file(), '/config/catalystlab-library.json')
 
-    def test_library_location_is_loaded_and_cached(self):
+    def test_library_location_is_read_from_settings(self):
         with tempfile.TemporaryDirectory() as temporary:
-            config = Path(temporary, 'config')
-            config.mkdir()
-            location_file = config/'catalystlab-library.json'
             library = Path(temporary, 'Library')
-            location_file.write_text(json.dumps({'library': str(library)}))
+            settings = Settings(library_location=str(library))
+            settings_repository = types.SimpleNamespace(value=settings, save=Mock())
+            repositories_module = types.ModuleType('catalystlab.repositories')
+            repositories_module.Repository = repository.Repository
             with patch.object(repository, '_library_directory', None), \
-                 patch.object(repository, '_system_config_directory', return_value=str(config)):
+                 patch.object(repository.Repository, 'Settings', settings_repository, create=True), \
+                 patch.dict(sys.modules, {'catalystlab.repositories': repositories_module}):
                 self.assertEqual(repository.library_directory(), str(library))
-                location_file.write_text(json.dumps({'library': str(Path(temporary, 'changed'))}))
+                self.assertEqual(settings.library_location, str(library))
                 self.assertEqual(repository.library_directory(), str(library))
             repository._library_directory = None
 
-    def test_store_library_directory_writes_atomically_and_updates_cache(self):
+    def test_store_library_directory_updates_settings_and_cache(self):
         with tempfile.TemporaryDirectory() as temporary:
-            config = Path(temporary, 'config')
             library = Path(temporary, 'Library')
-            with patch.object(repository, '_system_config_directory', return_value=str(config)), \
-                 patch.object(repository, '_library_directory', None):
+            settings = Settings()
+            settings_repository = types.SimpleNamespace(value=settings, save=Mock())
+            repositories_module = types.ModuleType('catalystlab.repositories')
+            repositories_module.Repository = repository.Repository
+            with patch.object(repository, '_library_directory', None), \
+                 patch.object(repository.Repository, 'Settings', settings_repository, create=True), \
+                 patch.dict(sys.modules, {'catalystlab.repositories': repositories_module}):
                 repository.store_library_directory(str(library))
                 self.assertEqual(repository.library_directory(), str(library))
-                location_file = config/'catalystlab-library.json'
-                self.assertEqual(json.loads(location_file.read_text()), {'library': str(library)})
-                self.assertFalse(Path(str(location_file)+'.tmp').exists())
+                self.assertEqual(settings.library_location, str(library))
+                settings_repository.save.assert_called_once_with()
             repository._library_directory = None
 
     def test_collapse_home_shrinks_home_paths_only_at_directory_boundary(self):

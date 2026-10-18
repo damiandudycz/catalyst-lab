@@ -15,13 +15,15 @@ class ProjectStageInstallation(MultiStageProcess):
         target_name: str,
         releng_template_name: str | None,
         stage_name: str,
-        parent_id: uuid.UUID | None
+        parent_id: uuid.UUID | None,
+        toolset=None
     ):
         self.project_directory = project_directory
         self.target_name = target_name
         self.releng_template_name = releng_template_name
         self.stage_name = stage_name
         self.parent_id = parent_id
+        self.toolset = toolset
         super().__init__(title="Project stage installation")
 
     def name(self) -> str:
@@ -35,6 +37,7 @@ class ProjectStageInstallation(MultiStageProcess):
                 releng_template_name=self.releng_template_name,
                 stage_name=self.stage_name,
                 parent_id=self.parent_id,
+                toolset=self.toolset,
                 multistage_process=self
             )
         )
@@ -56,6 +59,7 @@ class ProjectStageInstallationStepCreate(MultiStageProcessStage):
         releng_template_name: str | None,
         stage_name: str,
         parent_id: uuid.UUID | None,
+        toolset,
         multistage_process: MultiStageProcess
     ):
         super().__init__(
@@ -68,12 +72,16 @@ class ProjectStageInstallationStepCreate(MultiStageProcessStage):
         self.releng_template_name = releng_template_name
         self.stage_name = stage_name
         self.parent_id = parent_id
+        self.toolset = toolset
     def start(self):
         super().start()
         try:
-            stage = ProjectStage(id=None, parent_id=self.parent_id, name=self.stage_name, target_name=self.target_name, releng_template_name=self.releng_template_name, profile=None)
+            stage = ProjectStage(id=None, parent_id=self.parent_id, name=self.stage_name, target_name=self.target_name,
+                                 releng_template_name=self.releng_template_name, profile=None,
+                                 toolset_id=str(self.toolset.uuid) if getattr(self, "toolset", None) else None)
             try:
-                for name, option in apply_default_stage_arguments(project_directory=self.project_directory, stage=stage).items():
+                for name, option in apply_default_stage_arguments(project_directory=self.project_directory, stage=stage,
+                                                                  toolset=self.toolset).items():
                     self.log(f"{name}: {option.name if hasattr(option, 'name') else ', '.join(item.name for item in option)}")
             except Exception as e:
                 # Stage can still be created and configured manually.

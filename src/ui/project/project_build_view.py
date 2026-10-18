@@ -5,14 +5,16 @@ from .project_build import StageBuildPlan, StageBuildMode, load_project_builds, 
 from .project_build_process import ProjectBuild, start_project_build
 from .build_queue import BuildQueue, running_build, LATEST
 from .project_stage import stage_target_icon
-from .lima import virtual_machines_supported
 from .multistage_process import MultiStageProcessState, MultiStageProcessEvent
 from .wizard_view import WizardView
 from .repository import Repository
 from .item_select_view import ItemSelectionViewEvent
 from .toolset_application import ToolsetApplication
+from .toolset_selection import sorted_toolsets, toolset_has_applications, build_toolset_requirements
 from .snapshot import LATEST_SNAPSHOT
 from .tree_node import walk_tree
+from .runner import default_runner, RunnerType, runner_is_supported
+from .event_bus import SharedEvent
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/project/project_build_view.ui')
 class ProjectBuildView(Gtk.Box):
@@ -24,6 +26,9 @@ class ProjectBuildView(Gtk.Box):
     wizard_view = Gtk.Template.Child()
     # Setup view elements:
     stages_page = Gtk.Template.Child()
+    toolset_page = Gtk.Template.Child()
+    toolset_selection_view = Gtk.Template.Child()
+    runner_selection_view = Gtk.Template.Child()
     snapshot_page = Gtk.Template.Child()
     snapshot_selection_view = Gtk.Template.Child()
     summary_page = Gtk.Template.Child()
@@ -41,6 +46,11 @@ class ProjectBuildView(Gtk.Box):
         self.installation_in_progress = installation_in_progress
         self.content_navigation_view = content_navigation_view
         self.selected_stage_ids: set = set()
+        self.required_toolset_apps = build_toolset_requirements(project_directory)
+        self.toolset_selection_view.set_static_list(sorted_toolsets(applications=self.required_toolset_apps))
+        self.toolset_selection_view.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self._toolset_changed)
+        self.runner_selection_view.preferred_item = default_runner()
+        self.runner_selection_view.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self._runner_changed)
         self.builds = load_project_builds(project_directory)
         self.rows: dict = {} # stage id -> (row, check_button)
         self.summary_rows: list = []
@@ -61,12 +71,16 @@ class ProjectBuildView(Gtk.Box):
         self.wizard_view._window = self._window
         self.wizard_view.set_installation(self.installation_in_progress)
         self.location_row.set_subtitle(GLib.markup_escape_text(project_builds_directory(self.project_directory)))
-        toolset = self.project_directory.get_toolset()
-        self.runs_on_row.set_subtitle(GLib.markup_escape_text(
-            f"{toolset.runs_on_name} (toolset {toolset.name})" if toolset else "No toolset"))
-        self.runs_on_row.set_visible(virtual_machines_supported() or (toolset is not None and toolset.machine is not None))
+        toolset = self.toolset_selection_view.selected_item
+        self._update_runs_on_row(toolset, self._selected_runner())
         self.load_stages()
         self.update_plan()
+
+    def _update_runs_on_row(self, toolset, runner):
+        runner_name = runner.name if runner else "No runner"
+        self.runs_on_row.set_subtitle(GLib.markup_escape_text(
+            f"{runner_name} (toolset {toolset.name})" if toolset else runner_name))
+        self.runs_on_row.set_visible(True)
 
     # Loading stages
     # --------------------------------------------------------------------------
@@ -80,7 +94,7 @@ class ProjectBuildView(Gtk.Box):
                 row.add_css_class("warning")
                 self.stages_group.add(row)
                 continue
-            check_button = Gtk.CheckButton(valign=Gtk.Align.CENTER, margin_start=depth * 24)
+            check_button = Gtk.CheckButton(valign=Gtk.Align.CENTER)
             check_button.connect("toggled", self.on_stage_toggled, stage)
             row.add_prefix(check_button)
             row.add_prefix(Gtk.Image.new_from_icon_name(stage_target_icon(stage.target)))
@@ -102,6 +116,30 @@ class ProjectBuildView(Gtk.Box):
         self.snapshot_selection_view.set_static_list([LATEST_SNAPSHOT] + Repository.Snapshot.value)
         self._update_snapshot_row()
 
+    def _toolset_changed(self, *_):
+        self._update_runs_on_row(self._selected_toolset(), self._selected_runner())
+        self.snapshot_selection_view.refresh_items_state()
+        self._update_snapshot_row()
+        self.wizard_view._refresh_buttons_state()
+
+    def _runner_changed(self, *_):
+        self._update_runs_on_row(self._selected_toolset(), self._selected_runner())
+        self.wizard_view._refresh_buttons_state()
+
+    def _selected_toolset(self):
+        return self.toolset_selection_view.selected_item
+
+    def _selected_runner(self):
+        return self.runner_selection_view.selected_item
+
+    @Gtk.Template.Callback()
+    def is_toolset_selectable(self, sender, item) -> bool:
+        return toolset_has_applications(item, self.required_toolset_apps)
+
+    @Gtk.Template.Callback()
+    def is_toolset_usable(self, sender, item) -> bool:
+        return True
+
     def snapshot_changed(self, view):
         self._update_snapshot_row()
         self.wizard_view._refresh_buttons_state()
@@ -109,7 +147,7 @@ class ProjectBuildView(Gtk.Box):
     def _update_snapshot_row(self):
         selected = self.snapshot_selection_view.selected_item
         if selected is LATEST_SNAPSHOT:
-            subtitle = "Latest, generated with the project toolset before building"
+            subtitle = "Latest, generated with the selected toolset before building"
         elif selected:
             subtitle = f"{selected.name} ({selected.short_details})"
         else:
@@ -123,8 +161,8 @@ class ProjectBuildView(Gtk.Box):
         return LATEST_SNAPSHOT if self.project_directory.uses_latest_snapshot else self.project_directory.get_snapshot()
 
     def _toolset_generates_snapshots(self) -> bool:
-        toolset = self.project_directory.get_toolset()
-        return toolset is not None and toolset.get_app_install(ToolsetApplication.CATALYST) is not None
+        toolset = self._selected_toolset()
+        return toolset is not None and toolset_has_applications(toolset, [ToolsetApplication.CATALYST])
 
     @Gtk.Template.Callback()
     def is_item_selectable(self, sender, item) -> bool:
@@ -214,6 +252,11 @@ class ProjectBuildView(Gtk.Box):
     @Gtk.Template.Callback()
     def is_page_ready_to_continue(self, sender, page) -> bool:
         match page:
+            case self.toolset_page:
+                toolset = self._selected_toolset()
+                runner = self._selected_runner()
+                return (toolset is not None and self.is_toolset_selectable(self.toolset_selection_view, toolset)
+                        and runner is not None and self.is_runner_usable(self.runner_selection_view, runner))
             case self.stages_page | self.summary_page:
                 return bool(getattr(self, "plan", None) and self.plan.build_order())
             case self.snapshot_page:
@@ -229,6 +272,10 @@ class ProjectBuildView(Gtk.Box):
     def begin_installation(self, view):
         if self._queue_mode():
             # Toolset can be used by running build, it's checked when queued build starts.
+            toolset = self._selected_toolset()
+            runner = self._selected_runner()
+            if toolset is None or runner is None:
+                return
             if reason := BuildQueue.shared().queue_unavailable_reason(self.project_directory):
                 dialog = Adw.AlertDialog(heading="Can't add build to queue", body=reason)
                 dialog.add_response("ok", "OK")
@@ -236,10 +283,16 @@ class ProjectBuildView(Gtk.Box):
                 return
             self._choose_project_snapshot()
             return
-        toolset = self.project_directory.get_toolset()
+        toolset = self._selected_toolset()
+        runner = self._selected_runner()
         # Toolset or its virtual machine could become busy while wizard was open.
         if busy_reason := (toolset.busy_reason if toolset else "Project has no toolset"):
             dialog = Adw.AlertDialog(heading="Can't start build", body=busy_reason)
+            dialog.add_response("ok", "OK")
+            dialog.present(self.get_root())
+            return
+        if runner is None or not runner_is_supported(runner):
+            dialog = Adw.AlertDialog(heading="Can't start build", body="Select an available runner")
             dialog.add_response("ok", "OK")
             dialog.present(self.get_root())
             return
@@ -285,7 +338,7 @@ class ProjectBuildView(Gtk.Box):
         if self._queue_mode():
             self._add_to_queue(selected, fetch, update_project_snapshot)
             return
-        start_project_build(self.project_directory, self.plan, snapshot=None if fetch else selected, fetch_snapshot=fetch,
+        start_project_build(self.project_directory, self.plan, toolset=self._selected_toolset(), runner=self._selected_runner(), snapshot=None if fetch else selected, fetch_snapshot=fetch,
                             update_project_snapshot=update_project_snapshot and not fetch,
                             cleanup_previous_builds=self.cleanup_previous_builds_row.get_active(), done=self._on_build_started)
 
@@ -298,7 +351,8 @@ class ProjectBuildView(Gtk.Box):
             Repository.ProjectDirectory.save()
         try:
             BuildQueue.shared().add(self.project_directory, list(self.selected_stage_ids), LATEST if fetch else selected.filename,
-                                    cleanup_previous_builds=self.cleanup_previous_builds_row.get_active())
+                                    cleanup_previous_builds=self.cleanup_previous_builds_row.get_active(),
+                                    toolset=self._selected_toolset(), runner=self._selected_runner())
         except RuntimeError as e:
             dialog = Adw.AlertDialog(heading="Can't add build to queue", body=str(e))
             dialog.add_response("ok", "OK")
@@ -334,6 +388,26 @@ class ProjectBuildView(Gtk.Box):
         build = self._observed_build
         if build is not None and self.get_mapped() and build.status in (MultiStageProcessState.COMPLETED, MultiStageProcessState.FAILED):
             self.project_directory.mark_build_result_seen()
+
+    @Gtk.Template.Callback()
+    def is_runner_selectable(self, _sender, _runner) -> bool:
+        return True
+
+    @Gtk.Template.Callback()
+    def setup_runner_monitoring(self, sender, items):
+        for runner in getattr(self, "monitored_runners", ()):
+            runner.event_bus.unsubscribe(SharedEvent.STATE_UPDATED, self)
+        self.monitored_runners = items
+        for runner in items:
+            runner.event_bus.subscribe(SharedEvent.STATE_UPDATED, sender.refresh_items_state, self)
+
+    @Gtk.Template.Callback()
+    def is_runner_usable(self, _sender, runner) -> bool:
+        if not runner_is_supported(runner):
+            return False
+        if runner.runner_type == RunnerType.VM:
+            return runner.status not in (runner.STATUS_STARTING, runner.STATUS_STOPPING, runner.STATUS_MISSING)
+        return not getattr(runner, "_exclusive_user", None)
 
 def _format_date(date) -> str:
     return date.strftime("%Y-%m-%d %H:%M")

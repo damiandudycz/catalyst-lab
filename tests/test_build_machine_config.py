@@ -13,7 +13,7 @@ if 'catalystlab' not in sys.modules:
 from catalystlab import lima
 
 
-class BuildMachineConfigTests(unittest.TestCase):
+class VMRunnerConfigTests(unittest.TestCase):
     def test_generated_config_does_not_set_deprecated_top_level_rosetta(self):
         configuration = lima.machine_configuration(4, 8, ['/library/Cache'])
 

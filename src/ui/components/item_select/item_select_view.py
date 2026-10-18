@@ -13,7 +13,13 @@ class ItemSelectionViewEvent(Enum):
 def update_selection_messages(view, valid_items=None, allow_multiselect=False):
     items = view.items()
     if valid_items is None:
-        valid_items = [item for item in items if view.emit("is-item-selectable", item)]
+        selectable_items = getattr(view, "selectable_items", None)
+        if callable(selectable_items):
+            valid_items = selectable_items()
+        else:
+            # Expander rows share this helper but expose selectability as a
+            # signal rather than the list-view's selectable_items() method.
+            valid_items = [item for item in items if view.emit("is-item-selectable", item)]
     selected_items = (view.selected_items or []) if allow_multiselect else [view.selected_item]
     has_supported_selection = any(
         item in items and not getattr(item, "unsupported", False)
@@ -80,6 +86,13 @@ class ItemSelectionView(ItemSelectionData, Gtk.Box):
         """Items are usable unless a view marks them unavailable, such as a reserved toolset."""
         return True
 
+    def selectable_items(self):
+        items = self.items()
+        if self.include_host_runner:
+            from .runner import runner_is_supported
+            return [item for item in items if runner_is_supported(item) and self.emit("is-item-selectable", item)]
+        return [item for item in items if self.emit("is-item-selectable", item)]
+
     # View elements:
     items_list = Gtk.Template.Child()
     # Properties:
@@ -91,6 +104,7 @@ class ItemSelectionView(ItemSelectionData, Gtk.Box):
     item_subtitle_property_name = GObject.Property(type=str, default=None)
     item_status_property_name = GObject.Property(type=str, default=None)
     item_unsupported_property_name = GObject.Property(type=str, default=None)
+    include_host_runner = GObject.Property(type=bool, default=False)
     autoselect_default = GObject.Property(type=bool, default=False)
     display_none = GObject.Property(type=bool, default=False)
     none_title = GObject.Property(type=str, default="None")
@@ -110,6 +124,9 @@ class ItemSelectionView(ItemSelectionData, Gtk.Box):
             self.repository = getattr(Repository, self.item_class_name)
             if hasattr(self, 'static_list'):
                 raise ValueError("Canno't use both static_list and item_class_name")
+            if self.include_host_runner:
+                from .runner import HOST_RUNNER
+                self.set_leading_items([HOST_RUNNER])
             self._load_items()
             # Items added or removed while view is displayed (eg. folder created in other view).
             if not getattr(self, "_repository_observed", False):
@@ -128,7 +145,7 @@ class ItemSelectionView(ItemSelectionData, Gtk.Box):
 
     def refresh_items_state(self, *_):
         """Call this from class using this view when monitoring_usable_changes triggers an update"""
-        valid_items = [item for item in self.items() if self.emit("is-item-selectable", item)]
+        valid_items = self.selectable_items()
         for row in self.rows:
             row.set_sensitive(row.item in valid_items)
         update_selection_messages(self, valid_items)
@@ -142,15 +159,19 @@ class ItemSelectionView(ItemSelectionData, Gtk.Box):
         self.items_list.add(self.is_not_usable_label)
 
     def _load_items(self):
-        valid_items = [item for item in self.items() if self.emit("is-item-selectable", item)]
+        valid_items = self.selectable_items()
         # Monitor valid items for is_reserved changes
         self.emit("setup-items-monitoring", self.items())
         # Select initial item
         if self.autoselect_default:
-            self.selected_item = next(
-                (item for item in valid_items if self.emit("is-item-usable", item)),
-                valid_items[0] if valid_items else None
-            )
+            preferred = getattr(self, "preferred_item", ...)
+            if preferred is not ... and (preferred in valid_items or preferred is None and self.display_none):
+                self.selected_item = preferred
+            else:
+                self.selected_item = next(
+                    (item for item in valid_items if self.emit("is-item-usable", item)),
+                    valid_items[0] if valid_items else None
+                )
             self.emit("selection-changed", self)
             self.event_bus.emit(ItemSelectionViewEvent.ITEM_CHANGED, self)
         # Create rows

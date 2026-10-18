@@ -16,7 +16,7 @@
         <property name="show_welcome_screen">True</property>
         <property name="welcome_screen_icon_name">notes-minimalistic-svgrepo-com-symbolic</property>
         <property name="welcome_screen_title">Create Project</property>
-        <property name="welcome_screen_description">A project contains a tree of stages built together. Select the toolset, Releng directory, snapshot and architecture used to build them. All of them can be changed later.</property>
+        <property name="welcome_screen_description">A project contains a tree of stages built together. Select its Releng directory, snapshot and architecture. Toolsets are selected for each action that needs one.</property>
         <property name="install_button_label">Create project</property>
 
         <!-- Page 1: Config screen -->
@@ -77,8 +77,7 @@
                 <child>
                   <object class="ItemSelectionView" id="toolset_selection_view">
                     <property name="title">Toolset</property>
-                    <property name="description">Toolset with Catalyst installed, used to build stages of this project.</property>
-                    <property name="item_class_name">Toolset</property>
+                    <property name="description">Toolset with Catalyst installed, used only to read template stage settings during this creation. Projects do not keep a toolset assignment.</property>
                     <property name="item_icon">toolbox-symbolic</property>
                     <property name="item_title_property_name">name</property>
                     <property name="item_subtitle_property_name">short_details</property>

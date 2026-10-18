@@ -41,7 +41,7 @@ class CatalystlabWindowSideMenu(Gtk.Box):
 
     @staticmethod
     def _status_repositories() -> list:
-        return [Repository.ProjectDirectory, Repository.Toolset, Repository.BuildMachine, Repository.RelengDirectory,
+        return [Repository.ProjectDirectory, Repository.Toolset, Repository.Runner, Repository.RelengDirectory,
                 Repository.OverlayDirectory]
 
     def _on_items_changed(self, *args):

@@ -12,7 +12,7 @@ def present_process(process: MultiStageProcess):
     """Shows view of process (installer it was started from, or its steps)."""
     from .snapshot_installation import SnapshotInstallation
     from .toolset_installation import ToolsetInstallation
-    from .build_machine_installation import BuildMachineInstallation
+    from .build_machine_installation import VMRunnerInstallation
     from .releng_installation import RelengInstallation
     from .overlay_installation import OverlayInstallation
     from .project_installation import ProjectInstallation
@@ -27,9 +27,9 @@ def present_process(process: MultiStageProcess):
         case ToolsetInstallation():
             from .toolset_create_view import ToolsetCreateView
             view, title, height = ToolsetCreateView(installation_in_progress=process), "New toolset", 480
-        case BuildMachineInstallation():
-            from .build_machine_create_view import BuildMachineCreateView
-            view, title, height = BuildMachineCreateView(installation_in_progress=process), "New virtual machine", 480
+        case VMRunnerInstallation():
+            from .build_machine_create_view import VMRunnerCreateView
+            view, title, height = VMRunnerCreateView(installation_in_progress=process), "New VM runner", 480
         case RelengInstallation():
             from .releng_create_view import RelengCreateView
             view, title, height = RelengCreateView(installation_in_progress=process), "New releng directory", 480

@@ -33,29 +33,30 @@ SYSTEM_DISK_GIB = 8
 _MAX_SOCKET_PATH = 104
 _INSTANCE_NAME_EXAMPLE = "catalystlab-00000000"
 
-def machines_directory() -> str:
-    """Machines of Catalyst Lab, one folder for each (disks, configuration, logs, working space). Next to toolsets."""
+def runners_directory() -> str:
+    """Managed VM runner homes, one folder per VM with its configuration, disks, and logs."""
     from .repository import Repository, resolve_path
-    toolsets_location = resolve_path(Repository.Settings.value.toolsets_location)
-    return os.path.join(os.path.dirname(toolsets_location), "Machines")
+    return resolve_path(Repository.Settings.value.runners_location)
 
-def build_machine_temporary_directory(instance_name: str) -> str:
-    """Temporary files for one build machine run, shared by its workspace and swap disk."""
+
+def runner_temporary_directory(instance_name: str) -> str:
+    """Temporary files for one VM runner's workspace and swap disk."""
     from .repository import library_path, resolve_path
-    return resolve_path(library_path("Temporary", "BuildMachines", instance_name))
+    return resolve_path(library_path("Temporary", "Runners", instance_name))
+
 
 def workspace_image_path(instance_name: str) -> str:
     """Temporary ext4 image shared with a machine while an operation is running."""
-    return os.path.join(build_machine_temporary_directory(instance_name), "workspace.img")
+    return os.path.join(runner_temporary_directory(instance_name), "workspace.img")
 
 def temporary_swap_disk_path(disk_name: str) -> str:
     """Lima swap disk data, beside its workspace in the per-machine Temporary folder."""
     instance_name = disk_name.removesuffix("-swap")
-    return os.path.join(build_machine_temporary_directory(instance_name), "swap-disk")
+    return os.path.join(runner_temporary_directory(instance_name), "swap-disk")
 
-def remove_empty_build_machine_temporary_directory(instance_name: str) -> None:
+def remove_empty_runner_temporary_directory(instance_name: str) -> None:
     """Remove a per-machine run folder after its workspace and swap disk are both gone."""
-    directory = build_machine_temporary_directory(instance_name)
+    directory = runner_temporary_directory(instance_name)
     for path in (directory, os.path.dirname(directory)):
         try:
             os.rmdir(path)
@@ -89,7 +90,7 @@ def remove_temporary_lima_disk_data(disk_name: str, lima_home: str) -> None:
         os.unlink(managed)
     if os.path.lexists(temporary):
         shutil.rmtree(temporary) if os.path.isdir(temporary) and not os.path.islink(temporary) else os.unlink(temporary)
-    remove_empty_build_machine_temporary_directory(disk_name.removesuffix("-swap"))
+    remove_empty_runner_temporary_directory(disk_name.removesuffix("-swap"))
 
 def default_lima_home() -> str:
     """~/.lima in the real home of user (not $HOME, which can be changed), used when the machine path is too long."""
@@ -97,11 +98,10 @@ def default_lima_home() -> str:
     return os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".lima")
 
 def lima_home() -> str:
-    """Lima directory (LIMA_HOME) for new machines: machines directory, or ~/.lima when socket paths in machines
-    directory would be too long."""
-    directory = machines_directory()
+    """Lima directory (LIMA_HOME) for new VM runners, or ~/.lima if runner paths would be too long."""
+    directory = runners_directory()
     if lima_home_too_long(directory):
-        print(f"Path of machines directory {directory} is too long for Lima, using ~/.lima")
+        print(f"Path of runner directory {directory} is too long for Lima, using ~/.lima")
         return default_lima_home()
     return directory
 

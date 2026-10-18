@@ -12,6 +12,7 @@ from .wizard_view import WizardView
 from .item_select_view import ItemSelectionViewEvent
 from .architecture import Architecture
 from .snapshot import LATEST_SNAPSHOT
+from .toolset_selection import sorted_toolsets
 import os
 
 class DefaultProjectDirContentBuilder(DefaultDirContentBuilder):
@@ -47,8 +48,9 @@ class ProjectCreateView(Gtk.Box):
         self.installation_in_progress = installation_in_progress
         self.content_navigation_view = content_navigation_view
         self.apps_requirements = [ToolsetApplication.CATALYST]
+        self.toolset_selection_view.set_static_list(sorted_toolsets(applications=self.apps_requirements))
         self.arch_selection_view.set_static_list(sorted(Architecture, key=lambda arch: arch.name))
-        # Latest snapshot (default) is generated with toolset of project when building.
+        # Latest snapshot (default) is generated with the selected toolset when building.
         self.snapshot_selection_view.set_leading_items([LATEST_SNAPSHOT])
         # Templates: chooser in source page, options of selected template in next page.
         self.template_chooser = ProjectTemplateChooser()
@@ -100,6 +102,7 @@ class ProjectCreateView(Gtk.Box):
         architecture variable)."""
         template = self.template_chooser.selected_template if self._uses_template else None
         self.wizard_view.set_page_visible(self.template_page, self._uses_template)
+        self.wizard_view.set_page_visible(self.toolset_page, self._uses_template)
         self.wizard_view.set_page_visible(self.arch_page, template is None or (template.architecture_variable is None and template.architecture is None))
 
     def toolset_changed(self, data):
@@ -136,9 +139,6 @@ class ProjectCreateView(Gtk.Box):
             case self.releng_selection_view:
                 return True
             case self.snapshot_selection_view:
-                if item is LATEST_SNAPSHOT:
-                    toolset = self.toolset_selection_view.selected_item
-                    return toolset is None or toolset.get_app_install(ToolsetApplication.CATALYST) is not None
                 return True
             case self.arch_selection_view:
                 return True

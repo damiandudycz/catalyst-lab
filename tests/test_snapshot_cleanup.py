@@ -87,7 +87,7 @@ class SnapshotCleanupTests(unittest.TestCase):
             self.repository.Snapshot.value = [snapshot]
             with patch.object(manager.Snapshot, 'base_location', return_value=temporary), \
                  patch.object(rootless, 'remove_extracted_squashfs') as remove_cache, \
-                 patch.object(manager.Repository, 'BuildMachine', types.SimpleNamespace(value=[]), create=True):
+                 patch.object(manager.Repository, 'VMRunner', types.SimpleNamespace(value=[]), create=True):
                 self.manager.remove_snapshot(snapshot)
             remove_cache.assert_called_once_with(str(archive), kind='snapshots')
             self.assertFalse(archive.exists())
@@ -97,7 +97,7 @@ class SnapshotCleanupTests(unittest.TestCase):
     def test_remove_snapshot_does_not_visit_machines_for_temporary_extractions(self):
         from catalystlab import rootless
         machine = types.SimpleNamespace(is_running=True)
-        self.repository.BuildMachine = types.SimpleNamespace(value=[machine])
+        self.repository.VMRunner = types.SimpleNamespace(value=[machine])
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary, self.old.filename)
             archive.touch()
@@ -105,7 +105,7 @@ class SnapshotCleanupTests(unittest.TestCase):
             with patch.object(manager.Snapshot, 'base_location', return_value=temporary), \
                  patch.object(rootless, 'remove_extracted_squashfs') as remove_cache, \
                  patch.object(rootless, 'MachineExecutor', side_effect=AssertionError('snapshot cache is temporary')) as executor, \
-                 patch.object(manager.Repository, 'BuildMachine', self.repository.BuildMachine, create=True):
+                 patch.object(manager.Repository, 'VMRunner', self.repository.VMRunner, create=True):
                 self.manager.remove_snapshot(self.old)
             executor.assert_not_called()
             remove_cache.assert_called_once_with(str(archive), kind='snapshots')

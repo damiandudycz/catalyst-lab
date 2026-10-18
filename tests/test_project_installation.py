@@ -56,6 +56,7 @@ class ProjectInstallationTests(unittest.TestCase):
         step.releng_template_name = None
         step.stage_name = "Stage 4"
         step.parent_id = None
+        step.toolset = types.SimpleNamespace(uuid="toolset-uuid")
         step.multistage_process = process
         step.name = "Create project stage"
         return step

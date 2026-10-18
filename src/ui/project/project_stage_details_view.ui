@@ -7,6 +7,7 @@
 
   <!-- Template -->
   <template class="ProjectStageDetailsView" parent="GtkBox">
+    <property name="orientation">vertical</property>
     <child>
       <object class="GtkScrolledWindow">
         <property name="hscrollbar-policy">never</property>
@@ -85,6 +86,12 @@
               </object>
             </child>
             <child>
+              <object class="AdwPreferencesGroup" id="other_pref_group">
+                <property name="title">Other</property>
+                <property name="description">Additional Catalyst settings without a dedicated group.</property>
+              </object>
+            </child>
+            <child>
               <object class="AdwPreferencesGroup" id="row_warnings_group">
                 <property name="visible">False</property>
                 <child>
@@ -104,6 +111,13 @@
               </object>
             </child>
             <child>
+              <object class="AdwPreferencesGroup" id="unsupported_options_group">
+                <property name="title">Unsupported saved options</property>
+                <property name="description">These values are saved in the stage but are not recognized by the selected Catalyst toolset. They are preserved and will not be removed.</property>
+                <property name="visible">False</property>
+              </object>
+            </child>
+            <child>
               <object class="GtkButton" id="delete_button">
                 <property name="halign">center</property>
                 <style>
@@ -116,6 +130,55 @@
                   </object>
                 </child>
                 <signal name="clicked" handler="on_delete_clicked"/>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <child><object class="GtkSeparator"/></child>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">0</property>
+            <property name="margin-bottom">0</property>
+            <property name="valign">center</property>
+            <property name="height-request">32</property>
+            <style>
+              <class name="toolbar"/>
+            </style>
+            <child>
+              <object class="GtkButton" id="toolset_footer_button">
+                <property name="hexpand">False</property>
+                <property name="valign">center</property>
+                <signal name="clicked" handler="_on_change_toolset_clicked"/>
+                <style>
+                  <class name="flat"/>
+                  <class name="caption"/>
+                  <class name="stage-toolset-change-button"/>
+                </style>
+                <child>
+                  <object class="GtkLabel" id="toolset_footer_label">
+                    <property name="xalign">0</property>
+                    <property name="ellipsize">end</property>
+                    <property name="label">Catalyst toolset</property>
+                    <style>
+                      <class name="dim-label"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="hexpand">True</property>
               </object>
             </child>
           </object>

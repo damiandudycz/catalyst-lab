@@ -25,6 +25,9 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(settings.pause_queue_on_failure)
         self.assertEqual(settings.qemu_memory_gib, 4)
         self.assertEqual(settings.qemu_cpus, 4)
+        self.assertIsNone(settings.default_toolset_id)
+        self.assertIsNone(settings.default_runner_id)
+        self.assertEqual(settings.library_location, "~/CatalystLab")
         self.assertEqual(Settings.init_from(settings.serialize()).serialize(), settings.serialize())
 
     def test_missing_or_invalid_navigation_style_falls_back_to_push(self):
@@ -64,7 +67,9 @@ class SettingsTests(unittest.TestCase):
             settings.auto_clean_snapshots = True
             settings.navigation_style = NavigationStyle.MODAL
             settings.pause_queue_on_failure = True
-        self.assertEqual(repository.save.call_count, 5)
+            settings.default_toolset_id = 'toolset-id'
+            settings.default_runner_id = 'runner-id'
+        self.assertEqual(repository.save.call_count, 7)
         self.assertEqual({event for event, _ in events}, set(SettingsEvents))
 
     def test_qemu_resource_settings_coerce_integers_and_skip_unchanged_saves(self):
@@ -75,9 +80,14 @@ class SettingsTests(unittest.TestCase):
             settings.qemu_memory_gib = 12
             settings.qemu_cpus = '8'
             settings.qemu_cpus = 8
+            settings.default_toolset_id = 'toolset-id'
+            settings.default_toolset_id = 'toolset-id'
+            settings.default_runner_id = 'runner-id'
+            settings.default_runner_id = 'runner-id'
         self.assertEqual(settings.qemu_memory_gib, 12)
         self.assertEqual(settings.qemu_cpus, 8)
-        self.assertEqual(repository.save.call_count, 2)
+        self.assertEqual(repository.save.call_count, 4)
+        self.assertEqual(settings.default_toolset_id, 'toolset-id')
 
     def test_library_data_paths_follow_selected_library(self):
         expected = {

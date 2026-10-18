@@ -19,7 +19,7 @@
         <property name="welcome_screen_description">A toolset is an isolated Gentoo environment used to run Catalyst. It is created from an official stage3 image, with selected tools installed, and stored as a .squashfs file.</property>
         <property name="install_button_label">Install toolset</property>
 
-        <!-- Page 1: Machine where toolset runs -->
+        <!-- Page 1: Runner where toolset runs -->
         <child>
           <object class="GtkScrolledWindow" id="runs_on_page">
             <property name="hscrollbar-policy">never</property>
@@ -32,15 +32,14 @@
                 <property name="margin-end">24</property>
                 <property name="margin-top">4</property>
                 <property name="margin-bottom">4</property>
-                <property name="title">Runs on</property>
-                <property name="description">Toolset is loaded on this computer or inside a virtual machine. Virtual machines are created in Environments, and are needed on systems that can't build stages themselves, like macOS.</property>
-                <property name="item_class_name">BuildMachine</property>
+                <property name="title">Runner</property>
+                <property name="description">A runner provides the execution environment for primary tools and loaded toolsets. Linux uses the Host runner; macOS uses a VM runner.</property>
+                <property name="item_class_name">Runner</property>
+                <property name="include_host_runner">True</property>
                 <property name="item_icon">virtual-machine-symbolic</property>
                 <property name="item_title_property_name">name</property>
                 <property name="item_subtitle_property_name">short_details</property>
                 <property name="item_status_property_name">status_indicator_values</property>
-                <property name="display_none">True</property>
-                <property name="none_title">This computer</property>
                 <signal name="is-item-selectable" handler="is_machine_selectable"/>
                 <signal name="is-item-usable" handler="is_machine_selectable"/>
               </object>
@@ -101,6 +100,18 @@
                           <object class="GtkCheckButton" id="allow_binpkgs_checkbox">
                             <property name="valign">center</property>
                             <signal name="toggled" handler="on_allow_binpkgs_toggled"/>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow">
+                        <property name="title">Set as default toolset</property>
+                        <property name="subtitle">Use this toolset by default for actions that need its installed tools</property>
+                        <property name="activatable-widget">set_as_default_checkbox</property>
+                        <child type="prefix">
+                          <object class="GtkCheckButton" id="set_as_default_checkbox">
+                            <property name="valign">center</property>
                           </object>
                         </child>
                       </object>

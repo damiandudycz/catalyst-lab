@@ -1,15 +1,13 @@
-from gi.repository import Gtk, Adw, GLib, Pango
+from gi.repository import Gtk, Adw, GLib
 from .git_directory import GitDirectoryEvent
 from .project_manager import ProjectManager
 from .project_directory import ProjectDirectory
-from .toolset_application import ToolsetApplication
-from .toolset import ToolsetEvents
 from .event_bus import SharedEvent
 from .repository import Repository
 from .item_select_view import ItemSelectionViewEvent
 from .project_stage_create_view import ProjectStageCreateView
 from .app_events import app_event_bus, AppEvents
-from .stages_tree_view import StagesTreeView, StageNodeStatus
+from .stages_tree_view import StagesTreeView, StagesListView, StageNodeStatus
 from .project_stage_details_view import ProjectStageDetailsView
 from .project_build_view import ProjectBuildView
 from .build_queue_view import build_button_state, present_queued_build
@@ -21,7 +19,7 @@ from .architecture import Architecture
 from .snapshot import LATEST_SNAPSHOT
 from .cl_toggle_group import CLToggle, CLToggleGroup
 from .project_template_update import (
-    TemplateState, repository_origin, has_unsaved_changes, own_commits_count, template_update_available, project_overlays
+    TemplateState, repository_origin, has_unsaved_changes, template_update_available, project_overlays
 )
 from .project_update_view import ProjectUpdateView
 import threading
@@ -31,43 +29,68 @@ class ProjectDetailsView(Gtk.Box):
     __gtype_name__ = "ProjectDetailsView"
 
     stack = Gtk.Template.Child()
-    stages_tree_view = Gtk.Template.Child()
+    stage_content_stack = Gtk.Template.Child()
+    stages_compact_view = Gtk.Template.Child()
+    stages_full_view = Gtk.Template.Child()
+    stages_list_view = Gtk.Template.Child()
     build_row = Gtk.Template.Child()
+    build_row_label = Gtk.Template.Child()
     build_progress_row = Gtk.Template.Child()
-    build_list = Gtk.Template.Child()
-    build_progress_list = Gtk.Template.Child()
+    builds_row = Gtk.Template.Child()
     directory_details_view = Gtk.Template.Child()
-    toolset_selection_view = Gtk.Template.Child()
     releng_selection_view = Gtk.Template.Child()
     snapshot_selection_view = Gtk.Template.Child()
     arch_selection_view = Gtk.Template.Child()
     packages_selection_view = Gtk.Template.Child()
+    source_banner = Gtk.Template.Child()
+    add_stage_row = Gtk.Template.Child()
+    source_button = Gtk.Template.Child()
+    source_button_label = Gtk.Template.Child()
 
     def __init__(self, project_directory: ProjectDirectory, content_navigation_view: Adw.NavigationView | None = None):
         super().__init__()
         self.project_directory = project_directory
         self.content_navigation_view = content_navigation_view
-        self.apps_requirements = [ToolsetApplication.CATALYST]
+        self._setup_action_button_styles()
+        self._source = None
+        self._build_action_available = False
+        self._build_running = False
         self.directory_details_view.setup(git_directory=project_directory, content_navigation_view=self.content_navigation_view)
         self.directory_details_view.on_project_deleted = self._close_after_delete
         self.get_configuration()
         self.monitor_stages_changes()
         self.monitor_information_changes()
         self.monitor_configuration_changes()
-        self.stages_tree_view.set_root_nodes(project_directory.stages_tree())
+        stages = project_directory.stages_tree()
+        self.stages_compact_view.set_root_nodes(stages)
+        self.stages_full_view.set_root_nodes(stages)
+        self.stages_list_view.set_root_nodes(stages)
         self._setup_stages_view_mode()
         self._setup_source_banner()
         # Result of last build is seen, project is not marked anymore in projects list.
         project_directory.mark_build_result_seen()
         self._observed_builds: set[int] = set() # Ids of builds whose changes are observed.
-        self._observed_toolset = None # Toolset (and its machine) whose state allows building.
         self._build_refresh_scheduled = False
         MultiStageProcess.event_bus.subscribe(MultiStageProcessEvent.STARTED_PROCESSES_CHANGED, self._on_build_changed)
         BuildQueue.shared().event_bus.subscribe(BuildQueueEvent.CHANGED, self._on_build_changed)
         self._refresh_build_state()
 
+    def _setup_action_button_styles(self):
+        """Apply action styles after template construction so every button gets the intended classes and sizing."""
+        for button in (self.add_stage_row, self.builds_row, self.build_row, self.build_progress_row):
+            button.add_css_class("project-action-button")
+            button.set_size_request(-1, 36)
+        self.add_stage_row.add_css_class("suggested-action")
+        self.build_row.add_css_class("suggested-action")
+
+        self.source_button.set_has_frame(False)
+        for css_class in ("flat", "caption", "stage-toolset-change-button"):
+            self.source_button.add_css_class(css_class)
+        self.source_button.set_size_request(-1, 24)
+        self.source_button_label.add_css_class("dim-label")
+        self.source_button_label.add_css_class("caption")
+
     def get_configuration(self):
-        self.toolset_selection_view.select(self.project_directory.get_toolset())
         self.releng_selection_view.select(self.project_directory.get_releng_directory())
         self.snapshot_selection_view.set_leading_items([LATEST_SNAPSHOT])
         self.snapshot_selection_view.select(
@@ -90,12 +113,6 @@ class ProjectDetailsView(Gtk.Box):
 
     def configuration_item_changed(self, container):
         match container:
-            case self.toolset_selection_view:
-                self.project_directory.initialize_metadata().toolset_id = (
-                    self.toolset_selection_view.selected_item.uuid
-                    if self.toolset_selection_view.selected_item else None
-                )
-                GLib.idle_add(self.snapshot_selection_view.refresh_items_state, None) # Latest snapshot needs Catalyst.
             case self.releng_selection_view:
                 self.project_directory.initialize_metadata().releng_directory_id = (
                     self.releng_selection_view.selected_item.id
@@ -162,7 +179,10 @@ class ProjectDetailsView(Gtk.Box):
         self._page.set_title(name)
 
     def _update_stages(self, data):
-        self.stages_tree_view.set_root_nodes(self.project_directory.stages_tree())
+        stages = self.project_directory.stages_tree()
+        self.stages_compact_view.set_root_nodes(stages)
+        self.stages_full_view.set_root_nodes(stages)
+        self.stages_list_view.set_root_nodes(stages)
 
     # Running build
     # --------------------------------------------------------------------------
@@ -181,29 +201,22 @@ class ProjectDetailsView(Gtk.Box):
         running_build = running_project_build(self.project_directory)
         # Only one build runs at a time, builds of other projects are added to queue meanwhile. Toolset (and its
         # virtual machine) can't be used by other operation while build runs.
-        self._observe_toolset(self.project_directory.get_toolset())
         state = build_button_state(self.project_directory)
         # Buttons are in separate lists sharing one row, lists are hidden with them.
-        self.build_list.set_visible(state.visible)
+        self._build_action_available = state.visible
         self.build_row.set_sensitive(state.sensitive)
-        self.build_row.set_title(state.title)
+        self.build_row_label.set_label(state.title)
         self.build_row.set_tooltip_text(state.tooltip)
-        self.build_progress_list.set_visible(running_build is not None)
+        self._build_running = running_build is not None
+        self._update_action_rows_visibility()
         statuses = {}
         if running_build is not None:
             for step in running_build.stages:
                 if isinstance(step, ProjectBuildStepBuildStage):
                     statuses[step.stage.id] = _build_step_status(step)
-        self.stages_tree_view.set_statuses(statuses)
-
-    def _observe_toolset(self, toolset):
-        if toolset is None or toolset is self._observed_toolset:
-            return
-        self._observed_toolset = toolset
-        for event in ToolsetEvents:
-            toolset.event_bus.subscribe(event, self._on_build_changed)
-        if machine := toolset.machine:
-            machine.event_bus.subscribe(SharedEvent.STATE_UPDATED, self._on_build_changed)
+        self.stages_compact_view.set_statuses(statuses)
+        self.stages_full_view.set_statuses(statuses)
+        self.stages_list_view.set_statuses(statuses)
 
     def _on_build_changed(self, *args):
         # Several changes can come at once, refresh once.
@@ -219,19 +232,6 @@ class ProjectDetailsView(Gtk.Box):
     def _setup_source_banner(self):
         """Template or Git repository project was created from, own changes of project, and button updating project
         (blue when there are updates)."""
-        self.source_banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, margin_start=24,
-                                     margin_end=24, margin_top=6, margin_bottom=6, visible=False)
-        self.source_label = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)
-        self.source_label.add_css_class("caption")
-        self.source_label.add_css_class("dimmed")
-        self.source_badges = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4, hexpand=True, valign=Gtk.Align.CENTER)
-        self.source_button = Gtk.Button(valign=Gtk.Align.CENTER)
-        self.source_button.add_css_class("caption")
-        self.source_button.add_css_class("small-button")
-        self.source_button.connect("clicked", self._on_update_source_clicked)
-        for widget in (self.source_label, self.source_badges, self.source_button):
-            self.source_banner.append(widget)
-        self.prepend(self.source_banner)
         self._updates_available = None # Checked in background when project is opened.
         self.project_directory.event_bus.subscribe(SharedEvent.STATE_UPDATED, self._update_source_banner)
         self._update_source_banner()
@@ -258,7 +258,7 @@ class ProjectDetailsView(Gtk.Box):
         self._source = None
         if state := TemplateState.load(path):
             self._source = "template"
-            title, button = "Generated from template", "Update template"
+            button = "Update template"
             details = f"{state.template_name}\n{state.repository_url}" + (f" ({state.repository_path})" if state.repository_path else "")
             if (state.commit, state.template_tree) != getattr(self, "_checked_template_version", None):
                 # Template version of project changed (updated), result of previous check doesn't apply anymore.
@@ -267,43 +267,25 @@ class ProjectDetailsView(Gtk.Box):
             updates = self._updates_available
         elif origin := repository_origin(path):
             self._source = "repository"
-            title, button = "Cloned from repository", "Update from repository"
+            button = "Update repository"
             details = origin.url + (f" ({origin.branch})" if origin.branch else "")
             updates = self.project_directory.has_remote_changes
-        self.source_banner.set_visible(self._source is not None)
+        has_source = self._source is not None
+        self._update_action_rows_visibility()
         if self._source is None:
             return
-        self.source_label.set_label(title)
-        self.source_label.set_tooltip_text(details)
-        # Own changes of project, not in template or repository:
-        while badge := self.source_badges.get_first_child():
-            self.source_badges.remove(badge)
         unsaved = has_unsaved_changes(path)
-        badges = []
-        if commits := own_commits_count(path):
-            badges.append((f"{commits} own commit{'s' if commits != 1 else ''}",
-                           f"Commits of project that are not in {self._source}, they are kept when updating", "notice"))
-        if unsaved:
-            badges.append(("Not saved changes", "Save or discard changes before updating", None))
-        for text, tooltip, css_class in badges:
-            badge = Gtk.Label(label=text, tooltip_text=tooltip)
-            badge.add_css_class("tag-label")
-            badge.add_css_class("caption")
-            if css_class:
-                badge.add_css_class(css_class)
-            self.source_badges.append(badge)
-        # Update button, blue when there are updates, disabled with not saved changes:
-        self.source_button.set_label(button)
+        # Keep the compact footer button size consistent with Stage details.
+        self.source_button_label.set_markup(
+            f'<span size="small" weight="normal">{GLib.markup_escape_text(button)}</span>'
+        )
         self.source_button.set_sensitive(not unsaved)
-        if updates:
-            self.source_button.add_css_class("suggested-action")
-        else:
-            self.source_button.remove_css_class("suggested-action")
         self.source_button.set_tooltip_text(
             "Save or discard changes first" if unsaved
             else f"There are changes in {self._source}" if updates
             else f"No changes in {self._source} found" if updates is False
             else f"Check {self._source} for changes")
+        self.source_button.set_tooltip_text(f"{self.source_button.get_tooltip_text()}\n{details}")
 
     def _on_update_source_clicked(self, button):
         if self._source is None:
@@ -343,13 +325,37 @@ class ProjectDetailsView(Gtk.Box):
         self.stages_view_mode_toggle.add_css_class("caption")
         self.stages_view_mode_toggle.add(CLToggle(label="Compact"))
         self.stages_view_mode_toggle.add(CLToggle(label="Full"))
-        self.stages_view_mode_toggle.set_active(1 if self.stages_tree_view.expand_all else 0)
-        self.stages_view_mode_toggle.connect("notify::active", lambda group, _: self.stages_tree_view.set_expand_all(group.get_active() == 1))
+        self.stages_view_mode_toggle.add(CLToggle(label="List"))
+        initial_mode = 1 if self.stages_full_view.expand_all else 0
+        self.stages_view_mode_toggle.set_active(initial_mode)
+        self._set_stage_view_mode(initial_mode, remember=False)
+        self.stages_view_mode_toggle.connect("notify::active", lambda group, _: self._set_stage_view_mode(group.get_active()))
         self.stack.connect("notify::visible-child-name", lambda *args: self._update_stages_view_mode_visibility())
         self._update_stages_view_mode_visibility()
 
+    def _set_stage_view_mode(self, mode: int, remember: bool = True):
+        if mode == 2:
+            self.stage_content_stack.set_visible_child_name("list")
+            return
+        view_name = "full" if mode == 1 else "compact"
+        self.stage_content_stack.set_visible_child_name(view_name)
+        self.stages_compact_view.set_expand_all(False, remember=remember and mode == 0)
+        self.stages_full_view.set_expand_all(True, remember=remember and mode == 1)
+
     def _update_stages_view_mode_visibility(self):
-        self.stages_view_mode_toggle.set_visible(self.stack.get_visible_child_name() == "stages")
+        is_stages_page = self.stack.get_visible_child_name() == "stages"
+        self.stages_view_mode_toggle.set_visible(is_stages_page)
+        self._update_action_rows_visibility()
+
+    def _update_action_rows_visibility(self):
+        is_stages_page = self.stack.get_visible_child_name() == "stages"
+        has_source = self._source is not None
+        self.add_stage_row.set_visible(is_stages_page)
+        self.builds_row.set_visible(is_stages_page)
+        self.build_row.set_visible(is_stages_page and self._build_action_available)
+        self.build_progress_row.set_visible(is_stages_page and self._build_running)
+        self.source_button.set_visible(is_stages_page and has_source)
+        self.source_banner.set_visible(is_stages_page)
 
     def header_bar_end_widgets(self) -> list[Gtk.Widget]:
         return [self.stages_view_mode_toggle]
@@ -369,7 +375,6 @@ class ProjectDetailsView(Gtk.Box):
     def monitor_configuration_changes(self):
         """Reacts to changes in configuration lists, saves new metadata"""
         for view in [
-            self.toolset_selection_view,
             self.releng_selection_view,
             self.snapshot_selection_view,
             self.arch_selection_view,
@@ -383,14 +388,9 @@ class ProjectDetailsView(Gtk.Box):
     @Gtk.Template.Callback()
     def is_item_selectable(self, sender, item) -> bool:
         match sender:
-            case self.toolset_selection_view:
-                return all(item.get_app_install(app) is not None for app in self.apps_requirements)
             case self.releng_selection_view:
                 return True
             case self.snapshot_selection_view:
-                if item is LATEST_SNAPSHOT:
-                    toolset = self.project_directory.get_toolset()
-                    return toolset is None or toolset.get_app_install(ToolsetApplication.CATALYST) is not None
                 return True
             case self.arch_selection_view:
                 return True
@@ -402,8 +402,6 @@ class ProjectDetailsView(Gtk.Box):
     @Gtk.Template.Callback()
     def is_item_usable(self, sender, item) -> bool:
         match sender:
-            case self.toolset_selection_view:
-                return True
             case self.releng_selection_view:
                 return True
             case self.snapshot_selection_view:
@@ -416,17 +414,7 @@ class ProjectDetailsView(Gtk.Box):
 
     @Gtk.Template.Callback()
     def setup_items_monitoring(self, sender, items):
-        if sender is not self.toolset_selection_view:
-            return
-        for item in getattr(self, 'monitored_items_toolset', ()):
-            item.event_bus.unsubscribe(ToolsetEvents.IS_RESERVED_CHANGED, self)
-        self.monitored_items_toolset = items
-        for item in items:
-            item.event_bus.subscribe(
-                ToolsetEvents.IS_RESERVED_CHANGED,
-                self.toolset_selection_view.refresh_items_state,
-                self
-            )
+        return
 
     @Gtk.Template.Callback()
     def on_add_stage_activated(self, sender):

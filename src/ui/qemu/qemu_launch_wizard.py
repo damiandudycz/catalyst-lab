@@ -14,6 +14,9 @@ from .qemu_run_view import QemuImagePreparation, QemuRunView
 from .multistage_process import MultiStageProcessState
 from .apple_virtualization import apple_support
 from .repository import Repository
+from .toolset import ToolsetEnv, ToolsetEvents
+from .item_select_view import ItemSelectionView, ItemSelectionViewEvent
+from .toolset_selection import sorted_toolsets
 
 
 class QemuLaunchWizard(Gtk.Box):
@@ -128,13 +131,20 @@ class QemuLaunchWizard(Gtk.Box):
         self.custom_kernel_row.set_visible(self.support.kind == QemuBuildKind.STAGE)
         kernel_group.add(self.custom_kernel_row)
         self.kernel_build_toolsets = kernel_build_toolsets(project_directory)
-        self.kernel_toolset_row = Adw.ComboRow(
-            title="Toolset", subtitle="Choose a free toolset for this kernel build",
-            model=Gtk.StringList.new([toolset.name for toolset in self.kernel_build_toolsets]
-                                     or ["No free Gentoo toolsets"]))
-        self.kernel_toolset_row.set_visible(False)
-        self.kernel_toolset_row.set_sensitive(bool(self.kernel_build_toolsets))
-        kernel_group.add(self.kernel_toolset_row)
+        self.kernel_toolset_view = ItemSelectionView()
+        self.kernel_toolset_view.title = "Toolset"
+        self.kernel_toolset_view.description = "Choose a free external Gentoo toolset. Other toolsets stay visible but are disabled."
+        self.kernel_toolset_view.item_icon = "toolbox-symbolic"
+        self.kernel_toolset_view.item_title_property_name = "name"
+        self.kernel_toolset_view.item_subtitle_property_name = "short_details"
+        self.kernel_toolset_view.item_status_property_name = "status_indicator_values"
+        self.kernel_toolset_view.autoselect_default = True
+        self.kernel_toolset_view.connect("is-item-selectable", self._kernel_toolset_selectable)
+        self.kernel_toolset_view.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self._custom_kernel_changed)
+        self.kernel_toolset_view.connect("setup-items-monitoring", self._monitor_kernel_toolsets)
+        self.kernel_toolset_view.set_static_list(self.kernel_build_toolsets)
+        self.kernel_toolset_view.set_visible(False)
+        kernel_group.add(self.kernel_toolset_view)
         self.snapshots = [snapshot for snapshot in Repository.Snapshot.value
                           if os.path.isfile(snapshot.file_path())]
         self.kernel_snapshot_row = Adw.ComboRow(
@@ -199,7 +209,6 @@ class QemuLaunchWizard(Gtk.Box):
             settings_group.add(Adw.ActionRow(title="Backend status", subtitle="\n".join(unavailable)))
         self.backend_row.connect("notify::selected", self._backend_changed)
         self.custom_kernel_row.connect("notify::active", self._custom_kernel_changed)
-        self.kernel_toolset_row.connect("notify::selected", self._custom_kernel_changed)
         self.kernel_snapshot_row.connect("notify::selected", self._kernel_snapshot_changed)
         self.kernel_package_row.connect("notify::selected", self._custom_kernel_changed)
         self.kernel_package_row.custom_row.connect("changed", self._custom_kernel_changed)
@@ -297,16 +306,31 @@ class QemuLaunchWizard(Gtk.Box):
             return "Building a custom kernel requires the project architecture to match this computer."
         if not self.snapshots:
             return "Add or download a Gentoo snapshot before building a custom kernel."
-        toolset = self.project_directory.get_toolset()
-        if not self.kernel_build_toolsets and toolset and toolset.busy_reason:
-            return toolset.busy_reason
-        if not self.kernel_build_toolsets:
+        if not any(self._kernel_toolset_selectable(self.kernel_toolset_view, item)
+                   for item in self.kernel_build_toolsets):
             return "Select or create a free Gentoo toolset to build a custom kernel."
         return None
 
     def _selected_kernel_toolset(self):
-        selected = self.kernel_toolset_row.get_selected()
-        return self.kernel_build_toolsets[selected] if 0 <= selected < len(self.kernel_build_toolsets) else None
+        return self.kernel_toolset_view.selected_item
+
+    def _kernel_toolset_selectable(self, _view, toolset) -> bool:
+        from .toolset_application import ToolsetApplication
+        from .toolset_selection import toolset_has_applications
+        return (toolset.env == ToolsetEnv.EXTERNAL and toolset.busy_reason is None
+                and toolset_has_applications(toolset, (ToolsetApplication.QEMU, ToolsetApplication.LINUX_HEADERS)))
+
+    def _monitor_kernel_toolsets(self, _view, items):
+        for item in getattr(self, "_monitored_kernel_toolsets", ()):
+            for event in ToolsetEvents:
+                item.event_bus.unsubscribe(event, self)
+        self._monitored_kernel_toolsets = items
+        for item in items:
+            for event in ToolsetEvents:
+                item.event_bus.subscribe(event, self._kernel_toolset_state_changed, self)
+
+    def _kernel_toolset_state_changed(self, *_):
+        self.kernel_toolset_view.refresh_items_state()
 
     def _valid_custom_kernel(self):
         from .custom_kernel import valid_kernel_package
@@ -375,7 +399,7 @@ class QemuLaunchWizard(Gtk.Box):
     def _custom_kernel_changed(self, *_):
         active = self.custom_kernel_row.get_active()
         custom = active and self._is_custom_kernel_selected()
-        self.kernel_toolset_row.set_visible(active)
+        self.kernel_toolset_view.set_visible(active)
         self.kernel_snapshot_row.set_visible(active)
         self.kernel_package_row.set_visible(active)
         self.kernel_package_row.custom_row.set_visible(custom)

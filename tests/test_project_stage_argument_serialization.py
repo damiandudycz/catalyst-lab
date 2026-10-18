@@ -51,7 +51,7 @@ class StageArgumentSerializationTests(unittest.TestCase):
             Serialization.deserialize({'value': 'missing type'})
 
     def test_project_stage_round_trip_omits_runtime_and_empty_values(self):
-        stage = ProjectStage(name='stage4', target_name='stage4', profile=None)
+        stage = ProjectStage(name='stage4', target_name='stage4', profile=None, toolset_id='toolset-uuid')
         stage.packages = ['app-admin/sudo']
 
         saved = stage.serialize()
@@ -59,6 +59,7 @@ class StageArgumentSerializationTests(unittest.TestCase):
 
         self.assertNotIn('event_bus', saved)
         self.assertNotIn('profile', saved)
+        self.assertEqual(restored.toolset_id, 'toolset-uuid')
         self.assertEqual(restored.serialize(), saved)
 
 

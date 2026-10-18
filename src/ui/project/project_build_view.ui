@@ -19,7 +19,56 @@
         <property name="welcome_screen_description">Build selected stages of the project with Catalyst. Parent stages are reused from their latest builds, or built too when they don't have any.</property>
         <property name="install_button_label">Start build</property>
 
-        <!-- Page 1: Stages selection -->
+        <!-- Page 1: Toolset -->
+        <child>
+          <object class="GtkScrolledWindow" id="toolset_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="ItemSelectionView" id="toolset_selection_view">
+                    <property name="title">Toolset</property>
+                    <property name="description">Toolset for this build. Catalyst is required; QEMU is also required when the project architecture needs emulation. Incompatible toolsets remain visible but cannot be selected.</property>
+                    <property name="item_icon">toolbox-symbolic</property>
+                    <property name="item_title_property_name">name</property>
+                    <property name="item_subtitle_property_name">short_details</property>
+                    <property name="item_status_property_name">status_indicator_values</property>
+                    <property name="autoselect_default">True</property>
+                    <signal name="is-item-selectable" handler="is_toolset_selectable"/>
+                    <signal name="is-item-usable" handler="is_toolset_usable"/>
+                  </object>
+                </child>
+                <child>
+                  <object class="ItemSelectionView" id="runner_selection_view">
+                    <property name="title">Runner</property>
+                    <property name="description">Runner used to execute Catalyst and build the selected stages. The default runner is selected when available.</property>
+                    <property name="item_class_name">Runner</property>
+                    <property name="include_host_runner">True</property>
+                    <property name="item_icon">virtual-machine-symbolic</property>
+                    <property name="item_title_property_name">name</property>
+                    <property name="item_subtitle_property_name">short_details</property>
+                    <property name="item_status_property_name">status_indicator_values</property>
+                    <property name="autoselect_default">True</property>
+                    <signal name="is-item-selectable" handler="is_runner_selectable"/>
+                    <signal name="is-item-usable" handler="is_runner_usable"/>
+                    <signal name="setup-items-monitoring" handler="setup_runner_monitoring"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 2: Stages selection -->
         <child>
           <object class="GtkScrolledWindow" id="stages_page">
             <property name="hscrollbar-policy">never</property>
@@ -70,7 +119,7 @@
           </object>
         </child>
 
-        <!-- Page 2: Snapshot -->
+        <!-- Page 3: Snapshot -->
         <child>
           <object class="GtkScrolledWindow" id="snapshot_page">
             <property name="hscrollbar-policy">never</property>
@@ -88,7 +137,7 @@
                 <child>
                   <object class="ItemSelectionView" id="snapshot_selection_view">
                     <property name="title">Snapshot</property>
-                    <property name="description">Snapshot of the Gentoo ebuild repository used by this build. Snapshot of the project is selected by default. Get latest generates a new snapshot with the project toolset before building.</property>
+                    <property name="description">Snapshot of the Gentoo ebuild repository used by this build. Snapshot of the project is selected by default. Get latest generates a new snapshot with the selected toolset before building.</property>
                     <property name="item_icon">video-frame-svgrepo-com-symbolic</property>
                     <property name="item_title_property_name">name</property>
                     <property name="item_subtitle_property_name">short_details</property>
@@ -102,7 +151,7 @@
           </object>
         </child>
 
-        <!-- Page 3: Summary -->
+        <!-- Page 4: Summary -->
         <child>
           <object class="GtkScrolledWindow" id="summary_page">
             <property name="hscrollbar-policy">never</property>

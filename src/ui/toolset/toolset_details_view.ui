@@ -70,12 +70,6 @@
                     <property name="title">Size</property>
                   </object>
                 </child>
-                <child>
-                  <object class="AdwComboRow" id="runs_on_row">
-                    <property name="title">Runs on</property>
-                    <property name="subtitle">Toolset is loaded on this computer or inside virtual machine</property>
-                  </object>
-                </child>
               </object>
             </child>
             <child>

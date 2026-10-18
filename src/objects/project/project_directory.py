@@ -129,9 +129,7 @@ class ProjectDirectory(GitDirectory):
 
     @property
     def configuration_error(self) -> str | None:
-        """Why project can't be built because of its configuration (toolset, releng directory, snapshot)."""
-        if self.get_toolset() is None:
-            return "Toolset is not selected or was removed"
+        """Why project can't be built because its Releng directory or snapshot is missing."""
         if self.get_releng_directory() is None:
             return "Releng directory is not selected or was removed"
         if self.get_snapshot() is None and not self.uses_latest_snapshot:
@@ -236,11 +234,6 @@ class ProjectDirectory(GitDirectory):
             return None
         return next((item for item in items if getattr(item, attr) == target_id), None)
 
-    def get_toolset(self) -> Toolset | None:
-        if self.metadata is None:
-            return None
-        return self._get_by_id(Repository.Toolset.value, self.metadata.toolset_id, 'uuid')
-
     def get_releng_directory(self) -> RelengDirectory | None:
         if self.metadata is None:
             return None
@@ -293,7 +286,6 @@ class ProjectDirectory(GitDirectory):
 
 @dataclass
 class ProjectConfiguration(Serializable):
-    toolset_id: uuid.UUID | None = None
     releng_directory_id: uuid.UUID | None = None
     snapshot_id: str | None = None
     latest_snapshot: bool = False # Builds generate latest snapshot, newest snapshot is used as snapshot of project.
@@ -303,7 +295,6 @@ class ProjectConfiguration(Serializable):
 
     def serialize(self) -> dict:
         return {
-            "toolset_id": str(self.toolset_id) if self.toolset_id else None,
             "releng_directory_id": str(self.releng_directory_id) if self.releng_directory_id else None,
             "snapshot_id": self.snapshot_id,
             "latest_snapshot": self.latest_snapshot,
@@ -315,14 +306,12 @@ class ProjectConfiguration(Serializable):
     @classmethod
     def init_from(cls, data: dict) -> Self:
         try:
-            toolset_id = uuid.UUID(data["toolset_id"]) if data.get("toolset_id") else None
             releng_directory_id = uuid.UUID(data["releng_directory_id"]) if data.get("releng_directory_id") else None
             snapshot_id = data["snapshot_id"] if data.get("snapshot_id") else None
             architecture = Architecture(data["architecture"]) if data.get("architecture") else None
         except KeyError:
             raise ValueError(f"Failed to parse {data}")
         return cls(
-            toolset_id=toolset_id,
             releng_directory_id=releng_directory_id,
             snapshot_id=snapshot_id,
             latest_snapshot=bool(data.get("latest_snapshot", False)),

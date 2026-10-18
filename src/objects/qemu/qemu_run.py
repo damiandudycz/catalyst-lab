@@ -142,15 +142,12 @@ class QemuSupport:
         return self.reason is None
 
 def kernel_build_toolsets(project_directory) -> list:
-    """Free kernel-build toolsets, with the project's configured toolset first when available."""
-    project_toolset = project_directory.get_toolset()
+    """Toolset choices for custom-kernel builds, with the configured compatible default first."""
     from .repository import Repository
-    from .toolset import ToolsetEnv
-    toolsets = ([project_toolset] if project_toolset and not project_toolset.busy_reason else [])
-    toolsets.extend(toolset for toolset in Repository.Toolset.value
-                    if toolset is not project_toolset and toolset.env == ToolsetEnv.EXTERNAL
-                    and not toolset.busy_reason)
-    return toolsets
+    from .toolset_selection import sorted_toolsets
+    from .toolset_application import ToolsetApplication
+    return sorted_toolsets(Repository.Toolset.value,
+                           applications=(ToolsetApplication.QEMU, ToolsetApplication.LINUX_HEADERS))
 
 _KERNEL = re.compile(r"\./boot/((vmlinuz|vmlinux|Image)-?[^/]*)$")
 _INITRAMFS = re.compile(r"\./boot/((initramfs|initrd)-?[^/]*)$")
@@ -975,7 +972,7 @@ class QemuImagePreparation(MultiStageProcess):
         super().__init__(title="Start virtual machine")
 
     def setup_stages(self):
-        self.stages.append(_StepImage("Prepare build VM", self, "machine"))
+        self.stages.append(_StepImage("Prepare Runner", self, "machine"))
         self.stages.append(_StepImage("Prepare stage image", self, "cache"))
         self.stages.append(_StepImage("Create writable VM image", self, "image"))
         if self.support.kernel_package:
@@ -989,7 +986,7 @@ class QemuImagePreparation(MultiStageProcess):
         if self.support.host_resolv_conf:
             self.stages.append(_StepImage("Configure host DNS", self, "dns"))
         if self.support.backend == "apple":
-            self.stages.append(_StepImage("Stop build VM", self, "shutdown"))
+            self.stages.append(_StepImage("Stop Runner", self, "shutdown"))
 
     def name(self) -> str:
         return self.build.stage_name
@@ -1091,7 +1088,7 @@ class _StepImage(MultiStageProcessStage):
                     raise RuntimeError(error)
                 self._check_canceled()
                 if self.operation == "machine":
-                    self.log("Build machine is ready")
+                    self.log("Build runner is ready")
                 elif self.operation == "cache":
                     self._prepare_cached_image(connection)
                 elif self.operation == "image":
@@ -1289,7 +1286,7 @@ class _StepImage(MultiStageProcessStage):
         if snapshot is None:
             raise RuntimeError("Select a Gentoo snapshot to emerge a custom kernel")
         stage = next((item for item in project.stages if item.id == process.build.stage_id), None)
-        toolset = process.support.kernel_toolset or project.get_toolset()
+        toolset = process.support.kernel_toolset
         if toolset is None:
             raise RuntimeError("A Gentoo toolset is required to build a custom kernel")
         overlays = _stage_overlays(project, stage) if stage is not None else []

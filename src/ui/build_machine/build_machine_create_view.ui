@@ -6,16 +6,16 @@
   <requires lib="Adw" version="1.0"/>
 
   <!-- Template -->
-  <template class="BuildMachineCreateView" parent="GtkBox">
+  <template class="VMRunnerCreateView" parent="GtkBox">
     <child>
       <object class="WizardView" id="wizard_view">
         <signal name="is-page-ready-to-continue" handler="is_page_ready_to_continue"/>
         <signal name="begin-installation" handler="begin_installation"/>
         <property name="show_welcome_screen">True</property>
         <property name="welcome_screen_icon_name">virtual-machine-symbolic</property>
-        <property name="welcome_screen_title">Create Virtual Machine</property>
-        <property name="welcome_screen_description">A virtual machine runs toolsets on systems that can't build stages themselves, like macOS. It's a small Alpine Linux system created with Lima, prepared to build without root privileges. Folders of Catalyst Lab are shared with it.</property>
-        <property name="install_button_label">Create machine</property>
+        <property name="welcome_screen_title">Create VM runner</property>
+        <property name="welcome_screen_description">A VM runner provides a Linux execution environment for primary tools and loaded toolsets on macOS. It's a small Alpine Linux system created with Lima. Folders of Catalyst Lab are shared with it.</property>
+        <property name="install_button_label">Create runner</property>
 
         <!-- Page 1: Configuration -->
         <child>
@@ -34,12 +34,24 @@
                 <property name="spacing">12</property>
                 <child>
                   <object class="AdwPreferencesGroup">
-                    <property name="title">Machine</property>
+                    <property name="title">VM runner</property>
                     <property name="description">Lima is required, install it with Homebrew: brew install lima</property>
                     <child>
                       <object class="AdwEntryRow" id="name_row">
                         <property name="title">Name</property>
                         <signal name="changed" handler="on_name_changed"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow">
+                        <property name="title">Set as default runner</property>
+                        <property name="subtitle">Use this runner by default for actions that need one</property>
+                        <property name="activatable-widget">set_as_default_checkbox</property>
+                        <child type="prefix">
+                          <object class="GtkCheckButton" id="set_as_default_checkbox">
+                            <property name="valign">center</property>
+                          </object>
+                        </child>
                       </object>
                     </child>
                   </object>
@@ -56,7 +68,7 @@
                 <child>
                   <object class="AdwPreferencesGroup">
                     <property name="title">Resources</property>
-                    <property name="description">Machine itself takes only few hundred MB. While toolsets run, their working files are kept in working space, an image in Catalyst Lab folder that grows only as it's used and is deleted when they finish. Builds need space for extracted toolset, snapshot and stage.</property>
+                    <property name="description">The VM runner itself takes only a few hundred MB. While toolsets run, their working files are kept in a temporary workspace that grows as needed and is deleted when they finish. Builds need space for an extracted toolset, snapshot, and stage.</property>
                     <child>
                       <object class="AdwSpinRow" id="cpus_row">
                         <property name="title">CPUs</property>

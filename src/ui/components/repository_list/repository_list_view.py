@@ -4,6 +4,7 @@ from . import repositories as _repositories  # Register repository types before 
 from .multistage_process import MultiStageProcess, MultiStageProcessEvent, MultiStageProcessState
 from .status_indicator import StatusIndicator
 from .event_bus import SharedEvent
+from .settings import SettingsEvents
 
 # Import additional classed so that it can be parsed in repository_list_view:
 from .toolset_installation  import ToolsetInstallation
@@ -12,7 +13,7 @@ from .releng_installation   import RelengInstallation
 from .overlay_installation  import OverlayInstallation
 from .project_installation  import ProjectInstallation
 from .project_build_process import ProjectBuild
-from .build_machine_installation import BuildMachineInstallation
+from .build_machine_installation import VMRunnerInstallation
 from .deploy_installation import DeployInstallation
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/components/repository_list/repository_list_view.ui')
@@ -32,6 +33,7 @@ class RepositoryListView(Gtk.Box):
     add_item_row = Gtk.Template.Child()
     # Properties:
     title                          = GObject.Property(type=str, default=None)
+    description                    = GObject.Property(type=str, default=None)
     item_class_name                = GObject.Property(type=str, default=None)
     item_installation_class_name   = GObject.Property(type=str, default=None)
     item_icon                      = GObject.Property(type=str, default=None)
@@ -43,6 +45,8 @@ class RepositoryListView(Gtk.Box):
     add_button_title               = GObject.Property(type=str, default="Add item")
     show_installations             = GObject.Property(type=bool, default=True) # Rows of started processes of item_installation_class.
     preserve_item_order            = GObject.Property(type=bool, default=False)
+    show_default_toolset           = GObject.Property(type=bool, default=False)
+    show_default_runner            = GObject.Property(type=bool, default=False)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -50,6 +54,7 @@ class RepositoryListView(Gtk.Box):
 
     def on_realize(self, widget):
         self.preference_group.set_title(self.title)
+        self.preference_group.set_description(self.description or None)
         self.add_item_container.set_visible(self.show_add_button)
         self.add_item_row.set_title(self.add_button_title)
         self.item_installation_class = globals().get(self.item_installation_class_name)
@@ -61,6 +66,16 @@ class RepositoryListView(Gtk.Box):
             RepositoryEvent.VALUE_CHANGED,
             self.items_updated
         )
+        if self.show_default_toolset:
+            Repository.Settings.value.event_bus.subscribe(
+                SettingsEvents.DEFAULT_TOOLSET_CHANGED,
+                self.items_updated
+            )
+        if self.show_default_runner:
+            Repository.Settings.value.event_bus.subscribe(
+                SettingsEvents.DEFAULT_RUNNER_CHANGED,
+                self.items_updated
+            )
         MultiStageProcess.event_bus.subscribe(
             MultiStageProcessEvent.STARTED_PROCESSES_CHANGED,
             self.items_installations_updated
@@ -88,6 +103,10 @@ class RepositoryListView(Gtk.Box):
         self._item_rows = []
 
         items = self.repository.value
+        default_toolset_group = Gtk.CheckButton() if self.show_default_toolset else None
+        default_runner_group = getattr(self, "default_runner_group", None)
+        if self.show_default_runner and default_runner_group is None:
+            default_runner_group = Gtk.CheckButton()
         if self.preserve_item_order:
             # Rows are inserted at index 0 below, so reverse iteration preserves the repository's order on screen.
             items = reversed(items)
@@ -99,7 +118,15 @@ class RepositoryListView(Gtk.Box):
                     item_subtitle_property_name    = self.item_subtitle_property_name,
                     item_status_property_name      = self.item_status_property_name,
                     item_unsupported_property_name = self.item_unsupported_property_name,
-                    item_icon                      = self.item_icon
+                    item_icon                      = self.item_icon,
+                    default_toolset_group           = default_toolset_group,
+                    is_default_toolset              = (str(item.uuid) == Repository.Settings.value.default_toolset_id
+                                                       if self.show_default_toolset else False),
+                    on_default_toolset_selected     = self._on_default_toolset_selected if self.show_default_toolset else None,
+                    default_runner_group           = default_runner_group,
+                    is_default_runner               = (str(item.id) == Repository.Settings.value.default_runner_id
+                                                       if self.show_default_runner else False),
+                    on_default_runner_selected      = self._on_default_runner_selected if self.show_default_runner else None
                 )
             except Exception as error:
                 try:
@@ -127,6 +154,14 @@ class RepositoryListView(Gtk.Box):
             self._item_rows.append(installation_row)
 
         self.items_container.set_visible(self._item_rows)
+
+    def _on_default_toolset_selected(self, toolset):
+        if str(toolset.uuid) != Repository.Settings.value.default_toolset_id:
+            Repository.Settings.value.default_toolset_id = str(toolset.uuid)
+
+    def _on_default_runner_selected(self, runner):
+        if str(runner.id) != Repository.Settings.value.default_runner_id:
+            Repository.Settings.value.default_runner_id = str(runner.id)
 
     @staticmethod
     def _broken_item_row(name: str, error: Exception | str) -> Adw.ActionRow:
@@ -162,7 +197,13 @@ class ItemRow(Adw.ActionRow):
         item_status_property_name,
         item_unsupported_property_name,
         item_icon,
-        item_icon_resolver = None
+        item_icon_resolver = None,
+        default_toolset_group = None,
+        is_default_toolset = False,
+        on_default_toolset_selected = None,
+        default_runner_group = None,
+        is_default_runner = False,
+        on_default_runner_selected = None,
     ):
         # Icon of item itself (icon_name attribute or resolver) is used instead of icon of list.
         icon_name = item_icon_resolver(item) if item_icon_resolver else None
@@ -175,6 +216,22 @@ class ItemRow(Adw.ActionRow):
         self.item_status_property_name = item_status_property_name
         self.item_subtitle_property_name = item_subtitle_property_name
         self.item_unsupported_property_name = item_unsupported_property_name
+        if default_toolset_group is not None:
+            self.default_toolset_button = Gtk.CheckButton(valign=Gtk.Align.CENTER)
+            self.default_toolset_button.set_group(default_toolset_group)
+            self.default_toolset_button.set_active(is_default_toolset)
+            self.default_toolset_button.set_tooltip_text("Use this as the default toolset for actions")
+            self.default_toolset_button.connect("toggled", self._on_default_toolset_toggled,
+                                                on_default_toolset_selected)
+            self.add_suffix(self.default_toolset_button)
+        if default_runner_group is not None:
+            self.default_runner_button = Gtk.CheckButton(valign=Gtk.Align.CENTER)
+            self.default_runner_button.set_group(default_runner_group)
+            self.default_runner_button.set_active(is_default_runner)
+            self.default_runner_button.set_tooltip_text("Use this as the default runner for actions")
+            self.default_runner_button.connect("toggled", self._on_default_runner_toggled,
+                                               on_default_runner_selected)
+            self.add_suffix(self.default_runner_button)
         # Unsupported status:
         if self.item_unsupported_property_name:
             if getattr(self.item, self.item_unsupported_property_name, False):
@@ -200,6 +257,14 @@ class ItemRow(Adw.ActionRow):
                 getattr(self.item, self.item_subtitle_property_name, None)
             )
             self.setup_status_indicator()
+
+    def _on_default_toolset_toggled(self, button, callback):
+        if button.get_active() and callback:
+            callback(self.item)
+
+    def _on_default_runner_toggled(self, button, callback):
+        if button.get_active() and callback:
+            callback(self.item)
 
     def setup_status_indicator(self):
         if self.item_status_property_name is None or not hasattr(self.item, self.item_status_property_name):

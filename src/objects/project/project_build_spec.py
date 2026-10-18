@@ -29,6 +29,7 @@ class StageSpecContext:
     timestamp: str          # Replaces @TIMESTAMP@.
     source_subpath: str     # Seed, relative to catalyst builds directory.
     portage_confdir: str | None # Generated portage configuration, as seen by catalyst.
+    toolset: object | None = None # Toolset selected for this build.
     cache_paths: dict = field(default_factory=dict) # Enabled caches (pkgcache_path, kerncache_path), as seen by catalyst.
     root_overlay: str | None = None # Generated root overlay, as seen by catalyst.
     iso_overlay: str | None = None # Generated ISO overlay (livecd/overlay), as seen by catalyst.
@@ -46,7 +47,7 @@ def snapshot_treeish(project_directory, snapshot=None) -> str | None:
 
 def generate_stage_spec(project_directory, stage, context: StageSpecContext) -> str:
     """Spec file contents, with automatic options resolved and placeholders replaced. Raises if required value is missing."""
-    arguments = load_catalyst_stage_arguments_details(toolset=project_directory.get_toolset(), target_name=stage.target)
+    arguments = load_catalyst_stage_arguments_details(toolset=context.toolset, target_name=stage.target)
     releng_directory = project_directory.get_releng_directory()
     mapped = context.path_mapper or (lambda path: path)
     placeholders = {

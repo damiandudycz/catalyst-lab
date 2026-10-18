@@ -41,7 +41,7 @@ def request_shutdown(window) -> bool:
     if queued_count:
         body_items.append(f"• {queued_count} queued build{'s' if queued_count != 1 else ''}")
     body = ("These operations are still running:\n\n" + "\n".join(body_items)
-            + "\n\nClosing will cancel the operations and stop app-managed machines.")
+            + "\n\nClosing will cancel the operations and stop app-managed VM runners.")
     dialog = Adw.AlertDialog(heading="Close Catalyst Lab?", body=body)
     dialog.add_response("keep", "Keep open")
     dialog.add_response("close", "Close and cancel")
@@ -102,9 +102,9 @@ class ShutdownDialog(Adw.Dialog):
             self._steps.append((f"Stop {run.name} in QEMU", lambda run=run: self._stop_qemu(run)))
 
         from .repository import Repository
-        for machine in Repository.BuildMachine.value:
+        for machine in Repository.Runner.value:
             if machine.is_running and machine.stops_when_unused:
-                self._steps.append((f"Stop virtual machine {machine.name}", machine.stop_if_started_automatically))
+                self._steps.append((f"Stop VM runner {machine.name}", machine.stop_if_started_automatically))
 
         from .root_helper_client import RootHelperClient
         helper = RootHelperClient.shared()
