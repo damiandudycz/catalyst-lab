@@ -1,5 +1,5 @@
 from __future__ import annotations
-import base64, functools, hashlib, json, os, re, shlex, shutil, signal, subprocess, tempfile, threading, uuid
+import functools, hashlib, json, os, re, shlex, shutil, signal, subprocess, tempfile, threading, uuid
 from .repository import Repository, resolve_path
 
 # Code-level switch while validating the extracted toolset flow.
@@ -27,7 +27,7 @@ _NAMESPACE_LAUNCHER = r'''
 set -u
 INNER=$(mktemp); FIFO=$(mktemp -u)
 trap 'rm -f "$INNER" "$FIFO"' EXIT
-cat "$1" > "$INNER"
+cat "$1" > "$INNER" || exit $?
 mkfifo "$FIFO"
 read -r SUBUID_START SUBUID_COUNT < <(awk -F: -v u="$(id -un)" -v i="$(id -u)" '($1==u||$1==i){print $2, ($3>65536?65536:$3); exit}' /etc/subuid)
 read -r SUBGID_START SUBGID_COUNT < <(awk -F: -v u="$(id -un)" -v i="$(id -u)" '($1==u||$1==i){print $2, ($3>65536?65536:$3); exit}' /etc/subgid)
@@ -196,13 +196,39 @@ class LocalExecutor(Executor):
         return rootless_toolset_unsupported_reason()
 
     def start(self, script: str, namespace: bool = False) -> ExecutorProcess:
+        script_path = None
         if namespace:
-            arguments = ["bash", "-c", _NAMESPACE_LAUNCHER, "launcher", base64.b64encode(script.encode()).decode()]
+            # The namespace launcher expects $1 to be a script path. Passing the
+            # base64 script itself here made `cat "$1"` treat it as a filename,
+            # producing "Filename too long" for longer commands.
+            descriptor, script_path = tempfile.mkstemp(prefix="catalystlab-command-", suffix=".sh")
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as script_file:
+                    script_file.write(script)
+            except Exception:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+                os.unlink(script_path)
+                raise
+            arguments = ["bash", "-c", _NAMESPACE_LAUNCHER, "launcher", script_path]
         else:
             arguments = ["bash", "-c", script]
-        process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   start_new_session=True, text=True, errors="replace", bufsize=1)
-        return ExecutorProcess(process)
+        try:
+            process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       start_new_session=True, text=True, errors="replace", bufsize=1)
+        except Exception:
+            if script_path:
+                os.unlink(script_path)
+            raise
+        def cleanup_script():
+            if script_path:
+                try:
+                    os.unlink(script_path)
+                except FileNotFoundError:
+                    pass
+        return ExecutorProcess(process, on_exit=cleanup_script)
 
     def filesystem(self, request: dict) -> dict:
         return _filesystem_operations(request)

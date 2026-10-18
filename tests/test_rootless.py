@@ -91,6 +91,24 @@ class FilesystemOperationTests(unittest.TestCase):
 
 
 class ExecutorTests(unittest.TestCase):
+    def test_local_namespace_executor_passes_script_file_to_launcher_and_cleans_it(self):
+        process = Mock()
+        process.stdout = None
+        process.wait.return_value = 0
+        script = "echo " + ("payload" * 1000)
+
+        with patch('catalystlab.rootless.subprocess.Popen', return_value=process) as popen:
+            running = rootless.LocalExecutor().start(script, namespace=True)
+
+        arguments = popen.call_args.args[0]
+        script_path = arguments[-1]
+        self.assertTrue(os.path.isfile(script_path))
+        self.assertFalse(os.path.basename(script_path).startswith('.'))
+        self.assertEqual(Path(script_path).read_text(), script)
+        self.assertLess(len(script_path), 256)
+        running.wait()
+        self.assertFalse(os.path.exists(script_path))
+
     def test_path_containment_normalizes_parent_components_and_safely_rejects_other_roots(self):
         self.assertTrue(rootless.path_is_within('/library/Cache/Extracted', '/library/Cache'))
         self.assertTrue(rootless.path_is_within('/library/Cache', '/library/Cache'))
