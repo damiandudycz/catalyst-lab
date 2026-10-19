@@ -136,12 +136,12 @@ iso_base_packages = [
 ]
 # Additional packages and settings for the Raspberry Pi installation ISO.
 iso_extra_packages = "{{ ['net-misc/networkmanager', 'net-wireless/iwd', 'app-arch/lbzip2', 'app-arch/pigz', 'app-arch/zstd', 'sys-fs/sysfsutils', 'sys-process/lsof'] + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
-iso_services = "{{ ([] if zram == 'off' else ['zram-init|boot']) + ['NetworkManager|default', 'chronyd|default'] + (['bluetooth|default'] if 'wireless' in groups else []) }}"
+iso_services = "{{ ([] if zram == 'off' else ['zram-init|boot']) + ['NetworkManager|default', 'chronyd|default'] + (['bluetooth|default'] if 'livecd_wireless' in groups else []) }}"
 livegui_stage1_name = "livegui-stage1-{{ init }}"
 livegui_stage2_name = "livegui-stage2-{{ init }}"
 # KDE Plasma with basic applications (Gentoo LiveGUI has many more, which take long to build) and installation tools.
 livegui_packages = "{{ iso_packages + ['kde-plasma/plasma-meta', 'x11-misc/sddm', 'kde-apps/konsole', 'kde-apps/dolphin', 'kde-apps/kate', 'www-client/firefox-bin', 'sys-block/gparted', 'app-admin/sudo', 'app-editors/nano', 'app-misc/tmux', 'sys-apps/pciutils', 'sys-process/htop'] }}"
-livegui_services = "{{ ([] if zram == 'off' else ['zram-init|boot']) + ['udev|sysinit', 'udev-mount|sysinit', 'elogind|boot', 'dbus|default', 'NetworkManager|default', 'display-manager|default'] + (['bluetooth|default'] if 'wireless' in groups else []) }}"
+livegui_services = "{{ ([] if zram == 'off' else ['zram-init|boot']) + ['udev|sysinit', 'udev-mount|sysinit', 'elogind|boot', 'dbus|default', 'NetworkManager|default', 'display-manager|default'] + (['bluetooth|default'] if 'livecd_wireless' in groups else []) }}"
 gnome_stage4_name = "stage4-gnome-{{ init }}"
 gnome_extras_stage4_name = "stage4-gnome-customized-{{ init }}"
 plasma_stage4_name = "stage4-plasma-{{ init }}"
@@ -395,13 +395,22 @@ id = "wireless"
 title = "Wi-Fi and Bluetooth"
 description = "Firmware of wireless chip and Bluetooth service."
 default = true
-when = "'stage4' in extra_stages or 'gnome' in extra_stages or 'plasma' in extra_stages or 'iso' in extra_stages or 'iso_gui' in extra_stages"
-# Live CDs get firmware in stage1 (stage2 is built from it), their services add Bluetooth.
-stages = ["stage4", "stage4-gnome", "stage4-plasma", "livecd-stage1", "livegui-stage1"]
+when = "'stage4' in extra_stages or 'gnome' in extra_stages or 'plasma' in extra_stages"
+# Installed systems get firmware in stage4.
+stages = ["stage4", "stage4-gnome", "stage4-plasma"]
 [groups.arguments]
 stage4_packages = ["sys-firmware/raspberrypi-wifi-ucode", "net-wireless/bluez"]
-livecd_packages = ["sys-firmware/raspberrypi-wifi-ucode", "net-wireless/bluez"]
 stage4_rcadd = "{{ ['bluetooth|default'] if openrc else [] }}"
+
+[[groups]]
+id = "livecd_wireless"
+title = "Live CD Wi-Fi and Bluetooth"
+description = "Firmware and Bluetooth support in the Live CD stages."
+default = true
+when = "'iso' in extra_stages or 'iso_gui' in extra_stages"
+stages = ["livecd-stage1", "livegui-stage1"]
+[groups.arguments]
+livecd_packages = ["sys-firmware/raspberrypi-wifi-ucode", "net-wireless/bluez"]
 
 [[groups]]
 id = "utilities"

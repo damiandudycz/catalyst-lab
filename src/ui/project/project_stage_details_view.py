@@ -382,7 +382,8 @@ class ProjectStageDetailsView(Gtk.Box):
                                       hscrollbar_policy=Gtk.PolicyType.NEVER,
                                       max_content_height=320, propagate_natural_height=True)
         list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE,
-                               css_classes=["boxed-list", "toolset-chooser"])
+                               css_classes=["boxed-list", "toolset-chooser"],
+                               margin_top=4, margin_bottom=4, margin_start=4, margin_end=4)
         scroller.set_child(list_box)
         content.append(scroller)
 

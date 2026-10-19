@@ -203,15 +203,16 @@ row.customized-setting > box > box > label.title {
   font-weight: 700;
 }
 .toolset-chooser.boxed-list > row.default-toolset-row {
-  background-color: alpha(@accent_bg_color, 0.28);
+  background-color: @accent_bg_color;
   background-image: none;
 }
 .toolset-chooser.boxed-list > row.default-toolset-row:hover {
-  background-color: alpha(@accent_bg_color, 0.42);
+  background-color: @accent_color;
   background-image: none;
 }
 .toolset-chooser.boxed-list > row.default-toolset-row image,
-.toolset-chooser.boxed-list > row.default-toolset-row label.title {
+.toolset-chooser.boxed-list > row.default-toolset-row label.title,
+.toolset-chooser.boxed-list > row.default-toolset-row label.subtitle {
   color: @accent_fg_color;
 }
 /* Expander rows nested in expanded expander row (eg. list settings of kernel): Adwaita styles arrows of all rows

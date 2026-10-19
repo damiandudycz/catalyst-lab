@@ -110,11 +110,17 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
     def test_raspberry_pi_install_iso_uses_explicit_packages_without_generic_firmware(self):
         with tempfile.TemporaryDirectory() as temporary:
             stages = self.generate(Path(temporary), 'openrc')
+            for stage_id in ('stage4', 'stage4-gnome', 'stage4-plasma'):
+                self.assertNotIn('livecd_packages', stages[stage_id].arguments)
             livecd_packages = stages['livecd-stage1'].arguments['livecd_packages']
             self.assertNotIn('@releng', livecd_packages)
             self.assertNotIn('sys-kernel/linux-firmware', livecd_packages)
             self.assertIn('sys-firmware/raspberrypi-wifi-ucode', livecd_packages)
+            self.assertIn('net-wireless/bluez', livecd_packages)
             self.assertIn('app-misc/livecd-tools', livecd_packages)
+            livegui_packages = stages['livegui-stage1'].arguments['livecd_packages']
+            self.assertIn('sys-firmware/raspberrypi-wifi-ucode', livegui_packages)
+            self.assertIn('net-wireless/bluez', livegui_packages)
 
     def test_accept_all_license_toggle_gates_stage4_and_license_file(self):
         for selected in (False, True):
