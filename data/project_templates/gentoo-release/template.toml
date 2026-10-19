@@ -98,6 +98,13 @@ type = "boolean"
 default = false
 
 [[variables]]
+id = "accept_all_licenses"
+title = "Accept all licenses"
+description = "Required to enable stage4 builds because selected system packages may have restricted licenses. When enabled, accepts all licenses for the stage4 through package.license. Does not affect stage1, stage3, or ISO builds."
+type = "boolean"
+default = false
+
+[[variables]]
 id = "init"
 title = "Init system"
 default = "openrc"
@@ -124,7 +131,7 @@ description = "Select optional stage4 systems and ISO builds based on official G
 type = "multiple"
 default = []
 options = [
-    { value = "stage4", title = "Stage4" },
+    { value = "stage4", title = "Stage4", when = "accept_all_licenses" },
     { value = "iso", title = "Installation ISO", when = "init == 'openrc' and (architecture in ['amd64', 'arm64', 'ppc', 'ppc64le'] or variant in ['sparc64', 'i486'])" },
     { value = "livegui", title = "LiveGUI ISO", when = "architecture == 'amd64' and init == 'openrc'" },
 ]
@@ -154,6 +161,11 @@ source = "files/emulation/portage_confdir"
 destination = "stages/stage1-{{ init }}/portage"
 when = "strip_avx512_for_emulation"
 
+[[files]]
+source = "files/accept-all-licenses"
+destination = "stages/{{ stage4_name }}/portage"
+when = "accept_all_licenses and 'stage4' in extra_stages"
+
 [[stages]]
 id = "stage1"
 name = "stage1-{{ init }}"
@@ -176,7 +188,7 @@ id = "stage4"
 parent = "stage3"
 name = "{{ stage4_name }}"
 target = "stage4"
-when = "'stage4' in extra_stages"
+when = "accept_all_licenses and 'stage4' in extra_stages"
 [stages.arguments]
 stage4_packages = "{{ stage4_packages }}"
 stage4_rcadd = "{{ stage4_services }}"
@@ -228,7 +240,7 @@ id = "kernel"
 title = "Kernel and firmware"
 description = "Distribution kernel (gentoo-kernel-bin) with initramfs, and firmware."
 default = true
-when = "'stage4' in extra_stages and architecture in ['amd64', 'arm64', 'ppc64', 'ppc64le', 'x86']"
+when = "accept_all_licenses and 'stage4' in extra_stages and architecture in ['amd64', 'arm64', 'ppc64', 'ppc64le', 'x86']"
 stages = ["stage4"]
 [groups.arguments]
 stage4_packages = ["sys-kernel/gentoo-kernel-bin", "sys-kernel/linux-firmware"]
@@ -241,7 +253,7 @@ id = "bootloader"
 title = "GRUB bootloader"
 description = "Installed in system, configured when deploying."
 default = true
-when = "'stage4' in extra_stages and architecture in ['amd64', 'arm64', 'ppc64', 'ppc64le', 'x86']"
+when = "accept_all_licenses and 'stage4' in extra_stages and architecture in ['amd64', 'arm64', 'ppc64', 'ppc64le', 'x86']"
 stages = ["stage4"]
 [groups.arguments]
 stage4_packages = ["sys-boot/grub"]
@@ -252,7 +264,7 @@ title = "sudo"
 description = "Members of wheel group can run commands as root."
 default = true
 stages = ["stage4"]
-when = "'stage4' in extra_stages"
+when = "accept_all_licenses and 'stage4' in extra_stages"
 [groups.arguments]
 stage4_packages = ["app-admin/sudo"]
 [[groups.files]]
@@ -263,7 +275,7 @@ destination = "root_overlay"   # Files added to root of stage.
 id = "editors"
 title = "vim"
 stages = ["stage4"]
-when = "'stage4' in extra_stages"
+when = "accept_all_licenses and 'stage4' in extra_stages"
 [groups.arguments]
 stage4_packages = ["app-editors/vim"]
 
@@ -272,7 +284,7 @@ id = "tools"
 title = "Administration tools"
 description = "htop, tmux, lsof, pciutils and usbutils."
 stages = ["stage4"]
-when = "'stage4' in extra_stages"
+when = "accept_all_licenses and 'stage4' in extra_stages"
 [groups.arguments]
 stage4_packages = ["sys-process/htop", "app-misc/tmux", "sys-process/lsof", "sys-apps/pciutils", "sys-apps/usbutils"]
 

@@ -14,6 +14,8 @@ LiveGUI ISO under Extra stages; all are optional and off by default.
 - Installation ISO: where releng has installcd specs, built from OpenRC stage3.
 - LiveGUI ISO: amd64/OpenRC only, based on the Releng desktop stage3 and LiveGUI specs, including its Releng kernel settings.
 - Software of stage4: kernel and firmware, GRUB, sudo, vim, administration tools. Stage4 is optional.
+- Stage4 builds are unavailable until **Accept all licenses** is enabled. This opt-in applies `*/* *` to the stage4
+  Portage configuration only; stage1, stage3, and ISO builds are unaffected.
 
 Stage build identities include the selected init system. Switching between OpenRC and systemd keeps the same
 stage layout and creates new stage IDs, preventing reuse of builds from the previous init system.

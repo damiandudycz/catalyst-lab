@@ -30,6 +30,13 @@ type = "boolean"
 default = false
 
 [[variables]]
+id = "accept_all_licenses"
+title = "Accept all licenses"
+description = "Required to enable stage4 builds because selected PS3 system packages may have restricted licenses. When enabled, accepts all licenses for selected stage4 builds through package.license. Does not affect stage1, stage3, or the installation ISO."
+type = "boolean"
+default = false
+
+[[variables]]
 id = "extra_stages"
 title = "Extra stages"
 section = "Extra stages"
@@ -37,8 +44,8 @@ description = "Select the console stage4, optional Xfce stage4, or a live instal
 type = "multiple"
 default = []
 options = [
-    { value = "stage4", title = "Console stage4" },
-    { value = "xfce", title = "Xfce stage4", when = "init == 'openrc'" },
+    { value = "stage4", title = "Console stage4", when = "accept_all_licenses" },
+    { value = "xfce", title = "Xfce stage4", when = "accept_all_licenses and init == 'openrc'" },
     { value = "iso", title = "Installation ISO", when = "init == 'openrc'" },
 ]
 
@@ -56,7 +63,7 @@ options = [
 [values]
 openrc = "{{ init == 'openrc' }}"
 iso = "{{ 'iso' in extra_stages }}"
-with_desktop = "{{ 'xfce' in extra_stages }}"
+with_desktop = "{{ accept_all_licenses and 'xfce' in extra_stages }}"
 common_flags = "-O2 -pipe -mcpu=cell -mtune=cell -mabi=altivec -mno-string -mno-update -mno-multiple{{ ' -flto -Werror=odr -Werror=lto-type-mismatch -Werror=strict-aliasing' if lto else '' }}"
 stage1_name = "stage1-{{ init }}"
 stage4_name = "stage4-{{ init }}"
@@ -94,7 +101,7 @@ id = "stage4"
 parent = "stage3"
 name = "{{ stage4_name }}"
 target = "stage4"
-when = "'stage4' in extra_stages"
+when = "accept_all_licenses and 'stage4' in extra_stages"
 [stages.arguments]
 stage4_use = ["ps3", "dist-kernel"]
 stage4_packages = "{{ base_packages }}"
@@ -171,11 +178,21 @@ destination = "stages/{{ stage1_name }}"
 [[files]]
 source = "files/stage4"
 destination = "stages/{{ stage4_name }}"
-when = "'stage4' in extra_stages"
+when = "accept_all_licenses and 'stage4' in extra_stages"
+
+[[files]]
+source = "files/accept-all-licenses"
+destination = "stages/{{ stage4_name }}/portage"
+when = "accept_all_licenses and 'stage4' in extra_stages"
 
 [[files]]
 source = "files/stage4"
 destination = "stages/{{ desktop_stage4_name }}"
+when = "with_desktop"
+
+[[files]]
+source = "files/accept-all-licenses"
+destination = "stages/{{ desktop_stage4_name }}/portage"
 when = "with_desktop"
 
 [[files]]
@@ -194,7 +211,7 @@ title = "Development tools"
 description = "git, eselect-repository, distcc and kernel headers."
 default = true
 stages = ["stage4", "stage4-desktop"]
-when = "'stage4' in extra_stages or 'xfce' in extra_stages"
+when = "accept_all_licenses and ('stage4' in extra_stages or 'xfce' in extra_stages)"
 [groups.arguments]
 stage4_packages = ["dev-vcs/git", "app-eselect/eselect-repository", "sys-devel/distcc", "sys-kernel/linux-headers"]
 

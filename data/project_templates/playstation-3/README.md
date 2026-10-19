@@ -13,6 +13,8 @@ stage1 ─┬─ stage3 ─┬─ stage4                       (optional console
   NetworkManager, SSH and NTP. Optional zram swap and development tools.
 - PS3 packages come from [ps3-gentoo-overlay](https://github.com/damiandudycz/ps3-gentoo-overlay), which is added to
   Catalyst Lab when the project is created.
+- Stage4 builds are unavailable until **Accept all licenses** is enabled. This opt-in applies `*/* *` to selected
+  stage4 Portage configurations only; stage1, stage3, and the installation ISO are unaffected.
 
 - Installation ISO (optional, OpenRC): live system with PS3 kernel built by Catalyst (`boot/kernel: ps3`, distribution
   kernel with dracut live initramfs), PS3 Gentoo installer and tools of Gentoo minimal installation ISO. petitboot
