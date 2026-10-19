@@ -42,7 +42,7 @@ RDEPEND="
 	sys-auth/polkit
 	sys-fs/squashfs-tools
 	vm-runners? (
-		app-emulation/qemu
+		app-emulation/qemu[virtfs]
 		net-misc/openssh
 	)
 	deploy? (

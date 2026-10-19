@@ -60,6 +60,38 @@ class VMRunnerConfigTests(unittest.TestCase):
         self.assertIsNone(warning)
         close.assert_called_once_with(42)
 
+    def test_lima_environment_forces_tcg_when_kvm_device_is_inaccessible(self):
+        with patch.object(lima.sys, 'platform', 'linux'), \
+             patch.object(lima.platform, 'machine', return_value='aarch64'), \
+             patch.object(lima.os, 'open', side_effect=PermissionError), \
+             patch.object(lima.os, 'makedirs'), \
+             patch.dict(lima.os.environ, {}, clear=True):
+            environment = lima.lima_environment('/tmp/lima-test')
+
+        self.assertEqual(environment['QEMU_SYSTEM_AARCH64'],
+                         'qemu-system-aarch64 -machine virt,accel=tcg -cpu max')
+
+    def test_lima_environment_preserves_custom_qemu_override(self):
+        custom = 'my-qemu-wrapper'
+        with patch.object(lima.sys, 'platform', 'linux'), \
+             patch.object(lima.platform, 'machine', return_value='aarch64'), \
+             patch.object(lima.os, 'open', side_effect=PermissionError), \
+             patch.object(lima.os, 'makedirs'), \
+             patch.dict(lima.os.environ, {'QEMU_SYSTEM_AARCH64': custom}, clear=True):
+            environment = lima.lima_environment('/tmp/lima-test')
+
+        self.assertEqual(environment['QEMU_SYSTEM_AARCH64'], custom)
+
+    def test_qemu_9p_warning_when_device_is_not_available(self):
+        result = types.SimpleNamespace(returncode=0, stdout='name "virtio-blk-pci"', stderr='')
+        with patch.object(lima.sys, 'platform', 'linux'), \
+             patch.object(lima.platform, 'machine', return_value='aarch64'), \
+             patch.object(lima.shutil, 'which', return_value='/usr/bin/qemu-system-aarch64'), \
+             patch.object(lima.subprocess, 'run', return_value=result):
+            warning = lima.qemu_9p_unavailable_warning()
+
+        self.assertIn('virtio-9p-pci', warning)
+
     def test_linux_discovers_private_gentoo_lima_binary(self):
         private_path = '/usr/libexec/catalyst-lab/lima/bin/limactl'
         with patch.object(lima.sys, 'platform', 'linux'), \

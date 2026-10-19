@@ -67,8 +67,8 @@
                 </child>
                 <child>
                   <object class="AdwActionRow" id="kvm_warning_row">
-                    <property name="title">Hardware acceleration unavailable</property>
-                    <property name="subtitle">KVM access is not available.</property>
+                    <property name="title">VM runner setup note</property>
+                    <property name="subtitle">Some VM runner requirements are unavailable.</property>
                     <property name="visible">False</property>
                     <style>
                       <class name="warning"/>

@@ -111,8 +111,46 @@ def lima_environment(home: str | None = None) -> dict:
     """Environment of limactl, with Lima directory of machine (or for new machines)."""
     environment = dict(os.environ)
     environment["LIMA_HOME"] = home or lima_home()
+    if issue := _kvm_access_issue():
+        # Lima 2.2.x checks only that /dev/kvm exists. If it exists but this process
+        # cannot open it, Lima still chooses KVM and QEMU exits with EACCES. QEMU's
+        # system override accepts extra arguments; set both conflicting options so
+        # Lima's later defaults cannot re-enable KVM or select CPU type "host".
+        qemu_arch, machine = _native_qemu_configuration()
+        override = f"QEMU_SYSTEM_{qemu_arch.upper()}"
+        if qemu_arch and override not in environment:
+            environment[override] = f"qemu-system-{qemu_arch} -machine {machine},accel=tcg -cpu max"
     os.makedirs(environment["LIMA_HOME"], exist_ok=True)
     return environment
+
+def _native_qemu_configuration() -> tuple[str | None, str | None]:
+    """QEMU executable architecture and machine for the current native Linux host."""
+    return {
+        "aarch64": ("aarch64", "virt"),
+        "arm64": ("aarch64", "virt"),
+        "armv7l": ("arm", "virt"),
+        "x86_64": ("x86_64", "q35"),
+        "amd64": ("x86_64", "q35"),
+        "riscv64": ("riscv64", "virt,acpi=off"),
+        "ppc64le": ("ppc64", "pseries"),
+        "s390x": ("s390x", "s390-ccw-virtio"),
+    }.get(platform.machine().lower(), (None, None))
+
+def _kvm_access_issue() -> str | None:
+    """Returns why the current Linux process cannot use KVM, if applicable."""
+    if not sys.platform.startswith("linux") or _native_qemu_configuration()[0] is None:
+        return None
+    try:
+        descriptor = os.open("/dev/kvm", os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
+    except FileNotFoundError:
+        return "KVM is unavailable (/dev/kvm was not found). VM runners will use slower software emulation."
+    except PermissionError:
+        return "Your account cannot access /dev/kvm. Add it to the kvm group, then log out and back in to enable hardware acceleration."
+    except OSError as error:
+        return f"KVM is unavailable ({error}). VM runners may use slower software emulation."
+    else:
+        os.close(descriptor)
+        return None
 
 def limactl_path() -> str | None:
     if sys.platform.startswith("linux"):
@@ -133,19 +171,26 @@ def lima_unavailable_reason() -> str | None:
 
 def kvm_access_warning() -> str | None:
     """Explains when Linux VM runners cannot use hardware acceleration."""
-    if not sys.platform.startswith("linux") or platform.machine().lower() not in ("aarch64", "arm64", "x86_64", "amd64"):
+    return _kvm_access_issue()
+
+def qemu_9p_unavailable_warning() -> str | None:
+    """Explains when the host QEMU lacks the 9p device required by Linux runner mounts."""
+    if not sys.platform.startswith("linux"):
         return None
+    qemu_arch, _machine = _native_qemu_configuration()
+    if not qemu_arch:
+        return None
+    executable = shutil.which(f"qemu-system-{qemu_arch}")
+    if not executable:
+        return None # Lima reports the missing QEMU executable when the runner is started.
     try:
-        descriptor = os.open("/dev/kvm", os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
-    except FileNotFoundError:
-        return "KVM is unavailable (/dev/kvm was not found). VM runners will use slower software emulation."
-    except PermissionError:
-        return "Your account cannot access /dev/kvm. Add it to the kvm group, then log out and back in to enable hardware acceleration."
-    except OSError as error:
-        return f"KVM is unavailable ({error}). VM runners may use slower software emulation."
-    else:
-        os.close(descriptor)
+        result = subprocess.run([executable, "-device", "help"], capture_output=True, text=True,
+                                 timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
         return None
+    if result.returncode == 0 and "virtio-9p-pci" not in result.stdout + result.stderr:
+        return "This QEMU build lacks virtio-9p-pci, which Lima needs to share folders. On Gentoo, enable the virtfs USE flag for app-emulation/qemu."
+    return None
 
 def list_instances(home: str | None = None) -> dict[str, dict]:
     """Lima instances by name, with their status (Running, Stopped...)."""
