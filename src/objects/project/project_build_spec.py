@@ -212,9 +212,9 @@ def generate_portage_confdir(project_directory, stage, destination: str) -> bool
 # Root overlay:
 
 def generate_root_overlay(project_directory, stage, destination: str, argument: StageArgumentDetails | None = None) -> bool:
-    """Combines selected root overlay sources into destination folder (releng template overlays, parent overlays,
-    stage overlay). Later sources overwrite files of earlier ones. Returns false if stage doesn't use root overlay or
-    none of its folders exists."""
+    """Combines selected root overlay sources into destination folder (Releng overlays and the stage overlay).
+    Later sources overwrite earlier ones. Parent overlays are already in the parent's built filesystem. Returns false
+    if stage doesn't use root overlay or none of its folders exists."""
     if not root_overlay_values(project_directory, stage, argument):
         return False
     folders = [folder for folder in root_overlay_folders(project_directory, stage, argument) if os.path.isdir(folder)]

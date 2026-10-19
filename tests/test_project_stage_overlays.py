@@ -21,9 +21,10 @@ from catalystlab.project_stage_portage_confdir import (
     StagePortageConfdirSource as Source, count_files, default_portage_confdir_sources,
     overlay_stages, parent_overlay_stages, portage_confdir_options, portage_confdir_sources,
     parent_root_overlay_stages, releng_portage_variant, remove_inherited_files, remove_stage_overlays_inherited_files,
-    root_overlay_argument, root_overlay_folders, root_overlay_options, root_overlay_stages,
+    root_overlay_argument, root_overlay_folders, root_overlay_options,
     root_overlay_values, stage_overlay_path, stage_root_overlay_path,
 )
+from catalystlab.project_template import _enable_stage_overlays
 
 
 class FakeProject:
@@ -107,6 +108,31 @@ class PortageOverlayTests(unittest.TestCase):
 
 
 class RootOverlayTests(unittest.TestCase):
+    def test_template_overlay_default_does_not_inherit_from_parent_without_root_overlay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = stage('parent', target='stage3')
+            child = stage('child', target='stage4', parent=parent.id)
+            project = FakeProject(directory, [parent, child])
+            overlay = Path(stage_root_overlay_path(project, child))
+            overlay.mkdir(parents=True)
+            (overlay / 'config').write_text('root overlay')
+
+            _enable_stage_overlays(project, child, log=lambda _line: None)
+
+            self.assertEqual(child.stage4_root_overlay, [Source.RELENG, Source.STAGE_OVERLAY])
+
+    def test_template_overlay_removes_explicit_parent_source_when_parent_target_lacks_it(self):
+        parent = stage('parent', target='stage3')
+        child = stage('child', target='stage4', parent=parent.id,
+                      root_overlay=[Source.PARENT_OVERLAY, Source.STAGE_OVERLAY])
+        project = FakeProject('/project', [parent, child])
+
+        from catalystlab.project_stage import remove_unsupported_parent_options
+        changed = remove_unsupported_parent_options(project, child, toolset=None)
+
+        self.assertIn(StageArgumentDetails.stage4_root_overlay.value, changed)
+        self.assertEqual(child.stage4_root_overlay, [Source.STAGE_OVERLAY])
+
     def test_root_overlay_argument_and_sources(self):
         self.assertEqual(root_overlay_argument(stage('s', target='stage4')), StageArgumentDetails.stage4_root_overlay)
         self.assertEqual(root_overlay_argument(stage('s', target='livecd_stage2')), StageArgumentDetails.livecd_root_overlay)
@@ -118,7 +144,7 @@ class RootOverlayTests(unittest.TestCase):
             self.assertEqual(root_overlay_values(project, item), [Source.RELENG, Source.PARENT_OVERLAY,
                              Source.STAGE_OVERLAY, '@PROJECT_DIR@/extra'])
 
-    def test_root_overlay_folders_combine_releng_parent_and_own_in_order(self):
+    def test_root_overlay_folders_skip_parent_sources_already_in_built_image(self):
         with tempfile.TemporaryDirectory() as directory:
             parent = stage('parent', target='stage4', root_overlay=[Source.STAGE_OVERLAY])
             child = stage('child', target='stage4', parent=parent.id,
@@ -128,8 +154,7 @@ class RootOverlayTests(unittest.TestCase):
             with patch('catalystlab.project_stage_value_resolver.load_stage_releng_template_values',
                        return_value={StageArgumentDetails.stage4_root_overlay.value: ['@REPO_DIR@/overlays/base']}):
                 folders = root_overlay_folders(project, child)
-            self.assertEqual(folders, ['/repo/overlays/base', stage_root_overlay_path(project, parent),
-                                       stage_root_overlay_path(project, child)])
+            self.assertEqual(folders, ['/repo/overlays/base', stage_root_overlay_path(project, child)])
             self.assertEqual(parent_root_overlay_stages(project, child), [parent])
 
     def test_root_overlay_options_reject_parent_for_stage3_and_name_iso_overlay(self):
@@ -147,6 +172,20 @@ class RootOverlayTests(unittest.TestCase):
             self.assertIn('ISO overlay defined by releng template', options[0].subtitle)
             self.assertTrue(options[1].unsupported)
             self.assertIn('overlay folder of stage', options[2].subtitle)
+
+    def test_root_overlay_parent_source_is_unsupported_even_for_parent_stage4(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = stage('parent', target='stage4', root_overlay=[Source.STAGE_OVERLAY])
+            child = stage('child', target='stage4', parent=parent.id)
+            project = FakeProject(directory, [parent, child])
+            resolver_module = types.ModuleType('catalystlab.project_stage_value_resolver')
+            resolver_module.load_stage_releng_template_values = lambda **_kwargs: None
+            with patch.dict(sys.modules, {'catalystlab.project_stage_value_resolver': resolver_module}):
+                options = root_overlay_options(project, child, StageArgumentDetails.stage4_root_overlay)
+
+            parent_option = next(option for option in options if option.value == Source.PARENT_OVERLAY)
+            self.assertTrue(parent_option.unsupported)
+            self.assertIn("Already included in the parent stage's built filesystem", parent_option.subtitle)
 
     def test_remove_inherited_files_keeps_changed_files_and_removes_empty_directories(self):
         with tempfile.TemporaryDirectory() as directory:

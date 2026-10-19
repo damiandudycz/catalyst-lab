@@ -635,9 +635,12 @@ class ProjectUpdate:
             from .repository import Repository
             project_directory.initialize_metadata().architecture = self.architecture
             Repository.ProjectDirectory.save()
-        if hasattr(project_directory, "_stages"):
-            del project_directory._stages # Stages are read again.
         from .git_directory import GitDirectoryEvent
+        # Replace both cached stage objects and any open stage-detail editors after
+        # files have been reset/rebased. CONTENT_CHANGED refreshes Git status; views
+        # listen for CONTENT_RELOADED to rebuild their stage rows and warnings.
+        project_directory.reload_contents()
+        project_directory.event_bus.emit(GitDirectoryEvent.CONTENT_RELOADED, project_directory)
         project_directory.event_bus.emit(GitDirectoryEvent.CONTENT_CHANGED, project_directory)
         project_directory.update_logs()
 

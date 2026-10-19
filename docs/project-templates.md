@@ -260,8 +260,9 @@ when = "init == 'openrc'"               # Optional.
 - Stage directories are `stages/<stage name>`. Their `portage` directory is Portage configuration of the stage,
   `root_overlay` its root overlay (files added to the root of stage4 or LiveCD), and `overlay` the ISO overlay of
   livecd-stage2 (files added to the ISO next to the live system). When a template adds files there, the stage uses
-  them: **Stage overlay** is added to its Portage confdir, root overlay or ISO overlay sources (after Releng and
-  parent sources). Groups are an easy way to add them only to selected stages.
+  them: **Stage overlay** is added to its Portage confdir, root overlay or ISO overlay sources. Parent root-overlay
+  files are already part of the parent stage's built filesystem and aren't reapplied as a separate source. Groups are
+  an easy way to add files only to selected stages.
 
 ## Updating projects
 

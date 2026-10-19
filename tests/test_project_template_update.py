@@ -6,6 +6,7 @@ import json
 import tempfile
 import types
 import unittest
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if 'catalystlab' not in sys.modules:
@@ -14,13 +15,37 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab.project_template_update import (
-    ProjectVersion, TemplateState, compare_versions, read_project_version, project_stage_baseline
+    ProjectUpdate, ProjectVersion, TemplateState, compare_versions, read_project_version, project_stage_baseline
 )
 from catalystlab.project_stage_baselines import STAGE_BASELINE_FILE, record_stage_creation_baseline
 from catalystlab.project_template_update import _replay_stage_baselines
+from catalystlab.git_directory import GitDirectoryEvent
 
 
 class ProjectTemplateUpdateTests(unittest.TestCase):
+    def test_apply_reloads_project_contents_for_open_stage_views(self):
+        project = Mock()
+        project.directory_path.return_value = "/project"
+        project.event_bus = Mock()
+        update = ProjectUpdate(
+            source="template", onto="new-commit", base="base-commit", changes=[],
+            temporary_directory="", fast_forward=True,
+        )
+
+        with patch("catalystlab.project_template_update.has_unsaved_changes", return_value=False), \
+                patch("catalystlab.project_template_update._git", side_effect=["old-commit", "", ""]):
+            update.apply(project, log=lambda _message: None)
+
+        project.reload_contents.assert_called_once_with()
+        self.assertEqual(
+            project.event_bus.emit.call_args_list[:2],
+            [
+                unittest.mock.call(GitDirectoryEvent.CONTENT_RELOADED, project),
+                unittest.mock.call(GitDirectoryEvent.CONTENT_CHANGED, project),
+            ],
+        )
+        project.update_logs.assert_called_once_with()
+
     def test_comparison_marks_template_only_changes_and_conflicts(self):
         base = ProjectVersion(entries={'README.md': b'base', 'config': b'base'})
         project = ProjectVersion(entries={'README.md': b'base', 'config': b'custom'})

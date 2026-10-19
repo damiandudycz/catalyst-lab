@@ -299,8 +299,11 @@ def target_argument_names(toolset: Toolset | None, target_name: str) -> frozense
     return _target_arguments_cache[key]
 
 def parent_supports_argument(project_directory, stage, argument: StageArgumentDetails | None, toolset=None) -> bool:
-    """Stage has parent whose target has the argument too, so its value can be inherited. Root overlay of parent is
-    root overlay argument of its target (eg. stage4/root_overlay for livecd/root_overlay)."""
+    """Whether a value can be inherited from a parent stage with the same target argument."""
+    # A root overlay is applied while building the parent image, so descendants
+    # already contain those files. Reapplying it as a separate source is invalid.
+    if argument in ROOT_OVERLAY_ARGUMENTS:
+        return False
     parent = parent_stage(project_directory, stage)
     if parent is None or argument is None:
         return False
@@ -315,8 +318,7 @@ def parent_supports_argument(project_directory, stage, argument: StageArgumentDe
     return True if names is None else argument.value in names # Assumed supported when arguments can't be read.
 
 def remove_unsupported_parent_options(project_directory, stage, toolset=None) -> list[str]:
-    """Removes inheriting from parent (inherit option, parent overlay source) from arguments whose value parent can't
-    give (its target doesn't have the argument). Arguments left empty are cleared. Returns changed arguments."""
+    """Removes parent inheritance from unsupported arguments, including all root-overlay inheritance. Returns changed arguments."""
     from .project_stage_portage_confdir import StagePortageConfdirSource
     parent_values = (StageAutomaticOption.INHERIT_FROM_PARENT, StagePortageConfdirSource.PARENT_OVERLAY)
     changed = []

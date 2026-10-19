@@ -73,9 +73,8 @@ common_flags = "-O2 -pipe -march=armv8-a"
             stage_module = types.ModuleType('catalystlab.project_stage')
             stage_module.ProjectStage = Stage
             stage_module.refresh_default_stage_arguments = defaults
-            stage_module.remove_unsupported_parent_options = Mock(
-                side_effect=AssertionError('validation must wait until a toolset is selected')
-            )
+            remove_unsupported = Mock(return_value=[])
+            stage_module.remove_unsupported_parent_options = remove_unsupported
             manager_module = types.ModuleType('catalystlab.project_manager')
             manager_module.ProjectManager = types.SimpleNamespace(
                 shared=lambda: types.SimpleNamespace(save_stage=lambda **_kwargs: None)
@@ -95,6 +94,7 @@ common_flags = "-O2 -pipe -march=armv8-a"
             self.assertEqual(project.stages[0].common_flags, '-O2 -pipe -march=armv8-a')
             self.assertIsNone(getattr(project.stages[0], "toolset_id", None))
             self.assertEqual(getattr(project.stages[0], '_explicit_user_argument_dates', {}), {})
+            remove_unsupported.assert_called_once_with(project, project.stages[0], toolset=None)
             defaults.assert_not_called()
 
 
