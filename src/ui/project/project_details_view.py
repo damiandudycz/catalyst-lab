@@ -282,8 +282,10 @@ class ProjectDetailsView(Gtk.Box):
         self.source_button.set_sensitive(not unsaved)
         if updates is True:
             self.source_button.add_css_class("source-updates-available")
+            self.source_button_label.remove_css_class("dim-label")
         else:
             self.source_button.remove_css_class("source-updates-available")
+            self.source_button_label.add_css_class("dim-label")
         self.source_button.set_tooltip_text(
             "Save or discard changes first" if unsaved
             else f"There are changes in {self._source}" if updates
