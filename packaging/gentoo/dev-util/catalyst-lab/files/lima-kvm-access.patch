@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] qemu: fall back to TCG when KVM cannot be opened
+
+--- a/pkg/driver/qemu/qemu.go
++++ b/pkg/driver/qemu/qemu.go
+@@ -1117,8 +1117,12 @@ func Accel(arch limatype.Arch) string {
+ 			}
+ 			return "hvf"
+ 		case "linux":
+-			if _, err := os.Stat("/dev/kvm"); err != nil {
+-				logrus.WithError(err).Warn("/dev/kvm is not available. Disabling KVM. Expect very poor performance.")
++			device, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
++			if err != nil {
++				logrus.WithError(err).Warn("/dev/kvm cannot be opened. Disabling KVM. Expect very poor performance.")
+ 				return "tcg"
+ 			}
++			if err := device.Close(); err != nil {
++				logrus.WithError(err).Warn("Failed to close /dev/kvm")
++			}
+ 			return "kvm"
+ 		case "netbsd":
+---
+ pkg/driver/qemu/qemu.go | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)

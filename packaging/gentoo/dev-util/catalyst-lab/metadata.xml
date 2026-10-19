@@ -12,7 +12,7 @@
 	</longdescription>
 	<use>
 		<flag name="deploy">Install tools for deploying builds to disks, disk images and live CD images</flag>
-		<flag name="lima">Build and install Lima in the Catalyst Lab package, with its Linux VM dependencies</flag>
+		<flag name="vm-runners">Build and install Lima in the Catalyst Lab package, with its Linux VM dependencies</flag>
 	</use>
 	<upstream>
 		<remote-id type="github">damiandudycz/catalyst-lab</remote-id>

@@ -19,7 +19,7 @@ else
 	SRC_URI="https://github.com/damiandudycz/catalyst-lab/archive/refs/tags/catalyst-lab-v${PV}.tar.gz -> ${P}.tar.gz"
 	KEYWORDS="~amd64 ~arm64"
 fi
-SRC_URI+=" lima? (
+SRC_URI+=" vm-runners? (
 	https://github.com/lima-vm/lima/archive/refs/tags/v${LIMA_VERSION}.tar.gz -> lima-${LIMA_VERSION}.tar.gz
 	https://github.com/lima-vm/lima/releases/download/v${LIMA_VERSION}/lima-${LIMA_VERSION}-go-mod-vendor.tar.gz
 )"
@@ -27,9 +27,9 @@ if [[ ${PV} != 9999 ]]; then
 	S="${WORKDIR}/catalyst-lab-catalyst-lab-v${PV}"
 fi
 
-LICENSE="GPL-3+ lima? ( Apache-2.0 BSD BSD-2 ISC MIT MPL-2.0 PostgreSQL Python-2.0 X11 ZLIB )"
+LICENSE="GPL-3+ vm-runners? ( Apache-2.0 BSD BSD-2 ISC MIT MPL-2.0 PostgreSQL Python-2.0 X11 ZLIB )"
 SLOT="0"
-IUSE="+deploy lima"
+IUSE="+deploy vm-runners"
 REQUIRED_USE="${PYTHON_REQUIRED_USE}"
 
 # Toolsets run in bubblewrap namespaces, mounted from squashfs images. Without unprivileged user namespaces, root
@@ -48,7 +48,7 @@ RDEPEND="
 	sys-apps/util-linux
 	sys-auth/polkit
 	sys-fs/squashfs-tools
-	lima? (
+	vm-runners? (
 		app-emulation/qemu
 		net-misc/openssh
 	)
@@ -65,7 +65,7 @@ BDEPEND="
 	${PYTHON_DEPS}
 	dev-util/glib-utils
 	sys-devel/gettext
-	lima? ( >=dev-lang/go-1.26.0 app-arch/gzip )
+	vm-runners? ( >=dev-lang/go-1.26.0 app-arch/gzip )
 "
 
 src_unpack() {
@@ -74,9 +74,12 @@ src_unpack() {
 	else
 		unpack "${P}.tar.gz"
 	fi
-	if use lima; then
+	if use vm-runners; then
 		unpack "lima-${LIMA_VERSION}.tar.gz"
 		local lima_src="${WORKDIR}/lima-${LIMA_VERSION}"
+		cd "${lima_src}" || die
+		eapply "${FILESDIR}/lima-kvm-access.patch"
+		cd "${S}" || die
 		tar -xf "${DISTDIR}/lima-${LIMA_VERSION}-go-mod-vendor.tar.gz" -C "${lima_src}" || die
 		go-env_set_compile_environment
 	fi
@@ -84,7 +87,7 @@ src_unpack() {
 
 src_compile() {
 	meson_src_compile
-	use lima || return
+	use vm-runners || return
 
 	local lima_src="${WORKDIR}/lima-${LIMA_VERSION}"
 	local lima_ldflags="-s -w -X github.com/lima-vm/lima/v2/pkg/version.Version=v${LIMA_VERSION}"
@@ -125,7 +128,7 @@ src_install() {
 	python_fix_shebang "${ED}"/usr/bin/catalystlab
 	python_optimize "${ED}"/usr/share/catalystlab
 
-	if use lima; then
+	if use vm-runners; then
 		local lima_src="${WORKDIR}/lima-${LIMA_VERSION}"
 		insinto /usr/libexec/catalyst-lab/lima/bin
 		doins "${lima_src}"/_output/bin/limactl

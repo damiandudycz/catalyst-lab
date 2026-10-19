@@ -116,7 +116,7 @@ def lima_environment(home: str | None = None) -> dict:
 
 def limactl_path() -> str | None:
     if sys.platform.startswith("linux"):
-        # Prefer the Gentoo USE=lima runtime so builds use the version bundled for Catalyst Lab.
+        # Prefer the Gentoo USE=vm-runners runtime so builds use the version bundled for Catalyst Lab.
         private_path = "/usr/libexec/catalyst-lab/lima/bin/limactl"
         if os.access(private_path, os.X_OK):
             return private_path
