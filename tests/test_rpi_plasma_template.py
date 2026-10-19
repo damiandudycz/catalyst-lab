@@ -28,7 +28,7 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
     def generate(self, directory, init, accept_all_licenses=True):
         init_systems = [init] if isinstance(init, str) else list(init)
         names = self.template.resolve(dict(init_systems=init_systems, accept_all_licenses=accept_all_licenses,
-                                           extra_stages=['stage4', 'plasma', 'gnome', 'gnome_customized', 'iso_gui']))
+                                           extra_stages=['stage4', 'plasma', 'gnome', 'gnome_customized', 'iso', 'iso_gui']))
         generated = self.template.generate(names)
         for source, destination in generated.files:
             copy_names = generated.file_names.get((source, destination), names)
@@ -106,6 +106,15 @@ class RaspberryPiPlasmaTests(unittest.TestCase):
             self.assertTrue((livegui / 'root_overlay/etc/conf.d/display-manager').is_file())
             self.assertNotIn('boot_kernel', stages['livegui-stage2'].arguments)
             self.assertNotIn('boot_kernels', stages['livegui-stage2'].arguments)
+
+    def test_raspberry_pi_install_iso_uses_explicit_packages_without_generic_firmware(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            stages = self.generate(Path(temporary), 'openrc')
+            livecd_packages = stages['livecd-stage1'].arguments['livecd_packages']
+            self.assertNotIn('@releng', livecd_packages)
+            self.assertNotIn('sys-kernel/linux-firmware', livecd_packages)
+            self.assertIn('sys-firmware/raspberrypi-wifi-ucode', livecd_packages)
+            self.assertIn('app-misc/livecd-tools', livecd_packages)
 
     def test_accept_all_license_toggle_gates_stage4_and_license_file(self):
         for selected in (False, True):

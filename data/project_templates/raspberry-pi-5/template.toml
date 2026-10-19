@@ -107,7 +107,34 @@ iso_stage1_name = "livecd-stage1-{{ init }}"
 iso_stage2_name = "livecd-stage2-{{ init }}"
 # Installation tools of minimal installation ISO of Gentoo releases.
 iso_packages = "{{ ['app-portage/gentoolkit', 'net-misc/chrony', 'net-misc/networkmanager', 'app-accessibility/brltty', 'app-admin/pwgen', 'app-arch/lbzip2', 'app-arch/pigz', 'app-arch/zstd', 'app-crypt/gnupg', 'app-misc/livecd-tools', 'app-portage/mirrorselect', 'app-shells/bash-completion', 'app-shells/gentoo-bashcomp', 'net-analyzer/traceroute', 'net-misc/dhcpcd', 'net-misc/iputils', 'net-misc/openssh', 'net-misc/rdate', 'net-wireless/iw', 'net-wireless/iwd', 'net-wireless/wireless-tools', 'net-wireless/wpa_supplicant', 'sys-apps/busybox', 'sys-apps/ethtool', 'sys-apps/gptfdisk', 'sys-apps/hdparm', 'sys-apps/iproute2', 'sys-apps/memtester', 'sys-apps/sdparm', 'sys-apps/usbutils', 'sys-auth/ssh-import-id', 'sys-block/parted', 'sys-fs/btrfs-progs', 'sys-fs/cryptsetup', 'sys-fs/dosfstools', 'sys-fs/e2fsprogs', 'sys-fs/f2fs-tools', 'sys-fs/lsscsi', 'sys-fs/sysfsutils', 'sys-fs/xfsprogs', 'sys-libs/gpm', 'sys-process/lsof', 'www-client/links'] + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
-# Packages of installation ISO added to releng installcd-stage1 ones.
+# arm64 installcd-stage1 package set, maintained here so this Pi image does not
+# inherit linux-firmware (the wireless group supplies Raspberry Pi firmware).
+iso_base_packages = [
+    "app-accessibility/brltty", "app-accessibility/espeakup", "app-admin/hddtemp",
+    "app-admin/pwgen", "app-admin/syslog-ng", "app-arch/unzip", "app-crypt/gnupg",
+    "app-editors/mg", "app-editors/nano", "app-misc/livecd-tools", "app-misc/screen",
+    "app-misc/tmux", "app-portage/cpuid2cpuflags", "app-portage/gentoolkit",
+    "app-portage/mirrorselect", "app-shells/bash-completion", "app-shells/gentoo-bashcomp",
+    "app-text/wgetpaste", "dev-embedded/u-boot-tools", "media-gfx/fbgrab",
+    "media-sound/alsa-utils", "net-analyzer/traceroute", "net-dialup/mingetty",
+    "net-dialup/pptpclient", "net-dialup/rp-pppoe", "net-fs/cifs-utils", "net-fs/nfs-utils",
+    "net-irc/irssi", "net-misc/chrony", "net-misc/dhcpcd", "net-misc/iputils",
+    "net-misc/ndisc6", "net-misc/openssh", "net-misc/rdate", "net-misc/rsync",
+    "net-misc/vconfig", "net-proxy/dante", "net-wireless/b43-fwcutter", "net-wireless/iw",
+    "net-wireless/wireless-tools", "net-wireless/wpa_supplicant", "sys-apps/arch-chroot",
+    "sys-apps/busybox", "sys-apps/dmidecode", "sys-apps/ethtool", "sys-apps/fxload",
+    "sys-apps/gptfdisk", "sys-apps/hdparm", "sys-apps/iproute2", "sys-apps/memtester",
+    "sys-apps/merge-usr", "sys-apps/netplug", "sys-apps/nvme-cli", "sys-apps/pciutils",
+    "sys-apps/pv", "sys-apps/pcmciautils", "sys-apps/sdparm", "sys-apps/usbutils",
+    "sys-auth/ssh-import-id", "sys-block/parted", "sys-block/partimage",
+    "sys-firmware/ipw2100-firmware", "sys-firmware/ipw2200-firmware", "sys-fs/bcache-tools",
+    "sys-fs/btrfs-progs", "sys-fs/cryptsetup", "sys-fs/dmraid", "sys-fs/dosfstools",
+    "sys-fs/e2fsprogs", "sys-fs/f2fs-tools", "sys-fs/genfstab", "sys-fs/jfsutils",
+    "sys-fs/lsscsi", "sys-fs/lvm2", "sys-fs/mdadm", "sys-fs/multipath-tools",
+    "sys-fs/ntfs3g", "sys-fs/reiserfsprogs", "sys-fs/xfsdump", "sys-fs/xfsprogs",
+    "sys-libs/gpm", "sys-power/acpid", "www-client/links",
+]
+# Additional packages and settings for the Raspberry Pi installation ISO.
 iso_extra_packages = "{{ ['net-misc/networkmanager', 'net-wireless/iwd', 'app-arch/lbzip2', 'app-arch/pigz', 'app-arch/zstd', 'sys-fs/sysfsutils', 'sys-process/lsof'] + ([] if zram == 'off' else ['sys-block/zram-init']) }}"
 iso_services = "{{ ([] if zram == 'off' else ['zram-init|boot']) + ['NetworkManager|default', 'chronyd|default'] + (['bluetooth|default'] if 'wireless' in groups else []) }}"
 livegui_stage1_name = "livegui-stage1-{{ init }}"
@@ -202,7 +229,7 @@ stage4_empty = ["/var/cache/distfiles"]
 stage4_fsscript = "@STAGE_DIR@/configure-plasma.sh"
 stage4_rm = ["/root/.bash_history"]
 
-# Installation ISO (experimental): releng minimal installation CD (installcd specs) with additional tools.
+# Installation ISO (experimental): retain the installcd spec configuration, with an explicit package set.
 [[stages]]
 id = "livecd-stage1"
 parent = "stage3"
@@ -211,7 +238,7 @@ target = "livecd_stage1"
 releng_template = "installcd-stage1.spec"
 when = "'iso' in extra_stages"
 [stages.arguments]
-livecd_packages = "{{ ['@releng'] + iso_extra_packages }}"
+livecd_packages = "{{ iso_base_packages + iso_extra_packages }}"
 
 [[stages]]
 id = "livecd-stage2"
