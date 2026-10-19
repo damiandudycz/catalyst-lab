@@ -61,43 +61,35 @@ class ProjectInstallationTests(unittest.TestCase):
         step.name = "Create project stage"
         return step
 
-    def test_stage_creation_installs_stage_and_completes(self):
-        project = types.SimpleNamespace(install_stage=unittest.mock.Mock())
+    def test_stage_creation_leaves_calculated_values_to_default_rules(self):
+        project = types.SimpleNamespace(
+            install_stage=unittest.mock.Mock(),
+            stage_directory_path=lambda name: f"/tmp/project/stages/{name}",
+        )
         process = types.SimpleNamespace()
         step = self.create_stage_step(project, process)
-        stage = object()
+        stage = types.SimpleNamespace(
+            id="stage-id", name="Stage 4", serialize=lambda: {"id": {"value": "stage-id"}}
+        )
         completed = []
 
         with patch.object(stage_module, "ProjectStage", return_value=stage), \
-             patch.object(stage_module, "apply_default_stage_arguments", return_value={}), \
+             patch.object(stage_module, "refresh_default_stage_arguments", create=True) as refresh_defaults, \
+             patch("catalystlab.project_stage_baselines.record_stage_creation_baseline") as record_baseline, \
              patch.object(MultiStageProcessStage, "start"), \
              patch.object(MultiStageProcessStage, "log"), \
              patch.object(MultiStageProcessStage, "complete", side_effect=completed.append):
             step.start()
 
         project.install_stage.assert_called_once_with(
-            stage=stage, toolset_id="toolset-uuid", default_arguments={}
+            stage=stage, toolset_id="toolset-uuid"
+        )
+        refresh_defaults.assert_not_called()
+        record_baseline.assert_called_once_with(
+            "/tmp/project/stages/Stage 4", {"id": {"value": "stage-id"}}
         )
         self.assertIs(process.stage, stage)
         self.assertEqual(completed, [MultiStageProcessStageState.COMPLETED])
-
-    def test_stage_creation_continues_when_default_arguments_fail(self):
-        project = types.SimpleNamespace(install_stage=unittest.mock.Mock())
-        process = types.SimpleNamespace()
-        step = self.create_stage_step(project, process)
-        completed = []
-        log = unittest.mock.Mock()
-
-        with patch.object(stage_module, "ProjectStage", return_value=object()), \
-             patch.object(stage_module, "apply_default_stage_arguments", side_effect=RuntimeError("defaults unavailable")), \
-             patch.object(MultiStageProcessStage, "start"), \
-             patch.object(MultiStageProcessStage, "log", side_effect=log), \
-             patch.object(MultiStageProcessStage, "complete", side_effect=completed.append):
-            step.start()
-
-        project.install_stage.assert_called_once()
-        self.assertEqual(completed, [MultiStageProcessStageState.COMPLETED])
-        self.assertIn("Failed to set default values", log.call_args.args[0])
 
     def test_stage_creation_reports_installation_failure(self):
         project = types.SimpleNamespace(install_stage=unittest.mock.Mock(side_effect=RuntimeError("disk full")))
@@ -106,7 +98,6 @@ class ProjectInstallationTests(unittest.TestCase):
         completed = []
 
         with patch.object(stage_module, "ProjectStage", return_value=object()), \
-             patch.object(stage_module, "apply_default_stage_arguments", return_value={}), \
              patch.object(MultiStageProcessStage, "start"), \
              patch.object(MultiStageProcessStage, "log"), \
              patch.object(MultiStageProcessStage, "complete", side_effect=completed.append), \

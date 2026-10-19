@@ -12,6 +12,7 @@ from typing import Self
 from .repository import Serializable, Repository, resolve_path
 from .architecture import Architecture
 from .event_bus import EventBus
+from .json_serialization import dump_json
 
 class PackagesDirectory(Serializable):
 
@@ -37,7 +38,7 @@ class PackagesDirectory(Serializable):
             path = os.path.join(item.directory_path(), "metadata.json")
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as file:
-                json.dump(item.serialize(), file, indent=2)
+                dump_json(file, item.serialize())
 
     def __init__(self, name: str, architecture: Architecture | None, cpu_flags: str | None = None,
                  id: uuid.UUID | None = None, created: datetime | None = None):
@@ -188,7 +189,7 @@ def _effective_common_flags(project, stage, visited: frozenset = frozenset()):
             return " ".join(inherited_values) or None
         return resolve_stage_argument(project, stage, argument.value)
 
-    # apply_default_stage_arguments prefers the Releng value, then the parent.
+    # Stage defaults prefer the Releng value, then the parent.
     # Those defaults are shown and used by the editor without being written to
     # stage.json, so compatibility checks must evaluate them too.
     visited = visited | {stage.id}

@@ -66,7 +66,7 @@ target = "stage3"
                 self.target = kwargs["target_name"]
         stage_module = types.ModuleType('catalystlab.project_stage')
         stage_module.ProjectStage = Stage
-        stage_module.apply_default_stage_arguments = lambda **kwargs: None
+        stage_module.refresh_default_stage_arguments = lambda **kwargs: None
         stage_module.remove_unsupported_parent_options = lambda *args, **kwargs: []
         manager_module = types.ModuleType('catalystlab.project_manager')
         manager_module.ProjectManager = types.SimpleNamespace(shared=lambda: types.SimpleNamespace(save_stage=lambda **kwargs: None))

@@ -7,6 +7,7 @@ from gi.repository import GLib
 from enum import Enum, auto
 from datetime import datetime
 from .repository import Serializable
+from .json_serialization import dump_json
 from .git_identity import git_environment, require_git_identity
 from .event_bus import EventBus, SharedEvent
 from abc import ABC, abstractmethod
@@ -174,7 +175,7 @@ class GitDirectory(Serializable, ABC):
         path = self.__class__._app_metadata_path(self.directory_path())
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as file:
-            json.dump(self.serialize(), file, indent=2)
+            dump_json(file, self.serialize())
 
     @classmethod
     def init_from(cls, data: dict) -> Self:

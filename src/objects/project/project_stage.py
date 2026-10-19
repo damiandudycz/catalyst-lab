@@ -25,6 +25,11 @@ from .project_stage_portage_confdir import (
 )
 from .tree_node import walk_tree
 
+_CATALYSTLAB_METADATA_KEY = "_catalystlab"
+# These describe the stage itself and must never be populated or removed as
+# calculated Catalyst defaults.
+_STAGE_IDENTITY_ARGUMENTS = frozenset({"id", "parent", "target", "name", "releng_template"})
+
 class ProjectStage(Serializable):
 
     def __init__(self, id: uuid.UUID | None = None, parent_id: uuid.UUID | None = None, name: str = None, target_name: str | None = None, releng_template_name: str | None = None, profile: PortageProfile | None = None, data: dict | None = None):
@@ -32,6 +37,8 @@ class ProjectStage(Serializable):
         self._explicit_none_arguments = set()
         self._default_stage_arguments = {}
         self._explicit_stage_arguments = set()
+        self._explicit_user_arguments = set()
+        self._explicit_user_argument_dates = {}
         # Required variables in case not set in json:
         self.id = id or uuid.uuid4()
         self.parent = parent_id
@@ -41,8 +48,24 @@ class ProjectStage(Serializable):
         self.profile = profile
         # Load available values from data dictionary
         for key, value in (data or {}).items():
+            if key == _CATALYSTLAB_METADATA_KEY:
+                if isinstance(value, dict):
+                    # Backward compatibility with stage files written before
+                    # timestamps lived alongside their property values.
+                    self._explicit_user_argument_dates = dict(value.get("last_changed", {}))
+                    # Read the in-development marker format if a project was saved before timestamps were added.
+                    legacy_explicit = set(value.get("explicit", []))
+                    self._explicit_user_arguments = legacy_explicit
+                    for name in legacy_explicit:
+                        self._explicit_user_argument_dates.setdefault(name, "legacy")
+                continue
             if key == "toolset_id":
                 continue
+            if isinstance(value, dict) and "last_changed" in value:
+                changed_at = value.get("last_changed")
+                if changed_at is not None:
+                    self._explicit_user_argument_dates[key] = changed_at
+                value = {field: item for field, item in value.items() if field != "last_changed"}
             value = ProjectStageArgumentSerialization.deserialize(value)
             setattr(self, key, value)
             self._explicit_stage_arguments.add(key)
@@ -54,13 +77,19 @@ class ProjectStage(Serializable):
     # --------------------------------------------------------------------------
 
     def serialize(self) -> dict:
-        return {
+        result = {
             key: ProjectStageArgumentSerialization.serialize(value)
             for key, value in self.__dict__.items()
-            if key not in {"event_bus", "_explicit_none_arguments", "_default_stage_arguments", "_explicit_stage_arguments"}
+            if key not in {"event_bus", "_explicit_none_arguments", "_default_stage_arguments",
+                           "_explicit_stage_arguments", "_explicit_user_arguments",
+                           "_explicit_user_argument_dates"}
             and (key not in self._default_stage_arguments or key in self._explicit_stage_arguments)
             and (value is not None or key in self._explicit_none_arguments)
         }
+        for name, changed_at in self._explicit_user_argument_dates.items():
+            if changed_at is not None and name in result and isinstance(result[name], dict):
+                result[name]["last_changed"] = changed_at
+        return result
 
     @classmethod
     def init_from(cls, data: dict) -> Self:
@@ -426,30 +455,281 @@ def load_catalyst_stage_automatic_arguments_options(stage: ProjectStage, arg_det
     }
     return [options[automatic_option] for automatic_option in arg_details.details.automatic_options]
 
-def apply_default_stage_arguments(project_directory, stage: ProjectStage, toolset=None) -> dict[str, Any]:
-    """Sets only stage defaults that have a concrete source in the selected parent or template.
+def _preferred_default_option(argument: StageArgumentDetails, *options: StageAutomaticOption):
+    """Create a project-aware preference function for one default-table entry."""
+    def choose(stage: ProjectStage, project_directory, toolset) -> StageAutomaticOption | None:
+        has_parent = getattr(stage, StageArgumentDetails.parent.name, None) is not None
+        has_template = bool(getattr(stage, StageArgumentDetails.releng_template.name, None))
+        for option in options:
+            if option not in argument.automatic_options:
+                continue
+            if option == StageAutomaticOption.INHERIT_FROM_PARENT:
+                if not has_parent or not parent_supports_argument(project_directory, stage, argument, toolset):
+                    continue
+            elif option == StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE and not has_template:
+                continue
+            elif option == StageAutomaticOption.GENERATE_AUTOMATICALLY:
+                # Automatic is itself a deliberate default (not a computed preview value).
+                return option
+            # Inheritance is valid based on its source being available, even if
+            # that source currently leaves this particular argument unset.
+            return option
+        return None
+    return choose
 
-    Catalyst handles omitted values as its own defaults. App-managed values (such as portage_confdir sources) are
-    still initialized because the build pipeline needs them to combine project overlays. Automatic markers are not
-    written just to make an implicit Catalyst default visible in the project.
-    """
+
+def _preferred_option_or_value(argument: StageArgumentDetails, *options: StageAutomaticOption, fallback: Any):
+    """Prefer an available inheritance option, then use a concrete usable fallback."""
+    choose = _preferred_default_option(argument, *options)
+
+    def choose_or_fallback(stage: ProjectStage, project_directory, toolset):
+        return choose(stage, project_directory, toolset) or fallback
+
+    return choose_or_fallback
+
+
+def _default_subarch(stage: ProjectStage, project_directory, toolset):
+    """Use the template or parent subarch when defined, otherwise choose a generic arch baseline."""
     from .project_stage_value_resolver import resolve_stage_argument, UNRESOLVED
+
+    if getattr(stage, StageArgumentDetails.releng_template.name, None):
+        value = resolve_stage_argument(
+            project_directory, stage, StageArgumentDetails.subarch.value,
+            option=StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE,
+        )
+        if value is not UNRESOLVED and value not in (None, "", []):
+            return StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE
+    if (getattr(stage, StageArgumentDetails.parent.name, None) is not None
+            and parent_supports_argument(project_directory, stage, StageArgumentDetails.subarch, toolset)):
+        value = resolve_stage_argument(
+            project_directory, stage, StageArgumentDetails.subarch.value,
+            option=StageAutomaticOption.INHERIT_FROM_PARENT,
+        )
+        if value is not UNRESOLVED and value not in (None, "", []):
+            return StageAutomaticOption.INHERIT_FROM_PARENT
+
+    architecture = project_directory.get_architecture()
+    preferred_names = _DEFAULT_SUBARCH_BY_ARCHITECTURE.get(architecture, ())
+    try:
+        available_names = {item.name for item in load_catalyst_subarches(toolset, architecture)}
+    except Exception as error:
+        print(f"Failed to choose a default subarch for {architecture}: {error}")
+        return None
+    return next((name for name in preferred_names if name in available_names), None)
+
+
+def _default_profile(stage: ProjectStage, project_directory, toolset):
+    """Inherit a real profile when possible, otherwise choose the snapshot's generic stable profile."""
+    from .project_stage_value_resolver import resolve_stage_argument, UNRESOLVED
+
+    if getattr(stage, StageArgumentDetails.releng_template.name, None):
+        value = resolve_stage_argument(
+            project_directory, stage, StageArgumentDetails.profile.value,
+            option=StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE,
+        )
+        if value is not UNRESOLVED and value not in (None, "", []):
+            return StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE
+    if (getattr(stage, StageArgumentDetails.parent.name, None) is not None
+            and parent_supports_argument(project_directory, stage, StageArgumentDetails.profile, toolset)):
+        value = resolve_stage_argument(
+            project_directory, stage, StageArgumentDetails.profile.value,
+            option=StageAutomaticOption.INHERIT_FROM_PARENT,
+        )
+        if value is not UNRESOLVED and value not in (None, "", []):
+            return StageAutomaticOption.INHERIT_FROM_PARENT
+
+    snapshot = project_directory.get_snapshot()
+    architecture = project_directory.get_architecture()
+    if snapshot is None or architecture is None:
+        return None
+    try:
+        profiles = snapshot.load_profiles(arch=architecture)
+    except Exception as error:
+        print(f"Failed to choose a default profile for {architecture}: {error}")
+        return None
+
+    prefix = f"default/linux/{architecture.value}/"
+    candidates = [profile for profile in profiles
+                  if profile.repo == "gentoo" and profile.stability == "stable" and profile.path.startswith(prefix)]
+    if not candidates:
+        return None
+
+    def profile_rank(profile):
+        parts = profile.path[len(prefix):].split("/")
+        # A direct child of the architecture directory is Gentoo's generic profile;
+        # deeper profiles enable desktop, init-system, or other specialized choices.
+        generic = len(parts) == 1
+        version = tuple(int(part) for part in parts[0].split(".") if part.isdigit())
+        return generic, -len(parts), version
+
+    return max(candidates, key=profile_rank)
+
+
+_RELENG = StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE
+_PARENT = StageAutomaticOption.INHERIT_FROM_PARENT
+_AUTOMATIC = StageAutomaticOption.GENERATE_AUTOMATICALLY
+_DEFAULT_SUBARCH_BY_ARCHITECTURE = {
+    # Prefer generic entries without CPU-specific flags where Catalyst provides them.
+    Architecture.x86: ("i686", "i486", "x86"),
+    Architecture.amd64: ("amd64", "x86_64"),
+    Architecture.arm: ("arm", "armv7a_hardfp", "armv7a"),
+    Architecture.arm64: ("arm64", "aarch64"),
+    Architecture.hppa: ("hppa1.1", "hppa2.0"),
+    Architecture.ia64: ("ia64",),
+    Architecture.mips: ("mips1", "mips32", "mipsel1", "mips64"),
+    Architecture.ppc: ("ppc", "powerpc"),
+    Architecture.ppc64: ("ppc64", "powerpc64", "power5"),
+    Architecture.ppc64le: ("ppc64le", "powerpc64le", "power7le"),
+    Architecture.riscv: ("riscv", "rv64_lp64d"),
+    Architecture.sparc: ("sparc64", "sparc"),
+    Architecture.alpha: ("alpha", "ev4"),
+    Architecture.m68k: ("m68k",),
+    Architecture.loong: ("loong",),
+    Architecture.s390: ("s390",),
+    Architecture.s390x: ("s390x",),
+}
+_RELENG_TARGET_DEFAULTS = {
+    argument.name: _preferred_default_option(argument, _RELENG)
+    for argument in StageArgumentDetails
+    if argument.value.split("/")[0] in ("stage4", "livecd", "boot")
+    and argument not in (StageArgumentDetails.stage4_packages, StageArgumentDetails.stage4_root_overlay,
+                         StageArgumentDetails.livecd_root_overlay,
+                         StageArgumentDetails.livecd_overlay)
+}
+_RELENG_CAPABLE_DEFAULTS = {
+    argument.name: _preferred_default_option(
+        argument,
+        _RELENG,
+        *(option for option in argument.automatic_options if option != _RELENG),
+    )
+    for argument in StageArgumentDetails
+    if _RELENG in argument.automatic_options
+    # Interpreter is intentionally Automatic by default; template inheritance is an explicit user choice.
+    and argument != StageArgumentDetails.interpreter
+}
+
+# Default values for known Catalyst target types. A target-specific entry takes
+# precedence over ANY; a missing value falls through to ANY and then to None.
+# Callable values receive (stage, project_directory, toolset) and can pick a
+# supported inheritance option or compute a concrete value from project state.
+STAGE_DEFAULT_VALUES: dict[str, dict[str, Any]] = {
+    "ANY": {
+        **_RELENG_TARGET_DEFAULTS,
+        # Every known property that supports template inheritance gets it as the
+        # first choice. Explicit entries below can still define special fallbacks.
+        **_RELENG_CAPABLE_DEFAULTS,
+        # Build compatibility and architecture:
+        "profile": _default_profile,
+        "subarch": _default_subarch,
+        "chost": _preferred_default_option(StageArgumentDetails.chost, _RELENG, _PARENT),
+        "cbuild": _preferred_default_option(StageArgumentDetails.cbuild, _RELENG, _PARENT),
+        "interpreter": _AUTOMATIC,
+        "asflags": _preferred_default_option(StageArgumentDetails.asflags, _RELENG, _PARENT),
+        "cflags": _preferred_default_option(StageArgumentDetails.cflags, _RELENG, _PARENT),
+        "common_flags": _preferred_default_option(StageArgumentDetails.common_flags, _RELENG, _PARENT),
+        "cxxflags": _preferred_default_option(StageArgumentDetails.cxxflags, _RELENG, _PARENT),
+        "fcflags": _preferred_default_option(StageArgumentDetails.fcflags, _RELENG, _PARENT),
+        "fflags": _preferred_default_option(StageArgumentDetails.fflags, _RELENG, _PARENT),
+        "ldflags": _preferred_default_option(StageArgumentDetails.ldflags, _RELENG, _PARENT),
+        # Release and package sources:
+        "rel_type": _preferred_option_or_value(
+            StageArgumentDetails.rel_type, _RELENG, _PARENT, fallback="default"),
+        # Build-spec generation replaces @TIMESTAMP@ with the shared timestamp for that build run.
+        "version_stamp": _preferred_option_or_value(
+            StageArgumentDetails.version_stamp, _RELENG, _PARENT, fallback="@TIMESTAMP@"),
+        "compression_mode": _preferred_default_option(StageArgumentDetails.compression_mode, _RELENG),
+        "stage4_packages": _preferred_default_option(StageArgumentDetails.stage4_packages, _RELENG, _PARENT),
+        "repos": _preferred_default_option(StageArgumentDetails.repos, _RELENG, _PARENT),
+        "keep_repos": _preferred_default_option(StageArgumentDetails.keep_repos, _RELENG, _PARENT),
+        "binrepo_path": _preferred_default_option(StageArgumentDetails.binrepo_path, _RELENG, _PARENT),
+        # Configuration:
+        "portage_prefix": _preferred_default_option(StageArgumentDetails.portage_prefix, _RELENG, _PARENT),
+        "update_seed": _preferred_default_option(StageArgumentDetails.update_seed, _RELENG, _PARENT),
+        "update_seed_command": _preferred_default_option(StageArgumentDetails.update_seed_command, _RELENG, _PARENT),
+        "rename_regexp": _preferred_default_option(StageArgumentDetails.rename_regexp, _RELENG),
+        "install_mask": _preferred_default_option(StageArgumentDetails.install_mask, _RELENG, _PARENT),
+        "catalyst_use": _preferred_default_option(StageArgumentDetails.catalyst_use, _RELENG, _PARENT),
+        "decompressor_search_order": _preferred_default_option(
+            StageArgumentDetails.decompressor_search_order, _RELENG, _PARENT),
+        "hostuse": _preferred_default_option(StageArgumentDetails.hostuse, _RELENG),
+        "boot_kernel": _preferred_default_option(StageArgumentDetails.boot_kernel, _RELENG),
+        # These are generated by CatalystLab when a build needs them, not persisted as stage defaults.
+        "source_subpath": None,
+        "pkgcache_path": None,
+        "kerncache_path": None,
+    },
+    # Each known target prefers its Releng-specified toolchain and release identity.
+    "stage1": {
+        "subarch": _default_subarch,
+        "rel_type": _RELENG,
+    },
+    "stage2": {"subarch": _default_subarch, "rel_type": _RELENG},
+    "stage3": {"subarch": _default_subarch, "rel_type": _RELENG},
+    "stage4": {
+        "subarch": _default_subarch,
+        "rel_type": _RELENG,
+        "stage4_packages": _preferred_default_option(StageArgumentDetails.stage4_packages, _RELENG, _PARENT),
+    },
+    "livecd_stage1": {"subarch": _default_subarch, "rel_type": _RELENG},
+    "livecd_stage2": {"subarch": _default_subarch, "rel_type": _RELENG},
+    "diskimage_stage1": {"subarch": _default_subarch, "rel_type": _RELENG},
+    "diskimage_stage2": {"subarch": _default_subarch, "rel_type": _RELENG},
+    "netboot": {"subarch": _default_subarch, "rel_type": _RELENG},
+    "embedded": {"subarch": _default_subarch, "rel_type": _RELENG},
+}
+
+
+_NO_DEFAULT = object()
+
+
+def default_stage_argument_value(project_directory, stage: ProjectStage, argument: StageArgumentDetails, toolset):
+    """Get a target-specific default, then the shared default; unresolved settings remain unset."""
+    target = (getattr(stage, StageArgumentDetails.target.name, None) or "").replace("-", "_")
+    target_defaults = STAGE_DEFAULT_VALUES.get(target, {})
+
+    def resolve_candidate(candidate):
+        if callable(candidate):
+            candidate = candidate(stage, project_directory, toolset)
+            if candidate is None:
+                return _NO_DEFAULT
+        elif candidate is None:
+            return None # Explicit null means leave the value unset and don't use ANY.
+        if isinstance(candidate, StageAutomaticOption):
+            if candidate not in argument.automatic_options:
+                return _NO_DEFAULT
+            if candidate == StageAutomaticOption.INHERIT_FROM_PARENT:
+                if (getattr(stage, StageArgumentDetails.parent.name, None) is None
+                        or not parent_supports_argument(project_directory, stage, argument, toolset)):
+                    return _NO_DEFAULT
+            elif candidate == StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE:
+                if not getattr(stage, StageArgumentDetails.releng_template.name, None):
+                    return _NO_DEFAULT
+        return candidate
+
+    if argument.name in target_defaults:
+        value = resolve_candidate(target_defaults[argument.name])
+        if value is not _NO_DEFAULT:
+            return value
+    value = resolve_candidate(STAGE_DEFAULT_VALUES["ANY"].get(argument.name))
+    return None if value is _NO_DEFAULT else value
+
+
+def refresh_default_stage_arguments(project_directory, stage: ProjectStage, toolset=None) -> dict[str, Any]:
+    """Recompute in-memory defaults without making them explicit project edits."""
     has_parent = getattr(stage, StageArgumentDetails.parent.name, None) is not None
-    has_template = bool(getattr(stage, StageArgumentDetails.releng_template.name, None))
-    def is_available(argument: StageArgumentDetails, option: StageAutomaticOption) -> bool:
-        match option:
-            case StageAutomaticOption.INHERIT_FROM_PARENT:
-                return has_parent and parent_supports_argument(project_directory, stage, argument, toolset)
-            case StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE:
-                return has_template # Even if template doesn't define it now, templates can define any argument.
-            case StageAutomaticOption.GENERATE_AUTOMATICALLY:
-                return True
-        return False
-    def has_value(argument: StageArgumentDetails, option: StageAutomaticOption) -> bool:
-        if option == StageAutomaticOption.GENERATE_AUTOMATICALLY:
-            return False # Generated values are supplied by the build pipeline when needed.
-        value = resolve_stage_argument(project_directory, stage, argument.value, option=option)
-        return value is not UNRESOLVED and value not in (None, "", [])
+    defaults = getattr(stage, "_default_stage_arguments", {})
+    explicit = getattr(stage, "_explicit_stage_arguments", set())
+    explicit_none = getattr(stage, "_explicit_none_arguments", set())
+    for name in _STAGE_IDENTITY_ARGUMENTS:
+        defaults.pop(name, None)
+    for name in list(defaults):
+        if name in explicit:
+            continue
+        if hasattr(stage, name):
+            delattr(stage, name)
+        explicit_none.discard(name)
+    defaults.clear()
+
     if toolset is None:
         from .toolset_selection import default_toolset
         toolset = default_toolset()
@@ -457,39 +737,81 @@ def apply_default_stage_arguments(project_directory, stage: ProjectStage, toolse
         return {}
     arguments = load_catalyst_stage_arguments_details(toolset=toolset, target_name=stage.target)
     applied = {}
+    calculated = {}
     for name, argument in arguments.items():
-        if (argument.details is None or getattr(stage, argument.attribute_name, None) is not None
-                or argument.attribute_name in getattr(stage, "_explicit_none_arguments", set())):
+        if argument.details is None:
+            continue
+        if argument.attribute_name in _STAGE_IDENTITY_ARGUMENTS:
             continue
         if argument.details == StageArgumentDetails.portage_confdir:
-            setattr(stage, argument.attribute_name, default_portage_confdir_sources(has_parent=has_parent))
-            applied[argument.attribute_name] = getattr(stage, argument.attribute_name)
+            value = default_portage_confdir_sources(has_parent=has_parent)
+        elif argument.details in FILE_OVERLAY_ARGUMENTS:
+            value = default_portage_confdir_sources(
+                has_parent=has_parent and parent_supports_argument(project_directory, stage, argument.details, toolset))
+        else:
+            value = default_stage_argument_value(project_directory, stage, argument.details, toolset)
+        calculated[argument.attribute_name] = value
+        if (getattr(stage, argument.attribute_name, None) is not None
+                or argument.attribute_name in getattr(stage, "_explicit_none_arguments", set())):
             continue
-        if argument.details in FILE_OVERLAY_ARGUMENTS:
-            setattr(stage, argument.attribute_name, default_portage_confdir_sources(
-                has_parent=has_parent and parent_supports_argument(project_directory, stage, argument.details, toolset)))
-            applied[argument.attribute_name] = getattr(stage, argument.attribute_name)
-            continue
-        if argument.details == StageArgumentDetails.boot_kernel:
-            # Releng kernel inheritance is the default only when the selected spec
-            # actually supplies kernels. Do not persist an empty inherit marker.
-            option = StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE
-            if has_template and has_value(argument.details, option):
-                setattr(stage, argument.attribute_name, option)
-                applied[argument.attribute_name] = option
-            continue
-        available = [option for option in argument.details.default_options if is_available(argument.details, option)]
-        # Do not add an inherit marker if the source is empty or not yet defined. This keeps a new stage sparse and
-        # avoids making an unset setting look like a user customization. A later template/parent edit will be picked
-        # up when defaults are refreshed or the stage is opened again.
-        option = next((option for option in available if has_value(argument.details, option)), None)
-        if option is not None:
-            setattr(stage, argument.attribute_name, option)
-            applied[argument.attribute_name] = option
-    defaults = getattr(stage, "_default_stage_arguments", None)
-    if defaults is not None:
-        defaults.update(applied)
+        if value is not None:
+            setattr(stage, argument.attribute_name, value)
+            applied[argument.attribute_name] = value
+    defaults.update(calculated)
     return applied
+
+
+def stage_argument_is_customized(stage: ProjectStage, name: str, explicit_arguments: set[str],
+                                 template_baseline: dict) -> bool:
+    """Compare an argument to its active default before falling back to its creation baseline."""
+    missing = object()
+    current = stage.serialize().get(name, missing)
+    changed_at = getattr(stage, "_explicit_user_argument_dates", {}).get(name, missing)
+    baseline_property = template_baseline.get(name, missing)
+    baseline_changed_at = (baseline_property.get("last_changed", missing)
+                          if isinstance(baseline_property, dict) else missing)
+    if baseline_changed_at is missing:
+        legacy_dates = template_baseline.get(_CATALYSTLAB_METADATA_KEY, {}).get("last_changed", {})
+        baseline_changed_at = legacy_dates.get(name, missing)
+    if isinstance(current, dict):
+        current = {field: item for field, item in current.items() if field != "last_changed"}
+    if isinstance(baseline_property, dict) and "value" in baseline_property:
+        baseline_property = {field: item for field, item in baseline_property.items() if field != "last_changed"}
+    if changed_at is not missing:
+        if baseline_changed_at is missing or changed_at != baseline_changed_at:
+            return True
+        baseline_value = baseline_property
+        if baseline_value is not missing:
+            return current != baseline_value
+
+    template_value = baseline_property
+    baseline_kind = template_baseline.get("__catalystlab_baseline_kind__")
+    if name in explicit_arguments:
+        # Values chosen by a creation wizard are part of its saved initial state.
+        # Older code may also mark those fields explicit without a user-edit date.
+        if baseline_kind == "initial_snapshot" and template_value is not missing and current == template_value:
+            return False
+        return True
+
+    if baseline_kind in {"first_commit", "initial_snapshot"} and template_value is not missing:
+        return current != template_value
+
+    runtime_default = getattr(stage, "_default_stage_arguments", {}).get(name, missing)
+    if runtime_default is not missing:
+        effective_value = getattr(stage, name, missing)
+        if effective_value is missing:
+            return runtime_default is not None
+        return (ProjectStageArgumentSerialization.serialize(effective_value)
+                != ProjectStageArgumentSerialization.serialize(runtime_default))
+
+    if template_value is not missing:
+        return current != template_value
+
+    if name in {"id", "parent", "target", "name", "releng_template"}:
+        return False
+    # Without a source commit for this stage, stored values are its initial state.
+    # Explicit timestamps above still identify intentional same-value edits.
+    return False
 
 def load_catalyst_targets(toolset: Toolset) -> list[str]:
     """Loads the list of available targets as their paths inside squashfs file"""

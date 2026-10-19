@@ -117,6 +117,21 @@
                 <property name="visible">False</property>
               </object>
             </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="warnings_empty_group">
+                <property name="title">Warnings</property>
+                <property name="visible">False</property>
+                <child>
+                  <object class="AdwActionRow">
+                    <property name="title">No warnings found</property>
+                    <property name="subtitle">All visible stage settings are valid for the selected toolset and stage.</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
           </object>
         </child>
       </object>

@@ -4,6 +4,7 @@ import uuid
 from collections import deque
 from .multistage_process import MultiStageProcess, MultiStageProcessStage, MultiStageProcessState, MultiStageProcessStageState
 from .project_build import project_builds_directory, stage_builds_directory
+from .json_serialization import dump_json
 
 # ------------------------------------------------------------------------------
 # Record of build run (steps with their results), saved when run finishes, so its steps can be shown like build
@@ -53,7 +54,7 @@ def save_build_record(process):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as file:
-            json.dump(record, file, indent=2)
+            dump_json(file, record)
     except OSError as e:
         print(f"Failed to save record of build {process.timestamp}: {e}")
 

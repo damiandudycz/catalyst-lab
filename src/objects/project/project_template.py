@@ -74,6 +74,7 @@ class TemplateStage:
     releng_template: str | None
     arguments: dict[str, Any]
     when: str | None
+    last_changed: dict[str, str | None] = field(default_factory=dict)
 
 @dataclass
 class TemplateFiles:
@@ -108,6 +109,7 @@ class TemplateGroup:
     default_stages: list[str]
     arguments: dict[str, Any]
     files: list[TemplateFiles] # Destination is relative to stage directory.
+    last_changed: dict[str, str | None] = field(default_factory=dict)
 
 @dataclass
 class ProjectTemplateSelection:
@@ -130,6 +132,7 @@ class GeneratedStage:
     arguments: dict[str, Any]
     groups: list[str] = field(default_factory=list) # Titles of groups applied to stage.
     persistent_id: str | None = None # Build identity saved in template state; logical ids still connect stages/groups.
+    last_changed: dict[str, str | None] = field(default_factory=dict)
 
 @dataclass
 class GeneratedProject:
@@ -144,6 +147,26 @@ def _table(data: dict, key: str, context: str) -> dict:
     if not isinstance(value, dict):
         raise TemplateError(f"{context}: {key} must be a table")
     return value
+
+def _last_changed(data: dict, context: str, allowed: set[str]) -> dict[str, str | None]:
+    """Validate per-property source timestamps declared by a template stage/group."""
+    values = data.get("last_changed", {})
+    if not isinstance(values, dict):
+        raise TemplateError(f"{context}: last_changed must be a table of property timestamps")
+    from datetime import datetime
+    result = {}
+    for name, timestamp in values.items():
+        if name not in allowed:
+            raise TemplateError(f"{context}: last_changed refers to unknown property {name}")
+        if timestamp is not None:
+            if not isinstance(timestamp, str):
+                raise TemplateError(f"{context}: timestamp for {name} must be ISO 8601 or null")
+            try:
+                datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            except ValueError:
+                raise TemplateError(f"{context}: timestamp for {name} must be ISO 8601 or null") from None
+        result[name] = timestamp
+    return result
 
 def _text(data: dict, key: str, context: str, required: bool = True) -> str | None:
     value = data.get(key)
@@ -195,6 +218,7 @@ class ProjectTemplate:
     # False when only the template definition is available for an options preview; file paths are checked when applied.
     files_available: bool = True
     stage_id_suffix: str | None = None # Optional expression distinguishing incompatible build variants.
+    updated_at: str | None = None # Legacy fallback when a stage property has no last_changed entry.
 
     @classmethod
     def load(cls, path: str, repository_url: str | None = None, repository_path: str = "",
@@ -210,6 +234,15 @@ class ProjectTemplate:
         except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
             raise TemplateError(f"Invalid {TEMPLATE_FILE}: {e}") from None
         # Checked first, templates for newer versions can use things this version doesn't know.
+        updated_at = data.get("updated_at")
+        if updated_at is not None:
+            if not isinstance(updated_at, str):
+                raise TemplateError("Template: updated_at must be an ISO 8601 timestamp")
+            try:
+                from datetime import datetime
+                datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            except ValueError:
+                raise TemplateError("Template: updated_at must be an ISO 8601 timestamp") from None
         min_app_version = data.get("min_app_version")
         if min_app_version is not None:
             from . import app_info
@@ -310,10 +343,13 @@ class ProjectTemplate:
             for key in arguments:
                 if not _IDENTIFIER_PATTERN.match(key) or key in _RESERVED_STAGE_ARGUMENTS:
                     raise TemplateError(f"{context}: argument {key} can't be set in arguments")
+            last_changed = _last_changed(
+                stage_data, context, {"name", "target", "parent", "releng_template", *arguments.keys()}
+            )
             stages.append(TemplateStage(
                 id=stage_id, name=_text(stage_data, "name", context), target=_text(stage_data, "target", context),
                 parent=parent, releng_template=_text(stage_data, "releng_template", context, required=False),
-                arguments=arguments, when=_condition(stage_data, context)
+                arguments=arguments, when=_condition(stage_data, context), last_changed=last_changed
             ))
         files = _parse_files(data.get("files", []), "Files")
         # Groups:
@@ -341,11 +377,13 @@ class ProjectTemplate:
             for key in arguments:
                 if not _IDENTIFIER_PATTERN.match(key) or key in _RESERVED_STAGE_ARGUMENTS:
                     raise TemplateError(f"{context}: argument {key} can't be set in arguments")
+            last_changed = _last_changed(group_data, context, set(arguments))
             groups.append(TemplateGroup(
                 id=group_id, title=_text(group_data, "title", context, required=False) or group_id,
                 description=_text(group_data, "description", context, required=False), default=default,
                 when=_condition(group_data, context), stages=group_stages, default_stages=default_stages,
-                arguments=arguments, files=_parse_files(group_data.get("files", []), f"{context} files")
+                arguments=arguments, files=_parse_files(group_data.get("files", []), f"{context} files"),
+                last_changed=last_changed
             ))
         groups_title = _text(data, "groups_title", "Template", required=False) or "Additional configuration"
         # Overlays:
@@ -371,7 +409,8 @@ class ProjectTemplate:
                    repository_path=repository_path, source_kind=source_kind, source_tree=source_tree,
                    min_app_version=min_app_version,
                    files_available=files_available,
-                   stage_id_suffix=_text(data, "stage_id_suffix", "Template", required=False))
+                   stage_id_suffix=_text(data, "stage_id_suffix", "Template", required=False),
+                   updated_at=updated_at)
 
     @property
     def architecture_variable(self) -> TemplateVariable | None:
@@ -510,7 +549,7 @@ class ProjectTemplate:
                     template_id=f"{stage.template_id}-{init}", name=stage.name, target=stage.target,
                     parent=f"{stage.parent}-{init}" if stage.parent else None,
                     releng_template=stage.releng_template, arguments=stage.arguments, groups=stage.groups,
-                    persistent_id=stage.persistent_id
+                    persistent_id=stage.persistent_id, last_changed=stage.last_changed,
                 ))
             for file in variant.files:
                 if file not in file_names:
@@ -549,11 +588,21 @@ class ProjectTemplate:
             if releng_template and (os.path.isabs(releng_template) or ".." in releng_template.split("/")):
                 raise TemplateError(f"{context}: releng template must be path inside releng specs")
             arguments = {}
+            last_changed = {}
+            for key, value in (("name", name), ("target", target), ("parent", stage.parent),
+                               ("releng_template", releng_template)):
+                if value is not None:
+                    timestamp = stage.last_changed.get(key, self.updated_at)
+                    if timestamp is not None:
+                        last_changed[key] = timestamp
             for key, value in stage.arguments.items():
                 value = render_value(value, names)
                 if value is None or value == "" or value == []:
                     continue
                 arguments[key] = _template_argument_value(key, value, f"{context}, argument {key}")
+                timestamp = stage.last_changed.get(key, self.updated_at)
+                if timestamp is not None:
+                    last_changed[key] = timestamp
             applied_groups = []
             for group in self.groups:
                 if not self.group_applied_to(group.id, stage.id, names):
@@ -574,9 +623,14 @@ class ProjectTemplate:
                         arguments[key] = merge_kernel_settings(existing, value)
                     else:
                         arguments[key] = value
+                    timestamp = group.last_changed.get(key, self.updated_at)
+                    last_changed.pop(key, None)
+                    if timestamp is not None:
+                        last_changed[key] = timestamp
             stages.append(GeneratedStage(template_id=stage.id, name=name, target=target, parent=stage.parent,
                                          releng_template=releng_template, arguments=arguments, groups=applied_groups,
-                                         persistent_id=f"{stage.id}:{suffix}" if suffix is not None else stage.id))
+                                         persistent_id=f"{stage.id}:{suffix}" if suffix is not None else stage.id,
+                                         last_changed=last_changed))
             generated_ids.add(stage.id)
         files = []
         for entry in self.files:
@@ -1101,7 +1155,7 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
     """Creates files and stages from a template. Releng and architecture configuration must already be set.
     Template values are stored without requiring Catalyst introspection; an optional toolset adds validation and
     automatic defaults. With replace_content, other files are removed first while Git is kept."""
-    from .project_stage import ProjectStage, apply_default_stage_arguments
+    from .project_stage import ProjectStage, refresh_default_stage_arguments
     from .project_manager import ProjectManager
     generated = template.generate(names)
     if overlay_ids is None:
@@ -1174,7 +1228,7 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
             if changed := remove_unsupported_parent_options(project_directory, stage, toolset=toolset):
                 log(f"Not inheriting {', '.join(changed)} of {stage.name} from parent, its target doesn't have them")
             try:
-                apply_default_stage_arguments(project_directory=project_directory, stage=stage, toolset=toolset)
+                refresh_default_stage_arguments(project_directory=project_directory, stage=stage, toolset=toolset)
             except Exception as e:
                 # Stage can still be configured manually.
                 log(f"Failed to set default values of {stage.name}: {e}")
@@ -1183,6 +1237,10 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
         for folder, files in remove_stage_overlays_inherited_files(project_directory, stage).items():
             log(f"Skipped {len(files)} file{'s' if len(files) != 1 else ''} of {folder} of {stage.name} inherited from parent: {', '.join(files)}")
         _enable_stage_overlays(project_directory, stage, log, toolset=toolset)
+        stage._explicit_user_argument_dates = {
+            key: timestamp for key, timestamp in generated_stage.last_changed.items()
+            if timestamp is not None
+        }
         ProjectManager.shared().save_stage(project=project_directory, stage=stage)
         project_directory.stages.append(stage)
         stage_ids[generated_stage.template_id] = stage.id

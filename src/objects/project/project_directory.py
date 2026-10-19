@@ -87,15 +87,8 @@ class ProjectDirectory(GitDirectory):
 
     def reload_contents(self):
         """Drop cached stage objects after Git restores or updates tracked project files."""
-        from . import project_stage_overrides
-        project_stage_overrides.restore_committed(self.directory_path())
         self.__dict__.pop("_stages", None)
         self.__dict__.pop("_broken_stages", None)
-
-    def checkpoint_committed_contents(self):
-        """Checkpoint Library-local customized markers whenever project files are committed."""
-        from . import project_stage_overrides
-        project_stage_overrides.checkpoint_committed(self.directory_path())
 
     def add_stage(self, stage: ProjectStage):
         self.stages.append(stage)
@@ -289,8 +282,7 @@ class ProjectDirectory(GitDirectory):
     def stage_directory_path(self, name: str) -> str:
         return ProjectDirectory.stage_directory_path_for_name(name=name, project=self)
 
-    def install_stage(self, stage: ProjectStage, toolset_id: str | None = None,
-                      default_arguments: dict | None = None):
+    def install_stage(self, stage: ProjectStage, toolset_id: str | None = None):
         # Save stage details in project directory
         from .project_manager import ProjectManager
         if not ProjectManager.shared().is_stage_name_available(project=self, name=stage.name):
@@ -299,21 +291,6 @@ class ProjectDirectory(GitDirectory):
         if toolset_id:
             from . import project_stage_toolsets
             project_stage_toolsets.set(self.directory_path(), stage.id, toolset_id)
-        if default_arguments is not None:
-            from . import project_stage_overrides
-            from .project_stage_argument_serialization import ProjectStageArgumentSerialization
-            # Treat the values chosen during stage creation as its initial baseline.
-            # This keeps the Changed view focused on edits made after creation and
-            # gives Restore a value for structural fields such as the stage name.
-            defaults = dict(default_arguments)
-            for name in ("name", "target", "parent", "releng_template"):
-                if hasattr(stage, name):
-                    defaults.setdefault(name, getattr(stage, name))
-            project_stage_overrides.set_defaults(
-                self.directory_path(), stage.id,
-                {name: ProjectStageArgumentSerialization.serialize(value)
-                 for name, value in defaults.items()},
-            )
 
 @dataclass
 class ProjectConfiguration(Serializable):

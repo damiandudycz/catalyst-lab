@@ -1,4 +1,5 @@
 format = 1
+updated_at = "2026-10-19T00:00:00Z"
 min_app_version = "2.0.0"
 # Build identities change with init system; stage layout and group references stay the same.
 stage_id_suffix = "{{ init }}"
@@ -109,6 +110,7 @@ livegui_packages = "{{ iso_extra_packages + ['kde-plasma/plasma-meta', 'x11-misc
 livegui_services = "{{ (([] if zram == 'off' else ['zram-init|boot']) + ['udev|sysinit', 'udev-mount|sysinit', 'elogind|boot', 'dbus|default', 'NetworkManager|default', 'display-manager|default']) if openrc else [] }}"
 
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z", common_flags = "2026-10-19T00:00:00Z", catalyst_use = "2026-10-19T00:00:00Z", rel_type = "2026-10-19T00:00:00Z" }
 id = "stage1"
 name = "{{ stage1_name }}"
 target = "stage1"
@@ -119,6 +121,7 @@ catalyst_use = "{{ ['lto'] if lto else [] }}"
 rel_type = "{{ rel_type }}"
 
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z" }
 id = "stage3"
 parent = "stage1"
 name = "stage3-{{ init }}"
@@ -126,6 +129,7 @@ target = "stage3"
 releng_template = "stage3-{{ init }}-23.spec"
 
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", stage4_use = "2026-10-19T00:00:00Z", stage4_packages = "2026-10-19T00:00:00Z", stage4_rcadd = "2026-10-19T00:00:00Z", stage4_empty = "2026-10-19T00:00:00Z", stage4_rm = "2026-10-19T00:00:00Z" }
 id = "stage4"
 parent = "stage3"
 name = "{{ stage4_name }}"
@@ -139,6 +143,7 @@ stage4_empty = ["/var/cache/distfiles"]
 stage4_rm = ["/root/.bash_history"]
 
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z" }
 id = "stage3-desktop"
 parent = "stage1"
 name = "{{ desktop_stage3_name }}"
@@ -147,6 +152,7 @@ releng_template = "stage3d-{{ init }}-23.spec"
 when = "with_desktop or 'iso_gui' in extra_stages"
 
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", profile = "2026-10-19T00:00:00Z", version_stamp = "2026-10-19T00:00:00Z", stage4_use = "2026-10-19T00:00:00Z", stage4_packages = "2026-10-19T00:00:00Z", stage4_rcadd = "2026-10-19T00:00:00Z", stage4_empty = "2026-10-19T00:00:00Z", stage4_rm = "2026-10-19T00:00:00Z" }
 id = "stage4-gnome"
 parent = "stage3-desktop"
 name = "{{ gnome_stage4_name }}"
@@ -162,6 +168,7 @@ stage4_empty = ["/var/cache/distfiles"]
 stage4_rm = ["/root/.bash_history"]
 
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", stage4_packages = "2026-10-19T00:00:00Z", version_stamp = "2026-10-19T00:00:00Z", stage4_fsscript = "2026-10-19T00:00:00Z" }
 id = "stage4-gnome-extras"
 parent = "stage4-gnome"
 name = "{{ gnome_extras_stage4_name }}"
@@ -173,6 +180,7 @@ version_stamp = "gnome-customized-{{ init }}-@TIMESTAMP@"
 stage4_fsscript = "@STAGE_DIR@/install-gnome-extras.sh"
 
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", profile = "2026-10-19T00:00:00Z", version_stamp = "2026-10-19T00:00:00Z", stage4_use = "2026-10-19T00:00:00Z", stage4_packages = "2026-10-19T00:00:00Z", stage4_rcadd = "2026-10-19T00:00:00Z", stage4_empty = "2026-10-19T00:00:00Z", stage4_rm = "2026-10-19T00:00:00Z" }
 id = "stage4-plasma"
 parent = "stage3-desktop"
 name = "{{ plasma_stage4_name }}"
@@ -189,6 +197,7 @@ stage4_rm = ["/root/.bash_history"]
 
 # Minimal installer ISO, following the Gentoo amd64 releng installcd specifications.
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z", livecd_packages = "2026-10-19T00:00:00Z" }
 id = "livecd-stage1"
 parent = "stage3"
 name = "{{ iso_stage1_name }}"
@@ -199,6 +208,7 @@ when = "'iso' in extra_stages"
 livecd_packages = "{{ ['@releng'] + iso_extra_packages }}"
 
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z", livecd_volid = "2026-10-19T00:00:00Z", livecd_iso = "2026-10-19T00:00:00Z", livecd_rcadd = "2026-10-19T00:00:00Z" }
 id = "livecd-stage2"
 parent = "livecd-stage1"
 name = "{{ iso_stage2_name }}"
@@ -212,6 +222,7 @@ livecd_rcadd = "{{ ['@releng'] + (['zram-init|boot'] if openrc and zram != 'off'
 
 # Desktop live ISO, based on the machine's desktop stage3 like the Raspberry Pi template.
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", profile = "2026-10-19T00:00:00Z", version_stamp = "2026-10-19T00:00:00Z", livecd_use = "2026-10-19T00:00:00Z", livecd_packages = "2026-10-19T00:00:00Z" }
 id = "livegui-stage1"
 parent = "stage3-desktop"
 name = "{{ livegui_stage1_name }}"
@@ -224,6 +235,7 @@ livecd_use = ["accessibility", "compile-locales", "fbcon", "livecd", "networkman
 livecd_packages = "{{ livegui_packages }}"
 
 [[stages]]
+last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z", boot_kernel = "2026-10-19T00:00:00Z", livecd_type = "2026-10-19T00:00:00Z", livecd_bootargs = "2026-10-19T00:00:00Z", livecd_depclean = "2026-10-19T00:00:00Z", livecd_fstype = "2026-10-19T00:00:00Z", livecd_volid = "2026-10-19T00:00:00Z", livecd_iso = "2026-10-19T00:00:00Z", livecd_fsscript = "2026-10-19T00:00:00Z", livecd_rcadd = "2026-10-19T00:00:00Z", livecd_unmerge = "2026-10-19T00:00:00Z", livecd_empty = "2026-10-19T00:00:00Z" }
 id = "livegui-stage2"
 parent = "livegui-stage1"
 name = "{{ livegui_stage2_name }}"
@@ -374,6 +386,7 @@ destination = "stages/{{ livegui_stage2_name }}/fsscript.sh"
 when = "'iso_gui' in extra_stages"
 
 [[groups]]
+last_changed = { stage4_packages = "2026-10-19T00:00:00Z", livecd_packages = "2026-10-19T00:00:00Z", stage4_rcadd = "2026-10-19T00:00:00Z" }
 id = "wireless"
 title = "Wi-Fi and Bluetooth"
 description = "Bluetooth support and the Wi-Fi supplicant; firmware is provided by linux-firmware."
@@ -386,6 +399,7 @@ livecd_packages = ["net-wireless/bluez", "net-wireless/wpa_supplicant"]
 stage4_rcadd = "{{ ['bluetooth|default'] if openrc else [] }}"
 
 [[groups]]
+last_changed = { stage4_packages = "2026-10-19T00:00:00Z" }
 id = "development"
 title = "Development tools"
 description = "git, eselect-repository and kernel headers."
@@ -395,6 +409,7 @@ stages = ["stage4", "stage4-gnome", "stage4-plasma"]
 stage4_packages = ["dev-vcs/git", "app-eselect/eselect-repository", "sys-kernel/linux-headers"]
 
 [[groups]]
+last_changed = { stage4_packages = "2026-10-19T00:00:00Z", stage4_rcadd = "2026-10-19T00:00:00Z" }
 id = "docker"
 title = "Docker"
 description = "Container engine, started at boot."

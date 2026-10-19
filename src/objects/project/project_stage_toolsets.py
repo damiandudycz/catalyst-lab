@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import threading
+from .json_serialization import dump_json
 
 
 _LOCK = threading.RLock()
@@ -69,7 +70,7 @@ def set(project_path: str, stage_id: str, toolset_id: str | None):
         fd, temporary_path = tempfile.mkstemp(prefix=".stage-toolsets-", dir=os.path.dirname(path))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as file:
-                json.dump(values, file, indent=2, sort_keys=True)
+                dump_json(file, values)
                 file.write("\n")
             os.replace(temporary_path, path)
         finally:

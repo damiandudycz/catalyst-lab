@@ -3,6 +3,7 @@ import os, threading, uuid, json, shlex
 from typing import Self
 from .event_bus import EventBus, SharedEvent
 from .repository import Repository
+from .json_serialization import dump_json
 from .lima import (list_instances, run_limactl, run_as_root_in_instance, swap_activation_script,
                    MACHINE_DATA_DIRECTORY, kill_instance_processes, instance_process_ids,
                    move_lima_disk_to_temporary, remove_temporary_lima_disk_data,
@@ -64,7 +65,7 @@ class VMRunner:
             path = cls._metadata_path(item)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as file:
-                json.dump(item.serialize(), file, indent=2)
+                dump_json(file, item.serialize())
 
     def __init__(self, id: uuid.UUID | None = None, name: str = "", cpus: int = 4, memory_gib: int = DEFAULT_MEMORY_GIB, workspace_gib: int = 64,
                  lima_home: str | None = None, swap_gib: int = DEFAULT_SWAP_GIB):

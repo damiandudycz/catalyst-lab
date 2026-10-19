@@ -147,12 +147,6 @@ class StageArgumentDetails(Enum):
         arguments are inherited, or replaced by own values."""
         return self in _ARGUMENTS_WITH_ADDITIONS
 
-    @property
-    def default_options(self) -> list[StageAutomaticOption]:
-        """Automatic options preferred as default value of new stage, in order of preference. First one available for
-        the stage is used (parent stage selected, releng template selected and defining this argument...)."""
-        return _default_options_mapping.get(self, [])
-
     @staticmethod
     def named(name: str) -> StageArgumentDetails | None:
         try:
@@ -345,60 +339,6 @@ _automatic_options_mapping: dict[StageArgumentDetails, list[StageAutomaticOption
         # Root and ISO overlays are combined from their own sources, like portage_confdir.
         and argument not in (StageArgumentDetails.stage4_root_overlay, StageArgumentDetails.livecd_root_overlay,
                              StageArgumentDetails.livecd_overlay, StageArgumentDetails.stage4_packages)
-    },
-}
-
-# Defaults for new stages, in order of preference. First one available for stage is used. Releng template is available
-# only when selected template defines the argument, so it's safe to list it for every argument it could define.
-# Values that must stay consistent along the stages chain (seed compatibility) prefer parent. Values describing given
-# build prefer releng template, which is chosen for it.
-_default_options_mapping: dict[StageArgumentDetails, list[StageAutomaticOption]] = {
-    # Basic:
-    StageArgumentDetails.profile: [_RELENG, _PARENT], # Template can use more specific profile than seed (eg. desktop).
-    # Architecture:
-    StageArgumentDetails.subarch: [_PARENT, _RELENG], # Toolchain needs to match the seed.
-    StageArgumentDetails.chost: [_PARENT, _RELENG],
-    StageArgumentDetails.cbuild: [_PARENT, _RELENG],
-    # Interpreter is always automatic by default, even when the template sets an
-    # interpreter. Users can explicitly select template inheritance if desired.
-    StageArgumentDetails.interpreter: [_AUTO],
-    StageArgumentDetails.asflags: [_RELENG, _PARENT], # Flags set by template are meant for this build.
-    StageArgumentDetails.cflags: [_RELENG, _PARENT],
-    StageArgumentDetails.common_flags: [_RELENG, _PARENT],
-    StageArgumentDetails.cxxflags: [_RELENG, _PARENT],
-    StageArgumentDetails.fcflags: [_RELENG, _PARENT],
-    StageArgumentDetails.fflags: [_RELENG, _PARENT],
-    StageArgumentDetails.ldflags: [_RELENG, _PARENT],
-    # Release:
-    StageArgumentDetails.rel_type: [_PARENT, _RELENG], # Whole chain is built in the same rel_type directory.
-    StageArgumentDetails.version_stamp: [_RELENG, _PARENT], # Variant of seed (eg. openrc) when template doesn't set it.
-    StageArgumentDetails.compression_mode: [_RELENG, _AUTO],
-    # Packages:
-    StageArgumentDetails.repos: [_PARENT, _RELENG],
-    StageArgumentDetails.keep_repos: [_PARENT, _RELENG],
-    StageArgumentDetails.binrepo_path: [_RELENG, _PARENT],
-    # Configuration:
-    StageArgumentDetails.source_subpath: [_AUTO],
-    # portage_confdir is combined from its own sources (project_stage_portage_confdir), defaults are set there.
-    StageArgumentDetails.portage_prefix: [_RELENG, _PARENT],
-    StageArgumentDetails.update_seed: [_RELENG, _PARENT],
-    StageArgumentDetails.update_seed_command: [_RELENG, _PARENT],
-    StageArgumentDetails.rename_regexp: [_RELENG],
-    StageArgumentDetails.install_mask: [_RELENG, _PARENT], # Resulting system should be consistent along the chain.
-    StageArgumentDetails.catalyst_use: [_RELENG, _PARENT],
-    StageArgumentDetails.decompressor_search_order: [_RELENG, _PARENT],
-    StageArgumentDetails.hostuse: [_RELENG], # Usually set only for stage that needs it (stage1).
-    StageArgumentDetails.boot_kernel: [_RELENG],
-    StageArgumentDetails.pkgcache_path: [_AUTO],
-    StageArgumentDetails.kerncache_path: [_AUTO],
-    # Target specific:
-    **{
-        argument: [_RELENG]
-        for argument in StageArgumentDetails
-        if argument.value.split("/")[0] in ("stage4", "livecd", "boot")
-        # Root and ISO overlays are combined from their own sources, like portage_confdir.
-        and argument not in (StageArgumentDetails.stage4_root_overlay, StageArgumentDetails.livecd_root_overlay,
-                             StageArgumentDetails.livecd_overlay)
     },
 }
 

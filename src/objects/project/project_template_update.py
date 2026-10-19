@@ -25,9 +25,12 @@ from .project_template import (
 )
 from .git_identity import git_environment, require_git_identity
 from .git_directory import GitDirectory
+from .project_stage_baselines import STAGE_BASELINE_FILE, stage_creation_baseline
+from .json_serialization import dump_json
 
 TEMPLATE_STATE_FILE = "project-template.json"
 TEMPLATE_STATE_FORMAT = 1
+_STAGE_BASELINE_KIND = "__catalystlab_baseline_kind__"
 
 # ------------------------------------------------------------------------------
 # State of project created from template.
@@ -73,8 +76,7 @@ class TemplateState:
             "source_kind": self.source_kind,
         }
         with open(os.path.join(project_path, TEMPLATE_STATE_FILE), "w", encoding="utf-8") as file:
-            json.dump(data, file, indent=4)
-            file.write("\n")
+            dump_json(file, data)
 
     @property
     def uuid_stage_ids(self) -> dict[str, uuid.UUID]:
@@ -151,7 +153,8 @@ def template_update_available(project_directory) -> bool | None:
 
 _STAGES_DIRECTORY = "stages"
 _STAGE_FILE = "stage.json"
-_IGNORED = {".git", TEMPLATE_STATE_FILE, ".DS_Store"}
+# Ignore the obsolete sidecar file if a project still has an old copy.
+_IGNORED = {".git", TEMPLATE_STATE_FILE, STAGE_BASELINE_FILE, "catalystlab-stage-overrides.json", ".DS_Store"}
 
 @dataclass
 class ProjectVersion:
@@ -160,6 +163,8 @@ class ProjectVersion:
     entries: dict[str, Any] = field(default_factory=dict)
     stage_directories: dict[str, str] = field(default_factory=dict) # Directory names of stages by their ids.
     stage_names: dict[str, str] = field(default_factory=dict)
+    stage_property_dates: dict[str, dict[str, str]] = field(default_factory=dict)
+    stage_baselines: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 def read_project_version(root: str | None) -> ProjectVersion:
     version = ProjectVersion()
@@ -179,7 +184,21 @@ def read_project_version(root: str | None) -> ProjectVersion:
                 continue
             version.stage_directories[stage_id] = parts[1]
             version.stage_names[stage_id] = (stage.get("name") or {}).get("value", parts[1])
+            try:
+                with open(os.path.join(directory, STAGE_BASELINE_FILE), encoding="utf-8") as file:
+                    version.stage_baselines[stage_id] = json.load(file)
+            except (OSError, ValueError, TypeError):
+                pass
+            metadata = stage.get("_catalystlab", {})
+            if isinstance(metadata, dict) and isinstance(metadata.get("last_changed"), dict):
+                version.stage_property_dates[stage_id] = dict(metadata["last_changed"])
             for key, value in stage.items():
+                if key == "_catalystlab":
+                    continue
+                if isinstance(value, dict) and "last_changed" in value:
+                    if value["last_changed"] is not None:
+                        version.stage_property_dates.setdefault(stage_id, {})[key] = value["last_changed"]
+                    value = {field: item for field, item in value.items() if field != "last_changed"}
                 version.entries[f"stage:{stage_id}#{key}"] = value
             for stage_directory, stage_subdirectories, stage_files in os.walk(directory):
                 stage_subdirectories[:] = [name for name in stage_subdirectories if name not in _IGNORED]
@@ -251,15 +270,23 @@ def compare_versions(base: ProjectVersion, project: ProjectVersion, template: Pr
         base_value = base.entries.get(key, _MISSING)
         project_value = project.entries.get(key, _MISSING)
         template_value = template.entries.get(key, _MISSING)
-        if project_value == template_value or base_value == template_value:
-            continue # Same in both, or template didn't change it (project version is kept).
+        stage_id = argument = None
+        if key.startswith("stage:") and "#" in key:
+            stage_id, _, argument = key[len("stage:"):].partition("#")
+        base_date = base.stage_property_dates.get(stage_id, {}).get(argument, _MISSING) if stage_id else _MISSING
+        project_date = project.stage_property_dates.get(stage_id, {}).get(argument, _MISSING) if stage_id else _MISSING
+        template_date = template.stage_property_dates.get(stage_id, {}).get(argument, _MISSING) if stage_id else _MISSING
+        project_changed = project_value != base_value or project_date != base_date
+        template_changed = base_value != template_value or base_date != template_date
+        if not template_changed or (project_value == template_value and project_date == template_date):
+            continue # Same resulting value, or template didn't change this setting.
         if key.startswith("stage:"):
             body = key[len("stage:"):]
             stage_id, _, rest = body.partition("#") if "#" in body else body.partition("/")
             title = f"{names.get(stage_id, stage_id)}: {rest}"
         else:
             title = key
-        conflict = project_value != base_value
+        conflict = project_changed
         changes.append(TemplateChange(key=key, title=title, base=base_value, project=project_value,
                                       template=template_value, conflict=conflict, use_template=not conflict))
     return _group_stage_changes(changes, base, project, template)
@@ -331,6 +358,13 @@ def apply_changes(project_path: str, changes: list[TemplateChange], project: Pro
                 stage_files[stage_id].pop(argument, None)
             else:
                 stage_files[stage_id][argument] = change.template
+            template_date = template.stage_property_dates.get(stage_id, {}).get(argument, _MISSING)
+            property_value = stage_files[stage_id].get(argument)
+            if isinstance(property_value, dict):
+                if template_date is _MISSING or template_date is None:
+                    property_value.pop("last_changed", None)
+                else:
+                    property_value["last_changed"] = template_date
             continue
         if change.key.startswith("stage:"):
             stage_id, _, relative = change.key[len("stage:"):].partition("/")
@@ -360,7 +394,7 @@ def apply_changes(project_path: str, changes: list[TemplateChange], project: Pro
             continue
         os.makedirs(directory, exist_ok=True)
         with open(os.path.join(directory, _STAGE_FILE), "w", encoding="utf-8") as file:
-            json.dump(stage, file, indent=4)
+            dump_json(file, stage)
         # Directory follows name of stage (renamed in template).
         name = (stage.get("name") or {}).get("value")
         if name:
@@ -434,6 +468,70 @@ def _read_commit(repository_path: str, commit: str, directory: str) -> ProjectVe
         raise TemplateError(f"Failed to read commit {commit[:8]}")
     return read_project_version(directory)
 
+def _replay_stage_property_dates(project_path: str, parent: ProjectVersion, commit: ProjectVersion,
+                                 changes: list[TemplateChange]):
+    """Replay timestamp-only edits so same-value explicit choices survive template updates."""
+    template_choices = {
+        (stage_id, argument)
+        for change in changes if change.use_template
+        for part in change.flattened()
+        if part.key.startswith("stage:") and "#" in part.key
+        for stage_id, _, argument in [part.key[len("stage:"):].partition("#")]
+    }
+    for stage_id, dates in commit.stage_property_dates.items():
+        previous = parent.stage_property_dates.get(stage_id, {})
+        changed = {name: date for name, date in dates.items() if previous.get(name, _MISSING) != date}
+        removed = set(previous) - set(dates)
+        changed = {name: date for name, date in changed.items() if (stage_id, name) not in template_choices}
+        removed = {name for name in removed if (stage_id, name) not in template_choices}
+        if not changed and not removed:
+            continue
+        directory = commit.stage_directories.get(stage_id) or parent.stage_directories.get(stage_id) or stage_id
+        path = os.path.join(project_path, _STAGES_DIRECTORY, directory, _STAGE_FILE)
+        try:
+            with open(path, encoding="utf-8") as file:
+                stage = json.load(file)
+        except (OSError, ValueError):
+            continue
+        for name, date in changed.items():
+            if isinstance(stage.get(name), dict):
+                if date is None:
+                    stage[name].pop("last_changed", None)
+                else:
+                    stage[name]["last_changed"] = date
+        for name in removed:
+            if isinstance(stage.get(name), dict):
+                stage[name].pop("last_changed", None)
+        with open(path, "w", encoding="utf-8") as file:
+            dump_json(file, stage)
+
+
+def _replay_stage_baselines(project_path: str, parent: ProjectVersion, commit: ProjectVersion) -> None:
+    """Carry stage creation snapshots across template updates, even though they aren't update-diff content."""
+    changed = {stage_id: baseline for stage_id, baseline in commit.stage_baselines.items()
+               if parent.stage_baselines.get(stage_id, _MISSING) != baseline}
+    removed = set(parent.stage_baselines) - set(commit.stage_baselines)
+    if not changed and not removed:
+        return
+    current = read_project_version(project_path).stage_baselines
+    current.update(changed)
+    for stage_id in removed:
+        current.pop(stage_id, None)
+    directories = {**parent.stage_directories, **commit.stage_directories}
+    for stage_id in changed.keys() | removed:
+        directory = directories.get(stage_id)
+        if directory is None:
+            continue
+        stage_directory = os.path.join(project_path, _STAGES_DIRECTORY, directory)
+        path = os.path.join(stage_directory, STAGE_BASELINE_FILE)
+        if stage_id in current:
+            os.makedirs(stage_directory, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as file:
+                dump_json(file, current[stage_id])
+        elif os.path.exists(path):
+            os.remove(path)
+
+
 def rebase_project(repository_path: str, onto: str, base: str, changes: list[TemplateChange], temporary: str,
                    log: Callable[[str], None]) -> str:
     """Replays commits made since base on top of commit onto, and moves branch to them. Changes of every commit are
@@ -477,6 +575,8 @@ def rebase_project(repository_path: str, onto: str, base: str, changes: list[Tem
                     if part.conflict:
                         part.use_template = not decisions.get(part.key, False)
         apply_changes(current, commit_changes, current_version, commit_version)
+        _replay_stage_property_dates(current, parent_version, commit_version, commit_changes)
+        _replay_stage_baselines(current, parent_version, commit_version)
         message = _git(repository_path, "log", "-1", "--format=%B", commit)
         title = message.splitlines()[0] if message else commit[:8]
         replayed = _commit_directory(repository_path, current, message, [head], author=_commit_author(repository_path, commit))
@@ -589,6 +689,64 @@ def template_base_commit(project_path: str) -> str | None:
     return by_message if is_ancestor else by_state
 
 
+def _stage_values_from_commit(project_path: str, commit: str | None,
+                              stage_id: uuid.UUID | str) -> dict[str, Any]:
+    if commit is None:
+        return {}
+    paths = _git(project_path, "ls-tree", "-r", "--name-only", commit, "--", _STAGES_DIRECTORY,
+                 check=False).splitlines()
+    for relative_path in paths:
+        if relative_path.rsplit("/", 1)[-1] != _STAGE_FILE:
+            continue
+        raw = _git(project_path, "show", f"{commit}:{relative_path}", check=False)
+        try:
+            stage = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        # Current project stage.json stores each value as a typed wrapper; older
+        # wizard snapshots may contain ordinary JSON values.
+        identifier = stage.get("id")
+        identifier = identifier.get("value") if isinstance(identifier, dict) else identifier
+        if str(identifier) == str(stage_id):
+            return stage
+    return {}
+
+
+def _first_committed_stage_values(project_path: str, stage_id: uuid.UUID | str) -> dict[str, Any]:
+    """Find the first committed version of a stage file in a local project without an upstream."""
+    stages_path = os.path.join(project_path, _STAGES_DIRECTORY)
+    stage_path = None
+    for directory, _subdirectories, files in os.walk(stages_path):
+        if _STAGE_FILE not in files:
+            continue
+        path = os.path.join(directory, _STAGE_FILE)
+        try:
+            with open(path, encoding="utf-8") as file:
+                stage = json.load(file)
+        except (OSError, ValueError):
+            continue
+        if str((stage.get("id") or {}).get("value")) == str(stage_id):
+            stage_path = os.path.relpath(path, project_path)
+            break
+    if stage_path is None:
+        return {}
+
+    commits = _git(project_path, "log", "--reverse", "--first-parent", "--follow",
+                   "--format=%H", "--", stage_path, check=False).splitlines()
+    for commit in commits:
+        raw = _git(project_path, "show", f"{commit}:{stage_path}", check=False)
+        try:
+            values = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        identifier = values.get("id")
+        identifier = identifier.get("value") if isinstance(identifier, dict) else identifier
+        if str(identifier) == str(stage_id):
+            values[_STAGE_BASELINE_KIND] = "first_commit"
+            return values
+    return {}
+
+
 def project_stage_baseline(project_path: str, stage_id: uuid.UUID | str) -> dict[str, Any]:
     """Serialized baseline values for a stage from its template or cloned Git repository."""
     if TemplateState.load(project_path) is not None:
@@ -597,27 +755,22 @@ def project_stage_baseline(project_path: str, stage_id: uuid.UUID | str) -> dict
         # Compare against the source branch itself, not the merge-base with the
         # local branch. The merge-base can move to a stale ancestor after branches
         # diverge, and using HEAD would make committed local edits look like defaults.
-        # A newly created project has no remote and therefore falls back to runtime
-        # defaults when settings are restored.
         upstream = _git(project_path, "rev-parse", "@{upstream}", check=False)
         if not upstream:
             upstream = _git(project_path, "rev-parse", "origin/HEAD", check=False)
         base = upstream or None
+        if base is not None:
+            # rev-parse can echo an unresolved symbolic name (for example
+            # origin/HEAD in a repo without that ref), so accept only commits.
+            base = _git(project_path, "rev-parse", "--verify", f"{base}^{{commit}}", check=False) or None
     if base is None:
-        return {}
-    paths = _git(project_path, "ls-tree", "-r", "--name-only", base, "--", _STAGES_DIRECTORY,
-                 check=False).splitlines()
-    for relative_path in paths:
-        if not relative_path.endswith("/" + _STAGE_FILE):
-            continue
-        raw = _git(project_path, "show", f"{base}:{relative_path}", check=False)
-        try:
-            stage = json.loads(raw)
-        except (ValueError, TypeError):
-            continue
-        if str((stage.get("id") or {}).get("value")) == str(stage_id):
-            return stage
-    return {}
+        if initial := stage_creation_baseline(project_path, stage_id):
+            return initial
+        return _first_committed_stage_values(project_path, stage_id)
+    values = _stage_values_from_commit(project_path, base, stage_id)
+    # A stage added by the user after the template was created has no counterpart
+    # in the template commit. Its first committed version becomes its baseline.
+    return values or stage_creation_baseline(project_path, stage_id) or _first_committed_stage_values(project_path, stage_id)
 
 def prepare_template_update(project_directory, log: Callable[[str], None],
                             selected: dict[str, Any] | None = None, force: bool = False, toolset=None) -> ProjectUpdate | None:

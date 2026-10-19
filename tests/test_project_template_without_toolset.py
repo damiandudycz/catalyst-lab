@@ -25,10 +25,15 @@ class ProjectTemplateWithoutToolsetTests(unittest.TestCase):
             template_dir.mkdir()
             (template_dir / 'template.toml').write_text('''format = 1
 name = "Bare template"
+updated_at = "2025-01-01T00:00:00Z"
 [[stages]]
 id = "stage1"
 name = "stage1-openrc"
 target = "stage1"
+[stages.last_changed]
+name = "2025-02-01T00:00:00Z"
+target = "2025-02-01T00:00:00Z"
+common_flags = "2025-03-01T00:00:00Z"
 [stages.arguments]
 common_flags = "-O2 -pipe -march=armv8-a"
 ''', encoding='utf-8')
@@ -67,7 +72,7 @@ common_flags = "-O2 -pipe -march=armv8-a"
             defaults = Mock(side_effect=AssertionError('defaults must wait until a toolset is selected'))
             stage_module = types.ModuleType('catalystlab.project_stage')
             stage_module.ProjectStage = Stage
-            stage_module.apply_default_stage_arguments = defaults
+            stage_module.refresh_default_stage_arguments = defaults
             stage_module.remove_unsupported_parent_options = Mock(
                 side_effect=AssertionError('validation must wait until a toolset is selected')
             )
@@ -89,6 +94,11 @@ common_flags = "-O2 -pipe -march=armv8-a"
             self.assertEqual(len(project.stages), 1)
             self.assertEqual(project.stages[0].common_flags, '-O2 -pipe -march=armv8-a')
             self.assertIsNone(getattr(project.stages[0], "toolset_id", None))
+            self.assertEqual(project.stages[0]._explicit_user_argument_dates, {
+                'name': '2025-02-01T00:00:00Z',
+                'target': '2025-02-01T00:00:00Z',
+                'common_flags': '2025-03-01T00:00:00Z',
+            })
             defaults.assert_not_called()
 
 

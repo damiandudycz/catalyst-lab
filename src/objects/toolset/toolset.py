@@ -21,6 +21,7 @@ from .rootless import (
     remove_in_namespace, squashfs_process, sessions_directory,
     unmount_read_only_mount
 )
+from .json_serialization import dump_json
 
 class ToolsetEvents(Enum):
     SPAWNED_CHANGED = auto()
@@ -851,7 +852,7 @@ class Toolset(Serializable):
             path = os.path.join(cls.directory_path_for_name(item.name), "metadata.json")
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as file:
-                json.dump(item.serialize(), file, indent=2)
+                dump_json(file, item.serialize())
 
     @staticmethod
     def sanitized_name_for_name(name: str) -> str:
@@ -967,7 +968,7 @@ def write_metadata_to_json(toolset_root: str, metadata: dict[str, Any] | None):
                 os.remove(json_file_path)
         else:
             with open(json_file_path, 'w') as json_file:
-                json.dump(metadata, json_file, indent=4)
+                dump_json(json_file, metadata)
     except Exception as e:
         print(f"Failed to write metadata to toolset: {e}")
 

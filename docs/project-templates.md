@@ -111,6 +111,9 @@ default_stages = ["stage4"]             # Optional, stages selected by default (
 [groups.arguments]                      # Added to arguments of selected stages.
 stage4_packages = ["sys-kernel/gentoo-kernel-bin", "sys-kernel/linux-firmware"]
 
+[groups.last_changed]                   # Optional per-property timestamps, like [stages.last_changed].
+stage4_packages = "2026-10-19T00:00:00Z"
+
 [[groups.files]]                        # Copied to directories of selected stages.
 source = "files/kernel"
 destination = "portage"                 # Relative to the stage directory.
@@ -118,6 +121,8 @@ destination = "portage"                 # Relative to the stage directory.
 
 - Lists in arguments are added to lists of the stage and of other groups (without duplicates), other values replace
   them.
+- `last_changed` can also be declared for groups. A group timestamp becomes the source timestamp for that argument on
+  stages where the group is applied.
 - A group isn't applied to a stage built from a stage that already gets it (its parent, or further ancestor): the
   stage has its packages, services and files from its seed. Such stages are shown checked and disabled.
 - Arguments that the target of a stage doesn't have are skipped, so a group can set for example both
@@ -173,7 +178,17 @@ when = "include_stage3"         # Optional, the stage is created only when this 
 [stages.arguments]              # Optional values of stage arguments.
 stage4_packages = ["app-admin/sudo", "net-misc/chrony"]
 stage4_rcadd = "{{ stage4_services }}"
+
+[stages.last_changed]           # Optional source timestamps for individual properties.
+releng_template = "2026-10-19T00:00:00Z"
+stage4_packages = "2026-10-19T00:00:00Z"
 ```
+
+`last_changed` records when each property in the template was last changed. The app copies these timestamps into the
+corresponding generated `stage.json` property and compares them during template updates. This keeps an unchanged
+property tied to the template even when its value equals a user-selected value. Timestamps may be omitted; when absent,
+the top-level `updated_at` timestamp is used for compatibility with older templates. Set a property timestamp to an
+empty value only by omitting it; TOML has no `null` value.
 
 - `releng_template` is a path of a spec in the Releng directory selected for the project, relative to
   `releases/specs/<architecture>` (for example `releases/specs/amd64` or `releases/specs/ppc/ppc64`). The stage

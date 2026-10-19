@@ -4,6 +4,7 @@ from functools import wraps
 import json
 import os
 from .runtime_env import RuntimeEnv
+from .json_serialization import dump_json
 from .event_bus import EventBus
 from enum import Enum, auto
 
@@ -121,7 +122,7 @@ class Repository(Generic[T]):
                 path = preferences_file()
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 with open(path, "w", encoding="utf-8") as f:
-                    json.dump(self._value.serialize(), f, indent=2)
+                    dump_json(f, self._value.serialize())
         finally:
             self.event_bus.emit(RepositoryEvent.VALUE_CHANGED, self._value)
 

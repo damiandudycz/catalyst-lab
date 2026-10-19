@@ -5,6 +5,7 @@ from .app_section import app_section
 from .cl_toggle_group import CLToggle, CLToggleGroup
 from .build_failures import collect_package_failures, bugzilla_url, PackageFailure
 from .files_browser_view import FileContentView, FilesBrowserView
+from .json_serialization import dump_json
 
 # Ways of grouping failures: title, key of group, title of group.
 _GROUPINGS = [
@@ -224,7 +225,7 @@ class BugsSection(Gtk.Box):
             path = self._project_notes_path(failure, issue_key)
             temporary = path + ".tmp"
             with open(temporary, "w", encoding="utf-8") as file:
-                json.dump(notes, file, ensure_ascii=False, indent=2)
+                dump_json(file, notes)
                 file.write("\n")
             os.replace(temporary, path)
 

@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import shutil
+from .json_serialization import dump_json
 
 _PACKAGE_ATOM = re.compile(r"^[A-Za-z0-9+_.-]+/[A-Za-z0-9+_.-]+(?:::[A-Za-z0-9+_.-]+)?$")
 KERNEL_OUTPUTS_MANIFEST = "kernel-output.manifest"
@@ -20,8 +21,7 @@ def write_kernel_build_metadata(directory: str, metadata: dict) -> str:
                 "built_at": metadata.get("built_at", datetime.now(timezone.utc).isoformat()),
                 **metadata}
     with open(temporary, "w", encoding="utf-8") as file:
-        json.dump(document, file, indent=2, sort_keys=True)
-        file.write("\n")
+        dump_json(file, document)
     os.replace(temporary, path)
     return path
 

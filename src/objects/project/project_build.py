@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from .repository import Repository, resolve_path
 from .project_stage_arguments import StageArgumentDetails
+from .json_serialization import dump_json
 
 # ------------------------------------------------------------------------------
 # Stage builds storage:
@@ -106,7 +107,7 @@ class StageBuild:
         self.path = self.path or os.path.join(stage_builds_directory(project_directory, self.stage_id), self.timestamp)
         os.makedirs(self.path, exist_ok=True)
         with open(os.path.join(self.path, StageBuild.METADATA_FILE), "w", encoding="utf-8") as file:
-            json.dump(self.serialize(), file, indent=4)
+            dump_json(file, self.serialize())
 
     def delete(self):
         """Removes build directory with its results. Directory of stage builds is removed too when it becomes empty."""

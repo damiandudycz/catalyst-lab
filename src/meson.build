@@ -40,6 +40,7 @@ configure_file(
 
 catalystlab_sources = [
   '__init__.py',
+  'objects/json_serialization.py',
   'formatters.py',
   'serial_console.py',
   'main.py',
@@ -95,11 +96,11 @@ catalystlab_sources = [
   'objects/overlay/overlay_update.py',
   'objects/project/project_directory.py',
   'objects/project/project_stage_toolsets.py',
-  'objects/project/project_stage_overrides.py',
   'objects/project/project_installation.py',
   'objects/project/project_template.py',
   'objects/project/project_template_expressions.py',
   'objects/project/project_template_update.py',
+  'objects/project/project_stage_baselines.py',
   'objects/project/project_stage_installation.py',
   'objects/project/project_manager.py',
   'objects/project/project_update.py',

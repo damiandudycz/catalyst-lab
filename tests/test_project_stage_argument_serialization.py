@@ -89,6 +89,23 @@ class StageArgumentSerializationTests(unittest.TestCase):
         stage._explicit_stage_arguments.add('packages')
         self.assertEqual(stage.serialize()['packages'], Serialization.serialize(['app-admin/sudo']))
 
+    def test_explicit_choice_marker_round_trips_inside_stage_file(self):
+        stage = ProjectStage(name='stage1', target_name='stage1')
+        stage.subarch = 'amd64'
+        stage._explicit_stage_arguments.add('subarch')
+        stage._explicit_user_arguments.add('subarch')
+        stage._explicit_user_argument_dates['subarch'] = '2026-10-19T20:00:00+00:00'
+
+        saved = stage.serialize()
+        restored = ProjectStage.init_from(saved)
+
+        self.assertEqual(saved['subarch'], {
+            'type': 'str', 'value': 'amd64', 'last_changed': '2026-10-19T20:00:00+00:00'
+        })
+        self.assertEqual(restored._explicit_user_arguments, set())
+        self.assertEqual(restored._explicit_user_argument_dates, {'subarch': '2026-10-19T20:00:00+00:00'})
+        self.assertEqual(restored.serialize(), saved)
+
 
 if __name__ == '__main__':
     unittest.main()

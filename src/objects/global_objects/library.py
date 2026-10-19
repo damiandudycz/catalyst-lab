@@ -5,6 +5,7 @@ from enum import Enum
 from .formatters import format_size
 from .helper_functions import path_is_within
 from .repository import library_directory, store_library_directory, collapse_home
+from .json_serialization import dump_json
 
 # ------------------------------------------------------------------------------
 # Library contains app data and object-local metadata. User preferences are stored separately.
@@ -247,7 +248,7 @@ def _rewrite_object_paths(library: str, old: str):
             changed = moved(data)
             if changed != data:
                 with open(path, "w", encoding="utf-8") as file:
-                    json.dump(changed, file, indent=2)
+                    dump_json(file, changed)
 
 # Helpers:
 

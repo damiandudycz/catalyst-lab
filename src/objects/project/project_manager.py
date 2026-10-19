@@ -1,5 +1,7 @@
 from typing import final, Any
+from datetime import datetime, timezone
 import os, shutil, json
+from .json_serialization import dump_json
 from .git_manager import GitManager
 from .repository import Repository
 from .project_directory import ProjectDirectory
@@ -39,8 +41,8 @@ class ProjectManager(GitManager):
             else:
                 explicit_none_arguments.discard(attribute_name)
         stage._explicit_stage_arguments.add(attribute_name)
-        from .project_stage_overrides import mark_explicit
-        mark_explicit(project.directory_path(), stage.id, attribute_name)
+        stage._explicit_user_arguments.add(attribute_name)
+        stage._explicit_user_argument_dates[attribute_name] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.save_stage(project=project, stage=stage)
 
     def remove_stage_argument(self, project: ProjectDirectory, stage: ProjectStage, argument: StageArgumentDetails | str):
@@ -48,10 +50,15 @@ class ProjectManager(GitManager):
         attribute_name = argument.name if isinstance(argument, StageArgumentDetails) else argument
         getattr(stage, "_explicit_none_arguments", set()).discard(attribute_name)
         getattr(stage, "_explicit_stage_arguments", set()).discard(attribute_name)
-        from .project_stage_overrides import mark_explicit
-        mark_explicit(project.directory_path(), stage.id, attribute_name, explicit=False)
+        explicit_user_arguments = getattr(stage, "_explicit_user_arguments", set())
+        had_marker = (attribute_name in explicit_user_arguments
+                      or attribute_name in stage._explicit_user_argument_dates)
+        explicit_user_arguments.discard(attribute_name)
+        stage._explicit_user_argument_dates.pop(attribute_name, None)
         if hasattr(stage, attribute_name):
             delattr(stage, attribute_name)
+            self.save_stage(project=project, stage=stage)
+        elif had_marker:
             self.save_stage(project=project, stage=stage)
 
     def save_stage(self, project: ProjectDirectory, stage: ProjectStage):
@@ -60,7 +67,7 @@ class ProjectManager(GitManager):
         config_json = stage.serialize()
         os.makedirs(stage_path, exist_ok=True)
         with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config_json, f, indent=4)
+            dump_json(f, config_json)
         project.event_bus.emit(GitDirectoryEvent.CONTENT_CHANGED, project)
 
     def stages_using_parent(self, project: ProjectDirectory, stage: ProjectStage) -> list[ProjectStage]:
@@ -74,6 +81,8 @@ class ProjectManager(GitManager):
         for child in detached_stages:
             self.change_stage_argument(project=project, stage=child, argument=StageArgumentDetails.parent, value=None)
         stage_path = project.stage_directory_path(name=stage.name)
+        from .project_stage_baselines import remove_stage_creation_baseline
+        remove_stage_creation_baseline(stage_path)
         if os.path.isdir(stage_path):
             shutil.rmtree(stage_path)
         if stage in project.stages:

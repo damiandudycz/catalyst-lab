@@ -4,6 +4,7 @@ from datetime import datetime
 from .repository import Serializable, Repository, resolve_path
 from typing import Self
 import os, json
+from .json_serialization import dump_json
 import subprocess
 import re
 from .architecture import Architecture
@@ -84,7 +85,7 @@ class Snapshot(Serializable):
             marker = item.file_path() + ".json"
             if item.from_file:
                 with open(marker, "w", encoding="utf-8") as file:
-                    json.dump({"from_file": True}, file)
+                    dump_json(file, {"from_file": True})
             elif os.path.isfile(marker):
                 os.remove(marker)
 
