@@ -1030,6 +1030,11 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
                 current_values = []
             elif not isinstance(current_values, list):
                 current_values = [current_values]
+            if (not current_values and details == StageArgumentDetails.interpreter
+                    and details.name not in getattr(self.stage, "_explicit_none_arguments", set())):
+                # Display Automatic as the implicit default without persisting it. Once the user selects it, the normal
+                # edit path stores that explicit choice and the Customized view marks it accordingly.
+                current_values = [StageAutomaticOption.GENERATE_AUTOMATICALLY]
             if self.argument.details in FILE_OVERLAY_ARGUMENTS:
                 # Values stored by older versions (inherit options, path of stage folder) are shown as sources.
                 current_values = root_overlay_values(self.project_directory, self.stage, self.argument.details)

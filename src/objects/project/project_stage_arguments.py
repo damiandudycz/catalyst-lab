@@ -359,7 +359,9 @@ _default_options_mapping: dict[StageArgumentDetails, list[StageAutomaticOption]]
     StageArgumentDetails.subarch: [_PARENT, _RELENG], # Toolchain needs to match the seed.
     StageArgumentDetails.chost: [_PARENT, _RELENG],
     StageArgumentDetails.cbuild: [_PARENT, _RELENG],
-    StageArgumentDetails.interpreter: [_RELENG, _AUTO],
+    # Interpreter is always automatic by default, even when the template sets an
+    # interpreter. Users can explicitly select template inheritance if desired.
+    StageArgumentDetails.interpreter: [_AUTO],
     StageArgumentDetails.asflags: [_RELENG, _PARENT], # Flags set by template are meant for this build.
     StageArgumentDetails.cflags: [_RELENG, _PARENT],
     StageArgumentDetails.common_flags: [_RELENG, _PARENT],
