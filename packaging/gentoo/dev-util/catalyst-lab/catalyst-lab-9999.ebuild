@@ -43,6 +43,7 @@ RDEPEND="
 	gui-libs/gtk:4[introspection]
 	>=gui-libs/libadwaita-1.7:1[introspection]
 	dev-vcs/git
+	x11-themes/hicolor-icon-theme
 	>=sys-apps/bubblewrap-0.11
 	sys-apps/util-linux
 	sys-auth/polkit

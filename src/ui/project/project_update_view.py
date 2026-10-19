@@ -33,8 +33,8 @@ class ProjectUpdateView(Gtk.Box):
             self.toolset_selection_view = ItemSelectionView()
             self.toolset_selection_view.title = "Catalyst toolset"
             self.toolset_selection_view.description = (
-                "Toolset used to read Catalyst stage settings while updating. "
-                "The project’s current toolset is selected when it is available."
+                "Used only to generate the updated template and its stage configuration. "
+                "Generated stages are assigned this toolset. The project’s current toolset is selected when available."
             )
             self.toolset_selection_view.item_icon = "toolbox-symbolic"
             self.toolset_selection_view.item_title_property_name = "name"
@@ -115,7 +115,9 @@ class ProjectUpdateView(Gtk.Box):
         self.toolset_selection_view._load_items()
         description = self._label("Options of the latest version of template, with values selected for project. "
                                   "Changed options change generated stages and files.")
-        widgets = [description]
+        # Toolset selection comes first because it controls which Catalyst arguments are
+        # available while generating the updated template and its stages.
+        widgets = [self.toolset_selection_view, description]
         # Project with own commits can get clean version of template, chosen before options.
         own_commits = own_commits_count(self.project_directory.directory_path())
         drop_row = None
@@ -127,7 +129,7 @@ class ProjectUpdateView(Gtk.Box):
                 active=self._drop_project_changes)
             group.add(drop_row)
             widgets.append(group)
-        widgets.extend((options, self.toolset_selection_view))
+        widgets.append(options)
         def on_continue():
             self.selected = dict(options.selected)
             self.selected_toolset = self.toolset_selection_view.selected_item

@@ -15,8 +15,9 @@ install_data(
 install_dir = get_option('datadir') / 'icons' / symbolic_dir
 custom_icons = []
 foreach icon_file : run_command('find', symbolic_dir, '-name', '*.svg').stdout().strip().split('\n')
-  if icon_file != ''
+  if icon_file != '' and icon_file != symbolic_dir / 'menu-symbolic.svg'
     custom_icons += files(icon_file)
   endif
 endforeach
+custom_icons += files(symbolic_dir / 'menu-symbolic.svg')
 install_data(custom_icons, install_dir: install_dir)
