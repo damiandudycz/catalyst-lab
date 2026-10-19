@@ -88,6 +88,26 @@ class StageDefaultTests(unittest.TestCase):
                 StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE,
             )
 
+    def test_build_toolset_replaces_subarch_default_cached_from_an_earlier_view(self):
+        stage = ProjectStage(name='stage1', target_name='stage1')
+        stage.subarch = 'amd64'
+        stage._default_stage_arguments['subarch'] = 'amd64'
+        project = types.SimpleNamespace(get_architecture=lambda: Architecture.arm64, stages=[])
+        selected_toolset = object()
+        arguments = {'subarch': StageArgumentTargetDetails('subarch', True, StageArgumentDetails.subarch)}
+
+        def subarches(toolset, architecture):
+            self.assertIs(toolset, selected_toolset)
+            self.assertEqual(architecture, Architecture.arm64)
+            return [project_stage.CatalystSubarch('arm64', 'aarch64-unknown-linux-gnu', None)]
+
+        with patch('catalystlab.project_stage.load_catalyst_stage_arguments_details', return_value=arguments), \
+             patch('catalystlab.project_stage.load_catalyst_subarches', side_effect=subarches):
+            refresh_default_stage_arguments(project, stage, toolset=selected_toolset)
+
+        self.assertEqual(stage.subarch, 'arm64')
+        self.assertEqual(stage._default_stage_arguments['subarch'], 'arm64')
+
     def test_profile_uses_latest_stable_generic_profile_for_project_architecture(self):
         stage = ProjectStage(name='stage1', target_name='stage1')
         profiles = [
@@ -104,6 +124,21 @@ class StageDefaultTests(unittest.TestCase):
         self.assertEqual(
             default_stage_argument_value(project, stage, StageArgumentDetails.profile, object()),
             profiles[1],
+        )
+
+    def test_profile_default_uses_snapshot_selected_for_the_build(self):
+        stage = ProjectStage(name='stage1', target_name='stage1')
+        profiles = [project_stage.PortageProfile('default/linux/amd64/23.0', 'stable', 'gentoo')]
+        build_snapshot = types.SimpleNamespace(load_profiles=lambda arch: profiles)
+        project = types.SimpleNamespace(
+            stages=[], get_architecture=lambda: Architecture.amd64, get_snapshot=lambda: None
+        )
+
+        self.assertEqual(
+            default_stage_argument_value(
+                project, stage, StageArgumentDetails.profile, object(), snapshot=build_snapshot
+            ),
+            profiles[0],
         )
 
     def test_profile_inherits_only_when_template_has_a_value(self):
@@ -186,7 +221,7 @@ class StageDefaultTests(unittest.TestCase):
         }
         defaults = {
             'ANY': {
-                'asflags': lambda current_stage, *_: f"default for {current_stage.parent}",
+                'asflags': lambda current_stage, *_, **__: f"default for {current_stage.parent}",
                 'profile': 'new default',
             }
         }
@@ -367,7 +402,7 @@ class StageDefaultTests(unittest.TestCase):
         argument = StageArgumentDetails.profile
         defaults = {
             'ANY': {'profile': 'shared'},
-            'stage4': {'profile': lambda selected_stage, selected_project, _toolset:
+            'stage4': {'profile': lambda selected_stage, selected_project, _toolset, snapshot=None:
                        f'{selected_project.name}:{selected_stage.target}'},
             'stage3': {'profile': None},
         }

@@ -17,6 +17,8 @@ from catalystlab.project_build_spec import (
 )
 from catalystlab.project_stage_arguments import StageArgumentDetails, StageArgumentTargetDetails
 from catalystlab.project_stage_automatic_option import StageAutomaticOption
+from catalystlab.project_stage import ProjectStage, CatalystSubarch
+from catalystlab.architecture import Architecture
 
 
 class StageSpecFormattingTests(unittest.TestCase):
@@ -88,7 +90,8 @@ class StageSpecFormattingTests(unittest.TestCase):
             "version_stamp": StageArgumentTargetDetails("version_stamp", False, StageArgumentDetails.version_stamp),
         }
         with patch("catalystlab.project_build_spec.load_catalyst_stage_arguments_details",
-                   return_value=supported) as load_arguments:
+                   return_value=supported) as load_arguments, patch(
+                       "catalystlab.project_stage.refresh_default_stage_arguments"):
             spec = generate_stage_spec(project, stage, StageSpecContext(
                 timestamp="20261018T210000Z", source_subpath="seed", portage_confdir=None,
                 toolset=toolset, path_mapper=str,
@@ -97,6 +100,76 @@ class StageSpecFormattingTests(unittest.TestCase):
         load_arguments.assert_called_once_with(toolset=toolset, target_name="stage1")
         self.assertIn("version_stamp: 20261018", spec)
         self.assertNotIn("rename_regexp", spec)
+
+    def test_build_spec_refreshes_defaults_before_reporting_required_values(self):
+        toolset = object()
+        snapshot = types.SimpleNamespace(filename="gentoo-test.sqfs")
+        project = types.SimpleNamespace(get_releng_directory=lambda: None, get_snapshot=lambda: None,
+                                        directory_path=lambda: "/project",
+                                        stage_directory_path=lambda name: f"/project/stages/{name}")
+        stage = types.SimpleNamespace(target="stage1", name="stage1")
+        supported = {
+            name: StageArgumentTargetDetails(name, True, StageArgumentDetails.named(name))
+            for name in ("target", "profile", "subarch", "version_stamp")
+        }
+
+        def refresh_defaults(_project, _stage, toolset=None, snapshot=None):
+            self.assertIs(toolset, toolset_arg)
+            self.assertIs(snapshot, snapshot_arg)
+            stage.profile = "default/linux/amd64/23.0"
+            stage.subarch = "amd64"
+            stage.version_stamp = "@TIMESTAMP@"
+
+        toolset_arg, snapshot_arg = toolset, snapshot
+        with patch("catalystlab.project_build_spec.load_catalyst_stage_arguments_details",
+                   return_value=supported), patch(
+                       "catalystlab.project_stage.refresh_default_stage_arguments", side_effect=refresh_defaults
+                   ) as refresh:
+            spec = generate_stage_spec(project, stage, StageSpecContext(
+                timestamp="20261019T220000Z", source_subpath="seed", portage_confdir=None,
+                toolset=toolset, snapshot=snapshot,
+            ))
+
+        refresh.assert_called_once_with(project, stage, toolset=toolset, snapshot=snapshot)
+        self.assertIn("profile: default/linux/amd64/23.0", spec)
+        self.assertIn("subarch: amd64", spec)
+        self.assertIn("version_stamp: 20261019T220000Z", spec)
+
+    def test_build_spec_resolves_required_values_from_releng_for_unopened_stage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            spec_path = root / "releases" / "specs" / "arm64" / "stage1.spec"
+            spec_path.parent.mkdir(parents=True)
+            spec_path.write_text(
+                "target: stage1\nprofile: default/linux/arm64/23.0\nsubarch: arm64\n"
+                "version_stamp: openrc-@TIMESTAMP@\n",
+                encoding="utf-8",
+            )
+            releng = types.SimpleNamespace(directory_path=lambda: str(root))
+            project = types.SimpleNamespace(
+                get_releng_directory=lambda: releng, get_snapshot=lambda: None,
+                get_architecture=lambda: Architecture.arm64, directory_path=lambda: "/project",
+                stage_directory_path=lambda name: f"/project/stages/{name}", stages=[],
+            )
+            stage = ProjectStage(name="stage1", target_name="stage1", releng_template_name="stage1.spec")
+            arguments = {
+                name: StageArgumentTargetDetails(name, True, StageArgumentDetails.named(name))
+                for name in ("target", "profile", "subarch", "version_stamp")
+            }
+            with patch("catalystlab.project_stage.load_catalyst_stage_arguments_details",
+                       return_value=arguments), patch(
+                           "catalystlab.project_stage.load_catalyst_subarches",
+                           return_value=[CatalystSubarch("arm64", "aarch64-unknown-linux-gnu", None)],
+                       ), patch("catalystlab.project_build_spec.load_catalyst_stage_arguments_details",
+                                return_value=arguments):
+                spec = generate_stage_spec(project, stage, StageSpecContext(
+                    timestamp="20261019T220000Z", source_subpath="seed", portage_confdir=None,
+                    toolset=object(), path_mapper=str,
+                ))
+
+        self.assertIn("profile: default/linux/arm64/23.0", spec)
+        self.assertIn("subarch: arm64", spec)
+        self.assertIn("version_stamp: openrc-20261019T220000Z", spec)
 
 
 if __name__ == '__main__':

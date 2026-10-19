@@ -47,6 +47,11 @@ def snapshot_treeish(project_directory, snapshot=None) -> str | None:
 
 def generate_stage_spec(project_directory, stage, context: StageSpecContext) -> str:
     """Spec file contents, with automatic options resolved and placeholders replaced. Raises if required value is missing."""
+    # Defaults are normally refreshed when the stage details are opened. Build
+    # generation must also work for projects/stages that have never been opened
+    # in that view (or whose defaults depend on a newly selected build snapshot).
+    from .project_stage import refresh_default_stage_arguments
+    refresh_default_stage_arguments(project_directory, stage, toolset=context.toolset, snapshot=context.snapshot)
     arguments = load_catalyst_stage_arguments_details(toolset=context.toolset, target_name=stage.target)
     releng_directory = project_directory.get_releng_directory()
     mapped = context.path_mapper or (lambda path: path)

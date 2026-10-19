@@ -457,7 +457,7 @@ def load_catalyst_stage_automatic_arguments_options(stage: ProjectStage, arg_det
 
 def _preferred_default_option(argument: StageArgumentDetails, *options: StageAutomaticOption):
     """Create a project-aware preference function for one default-table entry."""
-    def choose(stage: ProjectStage, project_directory, toolset) -> StageAutomaticOption | None:
+    def choose(stage: ProjectStage, project_directory, toolset, snapshot=None) -> StageAutomaticOption | None:
         has_parent = getattr(stage, StageArgumentDetails.parent.name, None) is not None
         has_template = bool(getattr(stage, StageArgumentDetails.releng_template.name, None))
         for option in options:
@@ -482,13 +482,13 @@ def _preferred_option_or_value(argument: StageArgumentDetails, *options: StageAu
     """Prefer an available inheritance option, then use a concrete usable fallback."""
     choose = _preferred_default_option(argument, *options)
 
-    def choose_or_fallback(stage: ProjectStage, project_directory, toolset):
-        return choose(stage, project_directory, toolset) or fallback
+    def choose_or_fallback(stage: ProjectStage, project_directory, toolset, snapshot=None):
+        return choose(stage, project_directory, toolset, snapshot=snapshot) or fallback
 
     return choose_or_fallback
 
 
-def _default_subarch(stage: ProjectStage, project_directory, toolset):
+def _default_subarch(stage: ProjectStage, project_directory, toolset, snapshot=None):
     """Use the template or parent subarch when defined, otherwise choose a generic arch baseline."""
     from .project_stage_value_resolver import resolve_stage_argument, UNRESOLVED
 
@@ -518,7 +518,7 @@ def _default_subarch(stage: ProjectStage, project_directory, toolset):
     return next((name for name in preferred_names if name in available_names), None)
 
 
-def _default_profile(stage: ProjectStage, project_directory, toolset):
+def _default_profile(stage: ProjectStage, project_directory, toolset, snapshot=None):
     """Inherit a real profile when possible, otherwise choose the snapshot's generic stable profile."""
     from .project_stage_value_resolver import resolve_stage_argument, UNRESOLVED
 
@@ -538,7 +538,7 @@ def _default_profile(stage: ProjectStage, project_directory, toolset):
         if value is not UNRESOLVED and value not in (None, "", []):
             return StageAutomaticOption.INHERIT_FROM_PARENT
 
-    snapshot = project_directory.get_snapshot()
+    snapshot = snapshot or project_directory.get_snapshot()
     architecture = project_directory.get_architecture()
     if snapshot is None or architecture is None:
         return None
@@ -682,14 +682,15 @@ STAGE_DEFAULT_VALUES: dict[str, dict[str, Any]] = {
 _NO_DEFAULT = object()
 
 
-def default_stage_argument_value(project_directory, stage: ProjectStage, argument: StageArgumentDetails, toolset):
+def default_stage_argument_value(project_directory, stage: ProjectStage, argument: StageArgumentDetails, toolset,
+                                 snapshot=None):
     """Get a target-specific default, then the shared default; unresolved settings remain unset."""
     target = (getattr(stage, StageArgumentDetails.target.name, None) or "").replace("-", "_")
     target_defaults = STAGE_DEFAULT_VALUES.get(target, {})
 
     def resolve_candidate(candidate):
         if callable(candidate):
-            candidate = candidate(stage, project_directory, toolset)
+            candidate = candidate(stage, project_directory, toolset, snapshot=snapshot)
             if candidate is None:
                 return _NO_DEFAULT
         elif candidate is None:
@@ -714,7 +715,7 @@ def default_stage_argument_value(project_directory, stage: ProjectStage, argumen
     return None if value is _NO_DEFAULT else value
 
 
-def refresh_default_stage_arguments(project_directory, stage: ProjectStage, toolset=None) -> dict[str, Any]:
+def refresh_default_stage_arguments(project_directory, stage: ProjectStage, toolset=None, snapshot=None) -> dict[str, Any]:
     """Recompute in-memory defaults without making them explicit project edits."""
     has_parent = getattr(stage, StageArgumentDetails.parent.name, None) is not None
     defaults = getattr(stage, "_default_stage_arguments", {})
@@ -749,7 +750,7 @@ def refresh_default_stage_arguments(project_directory, stage: ProjectStage, tool
             value = default_portage_confdir_sources(
                 has_parent=has_parent and parent_supports_argument(project_directory, stage, argument.details, toolset))
         else:
-            value = default_stage_argument_value(project_directory, stage, argument.details, toolset)
+            value = default_stage_argument_value(project_directory, stage, argument.details, toolset, snapshot=snapshot)
         calculated[argument.attribute_name] = value
         if (getattr(stage, argument.attribute_name, None) is not None
                 or argument.attribute_name in getattr(stage, "_explicit_none_arguments", set())):
@@ -891,7 +892,8 @@ def load_catalyst_subarches(toolset: Toolset | None, architecture: Architecture 
     if toolset.env != ToolsetEnv.EXTERNAL:
         raise RuntimeError("Currently only EXTERNAL toolsets are supported for this functionality.")
     toolset_file_path = toolset.file_path()
-    arch_tables = _load_catalyst_arch_tables(toolset_file_path, os.path.getmtime(toolset_file_path))
+    toolset_stat = os.stat(toolset_file_path)
+    arch_tables = _load_catalyst_arch_tables(toolset_file_path, toolset_stat.st_mtime_ns, toolset_stat.st_size)
     subarches = []
     for table in architecture.catalyst_arch_tables():
         for name, values in arch_tables.get(table.name, {}).items():
@@ -902,7 +904,8 @@ def load_catalyst_subarches(toolset: Toolset | None, architecture: Architecture 
     return subarches
 
 @lru_cache(maxsize=8)
-def _load_catalyst_arch_tables(toolset_file_path: str, toolset_mtime: float) -> dict[str, dict[str, dict]]:
+def _load_catalyst_arch_tables(toolset_file_path: str, toolset_mtime_ns: int,
+                               toolset_size: int) -> dict[str, dict[str, dict]]:
     """Reads and merges all catalyst arch/*.toml files from toolset squashfs. Cached per toolset file version."""
     catalyst_arch_path = "/usr/share/catalyst/arch"
     output = subprocess.check_output(
