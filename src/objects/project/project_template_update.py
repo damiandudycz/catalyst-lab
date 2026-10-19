@@ -233,6 +233,10 @@ class TemplateChange:
     conflict: bool # Changed in project and in template differently, user decides.
     use_template: bool # Decision, template version is used (automatic changes always use it).
     parts: list[TemplateChange] = field(default_factory=list) # Changes grouped in this one (eg. files of new stage).
+    date_only: bool = False # The setting value is unchanged; only its user-change timestamp differs.
+    base_date: Any = _MISSING
+    project_date: Any = _MISSING
+    template_date: Any = _MISSING
 
     def flattened(self) -> list[TemplateChange]:
         """Changes grouped in this one, with its decision (group is decided as whole)."""
@@ -277,12 +281,9 @@ def compare_versions(base: ProjectVersion, project: ProjectVersion, template: Pr
         project_date = project.stage_property_dates.get(stage_id, {}).get(argument, _MISSING) if stage_id else _MISSING
         template_date = template.stage_property_dates.get(stage_id, {}).get(argument, _MISSING) if stage_id else _MISSING
         project_changed = project_value != base_value or project_date != base_date
-        # Template timestamps are no longer source metadata. Older project
-        # commits can still contain them, so a regenerated template with no
-        # timestamp must not look like a value change by itself. Keep project
-        # timestamps in project_changed above: they still detect local edits,
-        # including an explicit choice of the value already in the template.
-        template_changed = base_value != template_value
+        value_changed = base_value != template_value
+        date_changed = base_date != template_date
+        template_changed = value_changed or date_changed
         if not template_changed or (project_value == template_value and project_date == template_date):
             continue # Same resulting value, or template didn't change this setting.
         if key.startswith("stage:"):
@@ -293,7 +294,9 @@ def compare_versions(base: ProjectVersion, project: ProjectVersion, template: Pr
             title = key
         conflict = project_changed
         changes.append(TemplateChange(key=key, title=title, base=base_value, project=project_value,
-                                      template=template_value, conflict=conflict, use_template=not conflict))
+                                      template=template_value, conflict=conflict, use_template=not conflict,
+                                      date_only=date_changed and not value_changed, base_date=base_date,
+                                      project_date=project_date, template_date=template_date))
     return _group_stage_changes(changes, base, project, template)
 
 def _is_stage_key(key: str) -> bool:

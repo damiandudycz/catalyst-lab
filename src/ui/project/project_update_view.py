@@ -269,15 +269,23 @@ class ProjectUpdateView(Gtk.Box):
 
     def _change_row(self, change: TemplateChange, current, result) -> Adw.ActionRow:
         subtitle = (f"{len(change.parts)} settings and files" if change.parts
-                    else f"{describe_value(current)} → {describe_value(result)}")
-        row = Adw.ActionRow(title=GLib.markup_escape_text(change.title),
+                    else (f"Date changed: {describe_value(change.base_date)} → "
+                          f"{describe_value(change.template_date)}" if change.date_only
+                          else f"{describe_value(current)} → {describe_value(result)}"))
+        title = f"{change.title} (date only)" if change.date_only else change.title
+        row = Adw.ActionRow(title=GLib.markup_escape_text(title),
                             subtitle=GLib.markup_escape_text(subtitle))
         row.set_subtitle_lines(3)
         return row
 
     def _conflict_row(self, change: TemplateChange) -> Adw.ActionRow:
-        row = Adw.ActionRow(title=GLib.markup_escape_text(change.title), subtitle=GLib.markup_escape_text(
-            f"Project: {describe_value(change.project)}\n{self.source_name.capitalize()}: {describe_value(change.template)}"))
+        title = f"{change.title} (date only)" if change.date_only else change.title
+        subtitle = (f"Project date: {describe_value(change.project_date)}\n"
+                    f"{self.source_name.capitalize()} date: {describe_value(change.template_date)}"
+                    if change.date_only else
+                    f"Project: {describe_value(change.project)}\n{self.source_name.capitalize()}: "
+                    f"{describe_value(change.template)}")
+        row = Adw.ActionRow(title=GLib.markup_escape_text(title), subtitle=GLib.markup_escape_text(subtitle))
         row.set_subtitle_lines(4)
         toggle_group = CLToggleGroup(valign=Gtk.Align.CENTER)
         toggle_group.add_css_class("round")
