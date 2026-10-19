@@ -34,6 +34,9 @@ class ProjectUpdateView(Gtk.Box):
         self.bottom_bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, visible=False)
         self.bottom_bar.append(Gtk.Separator())
         buttons = Gtk.CenterBox(margin_start=24, margin_end=24, margin_top=12, margin_bottom=12)
+        self.cancel_button = Gtk.Button(label="Cancel", visible=False)
+        self.cancel_button.connect("clicked", lambda button: self._cancel())
+        buttons.set_start_widget(self.cancel_button)
         self.finish_button = Gtk.Button(label="Finish")
         self.finish_button.add_css_class("suggested-action")
         self.finish_button.connect("clicked", lambda button: self._close())
@@ -136,6 +139,7 @@ class ProjectUpdateView(Gtk.Box):
     def _set_content(self, widgets: list[Gtk.Widget], finished: bool = False):
         self.bottom_bar.set_visible(finished)
         self.finish_button.set_visible(finished)
+        self.cancel_button.set_visible(False)
         self.action_button.set_visible(False)
         self._action = None
         while child := self.content.get_first_child():
@@ -202,6 +206,8 @@ class ProjectUpdateView(Gtk.Box):
             describe()
             widgets.append(intro)
         conflicts_group = None
+        automatic_group = None
+        clean_changes_group = None
         if not update.fast_forward and self.source != "template":
             # Project can get clean version instead, its own changes are dropped.
             group = Adw.PreferencesGroup()
@@ -213,6 +219,12 @@ class ProjectUpdateView(Gtk.Box):
                 describe()
                 if conflicts_group is not None:
                     conflicts_group.set_sensitive(not row.get_active())
+                if conflicts_group is not None:
+                    conflicts_group.set_visible(not row.get_active())
+                if automatic_group is not None:
+                    automatic_group.set_visible(not row.get_active())
+                if clean_changes_group is not None:
+                    clean_changes_group.set_visible(row.get_active())
             drop_row.connect("notify::active", on_drop_toggled)
             group.add(drop_row)
             widgets.append(group)
@@ -224,16 +236,29 @@ class ProjectUpdateView(Gtk.Box):
                 group.add(self._conflict_row(change))
             widgets.append(group)
         if automatic:
-            group = Adw.PreferencesGroup(
+            group = automatic_group = Adw.PreferencesGroup(
                 title=f"Changes from {self.source_name}",
                 description="Not changed in project, they are applied.")
             for change in automatic:
-                subtitle = (f"{len(change.parts)} settings and files" if change.parts
-                            else f"{describe_value(change.base)} → {describe_value(change.template)}")
-                row = Adw.ActionRow(title=GLib.markup_escape_text(change.title), subtitle=GLib.markup_escape_text(subtitle))
-                row.set_subtitle_lines(3)
-                group.add(row)
+                group.add(self._change_row(change, change.base, change.template))
             widgets.append(group)
+        if update.drop_project_changes or (not update.fast_forward and self.source != "template"):
+            clean_changes_group = Adw.PreferencesGroup(
+                title="Changes from dropping project changes",
+                description="Resulting file and stage settings compared with the current project.")
+            if update.clean_changes:
+                for change in update.clean_changes:
+                    clean_changes_group.add(self._change_row(change, change.project, change.template))
+            else:
+                clean_changes_group.add(Adw.ActionRow(
+                    title="No file or stage settings will change",
+                    subtitle="Only the local commit history will be dropped."))
+            clean_changes_group.set_visible(update.drop_project_changes)
+            widgets.append(clean_changes_group)
+        if automatic_group is not None:
+            automatic_group.set_visible(not update.drop_project_changes)
+        if conflicts_group is not None:
+            conflicts_group.set_visible(not update.drop_project_changes)
         if not update.changes and update.fast_forward:
             widgets.append(self._label(f"Files of project don't change, only version of {self.source_name} is recorded."))
         self._set_content(widgets)
@@ -241,6 +266,14 @@ class ProjectUpdateView(Gtk.Box):
             conflicts_group.set_sensitive(not update.drop_project_changes)
         self._set_action("Apply update", self._on_apply)
         return False
+
+    def _change_row(self, change: TemplateChange, current, result) -> Adw.ActionRow:
+        subtitle = (f"{len(change.parts)} settings and files" if change.parts
+                    else f"{describe_value(current)} → {describe_value(result)}")
+        row = Adw.ActionRow(title=GLib.markup_escape_text(change.title),
+                            subtitle=GLib.markup_escape_text(subtitle))
+        row.set_subtitle_lines(3)
+        return row
 
     def _conflict_row(self, change: TemplateChange) -> Adw.ActionRow:
         row = Adw.ActionRow(title=GLib.markup_escape_text(change.title), subtitle=GLib.markup_escape_text(
@@ -266,6 +299,7 @@ class ProjectUpdateView(Gtk.Box):
     def _set_action(self, label: str, action):
         """Button of page in bottom bar (on the right, like Next in wizards)."""
         self.bottom_bar.set_visible(True)
+        self.cancel_button.set_visible(True)
         self.action_button.set_label(label)
         self.action_button.set_sensitive(True)
         self.action_button.set_visible(True)
@@ -311,3 +345,10 @@ class ProjectUpdateView(Gtk.Box):
     def _close(self):
         if self._window:
             self._window.close()
+
+    def _cancel(self):
+        """Leave the update review without applying the prepared project update."""
+        if self.update is not None:
+            self.update.cleanup()
+            self.update = None
+        self._close()

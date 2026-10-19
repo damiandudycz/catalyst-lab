@@ -46,10 +46,10 @@ class VMRunnerDetailsView(Gtk.Box):
         self.spinner = Adw.Spinner(visible=False)
         tags.append(self.spinner)
         self.tag_state = self._tag(tags)
-        self.tag_in_use = self._tag(tags, "In use", "accent")
+        self.tag_in_use = self._tag(tags, "In use", "loaded")
         self.tag_automatic = self._tag(tags, "Stops when unused")
         self.tag_stopping_soon = self._tag(tags, "Stopping soon", "warning")
-        self.tag_workspace = self._tag(tags, "Working space mounted")
+        self.tag_workspace = self._tag(tags, "Working space mounted", "loaded")
         status_row.add_suffix(tags)
         status_group.add(status_row)
         # Operations using the runner, like reservations of toolsets.
@@ -217,10 +217,12 @@ class VMRunnerDetailsView(Gtk.Box):
         # Status
         self.spinner.set_visible(self.working is not None or status in (None, VMRunner.STATUS_STARTING, VMRunner.STATUS_STOPPING))
         self.tag_state.set_label(self.working or status or "Checking")
-        for style in ("success", "error"):
+        for style in ("success", "loaded", "error"):
             self.tag_state.remove_css_class(style)
-        if not self.working and (running or status == VMRunner.STATUS_MISSING):
-            self.tag_state.add_css_class("success" if running else "error")
+        if running or self.working or status in (VMRunner.STATUS_STARTING, VMRunner.STATUS_STOPPING):
+            self.tag_state.add_css_class("loaded")
+        elif status == VMRunner.STATUS_MISSING:
+            self.tag_state.add_css_class("error")
         self.tag_in_use.set_visible(running and self.machine.is_used)
         self.tag_automatic.set_visible(running and self.machine.stops_when_unused and not self.machine.stop_scheduled)
         self.tag_stopping_soon.set_visible(running and self.machine.stop_scheduled)

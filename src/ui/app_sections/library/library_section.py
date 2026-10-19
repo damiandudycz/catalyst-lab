@@ -14,7 +14,6 @@ from .snapshot_manager import SnapshotManager
 from .formatters import format_size
 from .cl_toggle_group import CLToggle, CLToggleGroup
 from .runner import HOST_RUNNER
-from .build_machine_details_view import VMRunnerDetailsView
 from .status_indicator import StatusIndicator
 
 
@@ -126,17 +125,8 @@ class LibrarySection(Gtk.Box):
             status = StatusIndicator()
             status.set_values(runner.status_indicator_values)
             row.add_suffix(status)
-            row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
-            row.set_activatable(True)
-            row.connect("activated", self._on_vm_runner_activated, runner)
             self.runner_group.add(row)
             self._vm_runner_rows[runner] = (row, status)
-
-    def _on_vm_runner_activated(self, _row, runner):
-        self.content_navigation_view.push_view(
-            VMRunnerDetailsView(machine=runner, content_navigation_view=self.content_navigation_view),
-            title="VM runner",
-        )
 
     def _on_vm_runner_updated(self, runner, *_args):
         if rows := self._vm_runner_rows.get(runner):

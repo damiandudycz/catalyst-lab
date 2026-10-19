@@ -80,6 +80,42 @@ def set_defaults(project_path: str, stage_id: str, defaults: dict[str, dict]):
         _save(data)
 
 
+def checkpoint_committed(project_path: str):
+    """Remember explicit markers alongside the current committed project files."""
+    prefix = _key(project_path, "")
+    with _LOCK:
+        data = _load()
+        changed = False
+        for key, item in data.items():
+            if key.startswith(prefix) and isinstance(item, dict):
+                item["committed_explicit"] = sorted(set(item.get("explicit", [])))
+                changed = True
+        if changed:
+            _save(data)
+
+
+def restore_committed(project_path: str):
+    """Restore the explicit markers associated with the checked-out project files.
+
+    Older Library metadata has no checkpoint. In that case clear its explicit markers:
+    after a Git discard they cannot be distinguished from edits that were just discarded.
+    """
+    prefix = _key(project_path, "")
+    with _LOCK:
+        data = _load()
+        changed = False
+        for key, item in list(data.items()):
+            if not key.startswith(prefix) or not isinstance(item, dict):
+                continue
+            item["explicit"] = sorted(set(item.get("committed_explicit", [])))
+            item.setdefault("committed_explicit", [])
+            if not item["explicit"] and not item.get("defaults"):
+                data.pop(key, None)
+            changed = True
+        if changed:
+            _save(data)
+
+
 def mark_explicit(project_path: str, stage_id: str, argument: str, explicit: bool = True):
     """Record a user edit even when it equals the value currently supplied by a default."""
     with _LOCK:

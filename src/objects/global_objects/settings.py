@@ -15,6 +15,7 @@ class SettingsEvents(Enum):
     DEFAULT_TOOLSET_CHANGED = auto()
     DEFAULT_RUNNER_CHANGED = auto()
     GIT_IDENTITY_CHANGED = auto()
+    PROJECT_STAGES_VIEW_MODE_CHANGED = auto()
 
 
 @final
@@ -43,6 +44,7 @@ class Settings(Serializable):
         git_identity_mode: str = "system",
         git_user_name: str = "",
         git_user_email: str = "",
+        project_stages_view_mode: str = "compact",
     ):
         self._initial_setup_done = initial_setup_done
         self._keep_root_unlocked = keep_root_unlocked
@@ -56,6 +58,8 @@ class Settings(Serializable):
         self._git_identity_mode = git_identity_mode if git_identity_mode in ("system", "custom") else "system"
         self._git_user_name = git_user_name
         self._git_user_email = git_user_email
+        self._project_stages_view_mode = (project_stages_view_mode
+                                         if project_stages_view_mode in ("compact", "full", "list") else "compact")
         # None lets older preferences files fall back to the default Library path.
         self._library_location = library_location
         self.event_bus = EventBus[SettingsEvents]()
@@ -76,6 +80,7 @@ class Settings(Serializable):
             git_identity_mode=data.get("git_identity_mode", "system"),
             git_user_name=data.get("git_user_name", ""),
             git_user_email=data.get("git_user_email", ""),
+            project_stages_view_mode=data.get("project_stages_view_mode", "compact"),
         )
 
     def serialize(self) -> dict:
@@ -92,6 +97,7 @@ class Settings(Serializable):
             "git_identity_mode": self.git_identity_mode,
             "git_user_name": self.git_user_name,
             "git_user_email": self.git_user_email,
+            "project_stages_view_mode": self.project_stages_view_mode,
             "library_location": collapse_home(self.library_location),
         }
 
@@ -253,6 +259,15 @@ class Settings(Serializable):
     @git_user_email.setter
     def git_user_email(self, value: str):
         self._set("git_user_email", str(value).strip(), SettingsEvents.GIT_IDENTITY_CHANGED)
+
+    @property
+    def project_stages_view_mode(self) -> str:
+        return self._project_stages_view_mode
+
+    @project_stages_view_mode.setter
+    def project_stages_view_mode(self, value: str):
+        mode = value if value in ("compact", "full", "list") else "compact"
+        self._set("project_stages_view_mode", mode, SettingsEvents.PROJECT_STAGES_VIEW_MODE_CHANGED)
 
 
 def _navigation_style(value) -> NavigationStyle:

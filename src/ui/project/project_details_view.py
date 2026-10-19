@@ -1,5 +1,6 @@
 from gi.repository import Gtk, Adw, GLib
-from .git_directory import GitDirectoryEvent
+from .git_directory import GitDirectoryEvent, GitDirectoryStatus
+from .git_update import GitUpdate
 from .project_manager import ProjectManager
 from .project_directory import ProjectDirectory
 from .event_bus import SharedEvent
@@ -48,6 +49,7 @@ class ProjectDetailsView(Gtk.Box):
     add_stage_row = Gtk.Template.Child()
     source_button = Gtk.Template.Child()
     source_button_label = Gtk.Template.Child()
+    delete_project_button = Gtk.Template.Child()
 
     def __init__(self, project_directory: ProjectDirectory, content_navigation_view: Adw.NavigationView | None = None):
         super().__init__()
@@ -58,7 +60,15 @@ class ProjectDetailsView(Gtk.Box):
         self._build_action_available = False
         self._build_running = False
         self.directory_details_view.setup(git_directory=project_directory, content_navigation_view=self.content_navigation_view)
+        # The Information page may not be realized when the footer delete action is used. Set the manager here instead
+        # of relying on GitDirectoryDetailsView to resolve its manager lazily on realization, so project-specific
+        # cleanup choices are always included in the confirmation dialog.
+        self.directory_details_view.manager_class = ProjectManager
         self.directory_details_view.on_project_deleted = self._close_after_delete
+        self.delete_project_button.connect(
+            "clicked", self.directory_details_view.action_button_delete_clicked
+        )
+        self._setup_save_changes_button()
         self.get_configuration()
         self.monitor_stages_changes()
         self.monitor_information_changes()
@@ -75,7 +85,27 @@ class ProjectDetailsView(Gtk.Box):
         self._build_refresh_scheduled = False
         MultiStageProcess.event_bus.subscribe(MultiStageProcessEvent.STARTED_PROCESSES_CHANGED, self._on_build_changed)
         BuildQueue.shared().event_bus.subscribe(BuildQueueEvent.CHANGED, self._on_build_changed)
+        MultiStageProcess.event_bus.subscribe(
+            MultiStageProcessEvent.STARTED_PROCESSES_CHANGED, self._update_action_rows_visibility
+        )
         self._refresh_build_state()
+
+    def _setup_save_changes_button(self):
+        """Add a compact save/discard split button to the shared project footer."""
+        self.save_changes_button = Adw.SplitButton(
+            child=Gtk.Label(label="Save changes"),
+            valign=Gtk.Align.CENTER,
+        )
+        self.save_changes_button.add_css_class("project-footer-save-changes")
+        self.save_changes_button.set_menu_model(self.directory_details_view.action_button_save_changes.get_menu_model())
+        self.save_changes_button.connect(
+            "clicked", self.directory_details_view.action_button_save_changes_clicked
+        )
+        # The Information tab's menu uses the same action names. Install its action group at the project page too,
+        # so the footer menu invokes the exact same save/discard callbacks.
+        self.insert_action_group("changes", self.directory_details_view._changes_action_group)
+        self.save_changes_button.set_halign(Gtk.Align.CENTER)
+        self.source_action_row.set_center_widget(self.save_changes_button)
 
     def _setup_action_button_styles(self):
         """Apply action styles after template construction so every button gets the intended classes and sizing."""
@@ -184,6 +214,14 @@ class ProjectDetailsView(Gtk.Box):
         self.stages_compact_view.set_root_nodes(stages)
         self.stages_full_view.set_root_nodes(stages)
         self.stages_list_view.set_root_nodes(stages)
+        # Template/repository updates replace stage.json files and invalidate the
+        # cached stages before emitting CONTENT_CHANGED. Recompute package-folder
+        # compatibility against those refreshed stage flags as well.
+        self._update_packages_warning()
+
+    def _on_project_contents_reloaded(self, _project):
+        self._update_stages(self.project_directory)
+        self._update_source_banner()
 
     # Running build
     # --------------------------------------------------------------------------
@@ -272,10 +310,11 @@ class ProjectDetailsView(Gtk.Box):
             details = origin.url + (f" ({origin.branch})" if origin.branch else "")
             updates = self.project_directory.has_remote_changes
         has_source = self._source is not None
+        self._has_unsaved_changes = has_unsaved_changes(path)
         self._update_action_rows_visibility()
         if self._source is None:
             return
-        unsaved = has_unsaved_changes(path)
+        unsaved = self._has_unsaved_changes
         self.source_button_label.set_label(button)
         # The action opens template options even when the source has no newer version;
         # only unsaved project changes prevent running an update.
@@ -333,7 +372,8 @@ class ProjectDetailsView(Gtk.Box):
         self.stages_view_mode_toggle.add(CLToggle(label="Compact"))
         self.stages_view_mode_toggle.add(CLToggle(label="Full"))
         self.stages_view_mode_toggle.add(CLToggle(label="List"))
-        initial_mode = 1 if self.stages_full_view.expand_all else 0
+        mode_names = {"compact": 0, "full": 1, "list": 2}
+        initial_mode = mode_names.get(Repository.Settings.value.project_stages_view_mode, 0)
         self.stages_view_mode_toggle.set_active(initial_mode)
         self._set_stage_view_mode(initial_mode, remember=False)
         self.stages_view_mode_toggle.connect("notify::active", lambda group, _: self._set_stage_view_mode(group.get_active()))
@@ -341,6 +381,9 @@ class ProjectDetailsView(Gtk.Box):
         self._update_stages_view_mode_visibility()
 
     def _set_stage_view_mode(self, mode: int, remember: bool = True):
+        if remember:
+            mode_names = {0: "compact", 1: "full", 2: "list"}
+            Repository.Settings.value.project_stages_view_mode = mode_names.get(mode, "compact")
         if mode == 2:
             self.stage_content_stack.set_visible_child_name("list")
             return
@@ -354,15 +397,27 @@ class ProjectDetailsView(Gtk.Box):
         self.stages_view_mode_toggle.set_visible(is_stages_page)
         self._update_action_rows_visibility()
 
-    def _update_action_rows_visibility(self):
+    def _update_action_rows_visibility(self, *args):
         is_stages_page = self.stack.get_visible_child_name() == "stages"
         has_source = self._source is not None
+        has_changes = getattr(self, "_has_unsaved_changes", self.project_directory.status == GitDirectoryStatus.CHANGED)
+        active_update = any(
+            update.directory is self.project_directory
+            and update.status == MultiStageProcessState.IN_PROGRESS
+            for update in MultiStageProcess.get_started_processes_by_class(GitUpdate)
+        )
         self.add_stage_row.set_visible(is_stages_page)
         self.builds_row.set_visible(is_stages_page)
         self.build_row.set_visible(is_stages_page and self._build_action_available)
         self.build_progress_row.set_visible(is_stages_page and self._build_running)
         self.source_button.set_visible(is_stages_page and has_source)
-        self.source_action_row.set_visible(is_stages_page and has_source)
+        self.save_changes_button.set_visible(is_stages_page and has_changes)
+        self.save_changes_button.set_sensitive(has_changes and not active_update)
+        if has_changes:
+            self.save_changes_button.add_css_class("source-updates-available")
+        else:
+            self.save_changes_button.remove_css_class("source-updates-available")
+        self.source_action_row.set_visible(is_stages_page)
         self.stage_actions.set_margin_bottom(0 if has_source else 12)
         self.source_banner.set_visible(is_stages_page)
 
@@ -373,6 +428,10 @@ class ProjectDetailsView(Gtk.Box):
         self.project_directory.event_bus.subscribe(
             GitDirectoryEvent.CONTENT_CHANGED,
             self._update_stages
+        )
+        self.project_directory.event_bus.subscribe(
+            GitDirectoryEvent.CONTENT_RELOADED,
+            self._on_project_contents_reloaded,
         )
 
     def monitor_information_changes(self):

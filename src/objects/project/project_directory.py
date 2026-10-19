@@ -85,6 +85,18 @@ class ProjectDirectory(GitDirectory):
     def stages(self, value: list[ProjectStage]):
         self._stages = value
 
+    def reload_contents(self):
+        """Drop cached stage objects after Git restores or updates tracked project files."""
+        from . import project_stage_overrides
+        project_stage_overrides.restore_committed(self.directory_path())
+        self.__dict__.pop("_stages", None)
+        self.__dict__.pop("_broken_stages", None)
+
+    def checkpoint_committed_contents(self):
+        """Checkpoint Library-local customized markers whenever project files are committed."""
+        from . import project_stage_overrides
+        project_stage_overrides.checkpoint_committed(self.directory_path())
+
     def add_stage(self, stage: ProjectStage):
         self.stages.append(stage)
         self.event_bus.emit(GitDirectoryEvent.CONTENT_CHANGED, self)

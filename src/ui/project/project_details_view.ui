@@ -300,15 +300,13 @@
               </object>
             </child>
             <child>
-              <object class="GtkBox" id="source_action_row">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">8</property>
+              <object class="GtkCenterBox" id="source_action_row">
                 <property name="margin-start">12</property>
                 <property name="margin-end">12</property>
                 <property name="height-request">32</property>
                 <property name="valign">center</property>
                 <style><class name="toolbar"/></style>
-                <child>
+                <child type="start">
                   <object class="GtkButton" id="source_button">
                     <property name="hexpand">False</property>
                     <property name="valign">center</property>
@@ -323,7 +321,16 @@
                     </child>
                   </object>
                 </child>
-                <child><object class="GtkLabel"><property name="hexpand">True</property></object></child>
+                <child type="end">
+                  <object class="GtkButton" id="delete_project_button">
+                    <property name="tooltip-text">Delete project</property>
+                    <property name="valign">center</property>
+                    <child>
+                      <object class="GtkLabel"><property name="label">Delete project</property></object>
+                    </child>
+                    <style><class name="flat"/><class name="stage-delete-button"/></style>
+                  </object>
+                </child>
               </object>
             </child>
           </object>

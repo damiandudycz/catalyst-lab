@@ -36,6 +36,16 @@
   border-color: @accent_color;
   color: @accent_fg_color;
 }
+.tag-label.loaded {
+  background-color: alpha(#3584e4, 0.18);
+  border-color: #3584e4;
+  color: #3584e4;
+}
+.tag-label.changed {
+  background-color: alpha(#9141ac, 0.18);
+  border-color: #9141ac;
+  color: #9141ac;
+}
 .tag-label.destructive {
   background-color: @destructive_bg_color;
   border-color: @destructive_color;
@@ -60,6 +70,18 @@
   color: @warning_color;
 }
 
+/* Shared compact footer button typography; semantic classes below only change color. */
+button.stage-toolset-change-button,
+button.stage-delete-button,
+splitbutton.project-footer-save-changes,
+splitbutton.project-footer-save-changes button,
+button.stage-toolset-change-button label,
+button.stage-delete-button label,
+splitbutton.project-footer-save-changes label {
+  font-size: 11px;
+  font-weight: normal;
+}
+
 /* Small button, eg. next to caption text (Update template in project page). */
 button.small-button {
   min-height: 24px;
@@ -72,11 +94,11 @@ button.stage-toolset-change-button {
   padding: 0 8px;
   border-radius: 6px;
   font-size: 11px;
-  background-color: transparent;
+  background-color: alpha(@window_fg_color, 0.08);
   background-image: none;
 }
 button.stage-toolset-change-button:hover {
-  background-color: alpha(@window_fg_color, 0.08);
+  background-color: alpha(@window_fg_color, 0.14);
   background-image: none;
 }
 button.stage-toolset-change-button.source-updates-available,
@@ -84,11 +106,11 @@ button.stage-toolset-change-button.source-updates-available label {
   color: white;
 }
 button.stage-toolset-change-button.source-updates-available {
-  background-color: #3584e4;
+  background-color: alpha(#3584e4, 0.42);
   background-image: none;
 }
 button.stage-toolset-change-button.source-updates-available:hover {
-  background-color: #4b94ec;
+  background-color: alpha(#4b94ec, 0.56);
   background-image: none;
 }
 button.stage-toolset-change-button.source-updates-available:disabled {
@@ -98,9 +120,56 @@ button.stage-toolset-change-button.source-updates-available:disabled {
 button.stage-toolset-change-button.source-updates-available:disabled label {
   color: rgba(255, 255, 255, 0.65);
 }
-button.stage-toolset-change-button label {
-  font-size: 11px;
-  font-weight: normal;
+splitbutton.project-footer-save-changes {
+  min-height: 20px;
+  padding: 0;
+  border-radius: 6px;
+}
+splitbutton.project-footer-save-changes button {
+  min-height: 20px;
+  min-width: 0;
+  padding: 0 8px;
+  background-color: transparent;
+  background-image: none;
+  border: 0;
+  box-shadow: none;
+}
+splitbutton.project-footer-save-changes.source-updates-available button,
+splitbutton.project-footer-save-changes.source-updates-available button label {
+  color: white;
+}
+splitbutton.project-footer-save-changes.source-updates-available {
+  background-color: alpha(#3584e4, 0.42);
+  background-image: none;
+  box-shadow: inset 0 0 0 1px alpha(white, 0.08);
+}
+splitbutton.project-footer-save-changes separator {
+  margin-block: 0;
+  padding-block: 0;
+  min-height: 0;
+}
+splitbutton.project-footer-save-changes.source-updates-available button:hover,
+splitbutton.project-footer-save-changes.source-updates-available button:checked,
+splitbutton.project-footer-save-changes.source-updates-available button:active,
+splitbutton.project-footer-save-changes.source-updates-available button:focus {
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+splitbutton.project-footer-save-changes.source-updates-available:hover {
+  background-color: alpha(#4b94ec, 0.56);
+  background-image: none;
+}
+splitbutton.project-footer-save-changes.source-updates-available:disabled button {
+  background-color: transparent;
+  color: rgba(255, 255, 255, 0.65);
+}
+splitbutton.project-footer-save-changes.source-updates-available:disabled {
+  background-color: alpha(#3584e4, 0.16);
+  box-shadow: none;
+}
+splitbutton.project-footer-save-changes.source-updates-available:disabled button label {
+  color: rgba(255, 255, 255, 0.65);
 }
 button.stage-delete-button {
   min-height: 20px;
@@ -108,13 +177,13 @@ button.stage-delete-button {
   padding: 0 6px;
   border-radius: 6px;
   color: @error_color;
-  background-color: transparent;
+  background-color: alpha(@error_color, 0.08);
   background-image: none;
   box-shadow: none;
 }
 button.stage-delete-button:hover {
   color: @error_color;
-  background-color: alpha(@window_fg_color, 0.08);
+  background-color: alpha(@error_color, 0.14);
   background-image: none;
 }
 .project-actions-panel {

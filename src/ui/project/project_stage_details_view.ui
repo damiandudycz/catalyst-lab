@@ -171,10 +171,7 @@
                 <property name="tooltip-text">Delete stage</property>
                 <property name="valign">center</property>
                 <child>
-                  <object class="AdwButtonContent">
-                    <property name="label">Delete stage</property>
-                    <property name="icon-name">trash-bin-trash-svgrepo-com-symbolic</property>
-                  </object>
+                  <object class="GtkLabel"><property name="label">Delete stage</property></object>
                 </child>
                 <style>
                   <class name="flat"/>

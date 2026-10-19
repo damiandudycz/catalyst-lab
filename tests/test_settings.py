@@ -30,6 +30,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.git_identity_mode, 'system')
         self.assertEqual(settings.git_user_name, '')
         self.assertEqual(settings.git_user_email, '')
+        self.assertEqual(settings.project_stages_view_mode, 'compact')
         self.assertEqual(settings.library_location, "~/CatalystLab")
         self.assertEqual(Settings.init_from(settings.serialize()).serialize(), settings.serialize())
 
@@ -75,8 +76,20 @@ class SettingsTests(unittest.TestCase):
             settings.git_identity_mode = 'custom'
             settings.git_user_name = 'Test User'
             settings.git_user_email = 'test@example.com'
-        self.assertEqual(repository.save.call_count, 10)
+            settings.project_stages_view_mode = 'list'
+        self.assertEqual(repository.save.call_count, 11)
         self.assertEqual({event for event, _ in events}, set(SettingsEvents))
+
+    def test_project_stages_view_mode_validates_and_round_trips(self):
+        settings = Settings(project_stages_view_mode='full')
+        self.assertEqual(Settings.init_from(settings.serialize()).project_stages_view_mode, 'full')
+        self.assertEqual(Settings(project_stages_view_mode='unknown').project_stages_view_mode, 'compact')
+        repository = types.SimpleNamespace(save=Mock())
+        with patch.object(settings_module.Repository, 'Settings', repository, create=True):
+            settings.project_stages_view_mode = 'list'
+            settings.project_stages_view_mode = 'invalid'
+        self.assertEqual(settings.project_stages_view_mode, 'compact')
+        self.assertEqual(repository.save.call_count, 2)
 
     def test_qemu_resource_settings_coerce_integers_and_skip_unchanged_saves(self):
         settings = Settings()

@@ -506,6 +506,8 @@ class ProjectUpdate:
     architecture: Any = None # Architecture set by template (it can change with options).
     # Project is moved to new version also when it has own commits (they are discarded, they stay in Git reflog).
     drop_project_changes: bool = False
+    # Complete file/stage diff between the current project and clean update result.
+    clean_changes: list[TemplateChange] = field(default_factory=list)
 
     def cleanup(self):
         shutil.rmtree(self.temporary_directory, ignore_errors=True)
@@ -592,13 +594,15 @@ def project_stage_baseline(project_path: str, stage_id: uuid.UUID | str) -> dict
     if TemplateState.load(project_path) is not None:
         base = template_base_commit(project_path)
     else:
-        # A project cloned from Git uses its merge-base with the configured upstream.
+        # Compare against the source branch itself, not the merge-base with the
+        # local branch. The merge-base can move to a stale ancestor after branches
+        # diverge, and using HEAD would make committed local edits look like defaults.
         # A newly created project has no remote and therefore falls back to runtime
         # defaults when settings are restored.
         upstream = _git(project_path, "rev-parse", "@{upstream}", check=False)
         if not upstream:
             upstream = _git(project_path, "rev-parse", "origin/HEAD", check=False)
-        base = _git(project_path, "merge-base", "HEAD", upstream, check=False) if upstream else None
+        base = upstream or None
     if base is None:
         return {}
     paths = _git(project_path, "ls-tree", "-r", "--name-only", base, "--", _STAGES_DIRECTORY,
@@ -650,7 +654,10 @@ def prepare_template_update(project_directory, log: Callable[[str], None],
                                                             project_name=project_directory.name),
                                            log=log, stage_ids=state.uuid_stage_ids, toolset=toolset)
         base_version = _read_commit(project_path, base, os.path.join(temporary, "base"))
-        changes = compare_versions(base_version, read_project_version(project_path), read_project_version(generated))
+        current_version = read_project_version(project_path)
+        generated_version = read_project_version(generated)
+        changes = compare_versions(base_version, current_version, generated_version)
+        clean_changes = compare_versions(current_version, current_version, generated_version)
         commit = repository_commit(repository) if repository else None
         options_changed = selected is not None and selected != state.selected
         new_tree = template.source_tree if state.source_kind == "app" else template_tree(repository, state.repository_path)
@@ -669,7 +676,7 @@ def prepare_template_update(project_directory, log: Callable[[str], None],
             onto = base # Template didn't change (prepared to drop changes of project), project returns to base.
         head = _git(project_path, "rev-parse", "HEAD")
         return ProjectUpdate(source="template", onto=onto, base=base, changes=changes, temporary_directory=temporary,
-                             fast_forward=head == base, architecture=architecture)
+                             fast_forward=head == base, architecture=architecture, clean_changes=clean_changes)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
@@ -706,11 +713,13 @@ def prepare_repository_update(project_directory, log: Callable[[str], None], for
         return None # Remote has nothing new (or project is the same as remote).
     temporary = _new_temporary_directory("repository-update-")
     try:
-        changes = compare_versions(_read_commit(project_path, base, os.path.join(temporary, "base")),
-                                   read_project_version(project_path),
-                                   _read_commit(project_path, upstream, os.path.join(temporary, "remote")))
+        base_version = _read_commit(project_path, base, os.path.join(temporary, "base"))
+        current_version = read_project_version(project_path)
+        remote_version = _read_commit(project_path, upstream, os.path.join(temporary, "remote"))
+        changes = compare_versions(base_version, current_version, remote_version)
+        clean_changes = compare_versions(current_version, current_version, remote_version)
         return ProjectUpdate(source="repository", onto=upstream, base=base, changes=changes,
-                             temporary_directory=temporary, fast_forward=head == base)
+                             temporary_directory=temporary, fast_forward=head == base, clean_changes=clean_changes)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise

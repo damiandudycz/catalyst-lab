@@ -97,7 +97,7 @@
                             <style>
                               <class name="tag-label"/>
                               <class name="caption-heading"/>
-                              <class name="accent"/>
+                              <class name="loaded"/>
                             </style>
                           </object>
                         </child>
@@ -107,7 +107,7 @@
                             <style>
                               <class name="tag-label"/>
                               <class name="caption-heading"/>
-                              <class name="accent"/>
+                              <class name="loaded"/>
                             </style>
                           </object>
                         </child>
@@ -117,7 +117,7 @@
                             <style>
                               <class name="tag-label"/>
                               <class name="caption-heading"/>
-                              <class name="accent"/>
+                              <class name="loaded"/>
                             </style>
                           </object>
                         </child>
@@ -127,7 +127,7 @@
                             <style>
                               <class name="tag-label"/>
                               <class name="caption-heading"/>
-                              <class name="accent"/>
+                              <class name="loaded"/>
                             </style>
                           </object>
                         </child>
@@ -137,7 +137,7 @@
                             <style>
                               <class name="tag-label"/>
                               <class name="caption-heading"/>
-                              <class name="warning"/>
+                              <class name="loaded"/>
                             </style>
                           </object>
                         </child>

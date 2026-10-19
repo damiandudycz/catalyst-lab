@@ -104,6 +104,9 @@ class ProjectStageDetailsView(Gtk.Box):
         # realize; this second pass ensures the initial frame uses the mode shown by the
         # header toggle, including rows whose widgets finish setup during realization.
         self.connect("map", self._on_map)
+        self.project_directory.event_bus.subscribe(
+            GitDirectoryEvent.CONTENT_RELOADED, self._on_project_contents_reloaded
+        )
 
     # Basic and advanced mode
     # --------------------------------------------------------------------------
@@ -221,7 +224,7 @@ class ProjectStageDetailsView(Gtk.Box):
     # Loading stage data
     # --------------------------------------------------------------------------
 
-    def load_stage_details(self):
+    def load_stage_details(self, reload_toolset: bool = True):
         self.stage_name_row.set_text(self.stage.name)
         set_row_description(self.stage_name_row, stage_argument_description(StageArgumentDetails.name.value))
         from .project_template_update import project_stage_baseline
@@ -229,7 +232,21 @@ class ProjectStageDetailsView(Gtk.Box):
         project_path = self.project_directory.directory_path()
         self.template_stage_baseline = project_stage_baseline(project_path, self.stage.id)
         self.stage_override_metadata = project_stage_overrides.get(project_path, self.stage.id)
-        self._load_stage_toolset()
+        if reload_toolset:
+            self._load_stage_toolset()
+
+    def _on_project_contents_reloaded(self, _project):
+        """Replace cached stage state and editors after discard or a successful Git update."""
+        stage = next((item for item in self.project_directory.stages if item.id == self.stage.id), None)
+        if stage is None:
+            if self.content_navigation_view is not None:
+                self.content_navigation_view.pop()
+            return
+        self.stage = stage
+        self.load_stage_details(reload_toolset=False)
+        self.load_configuration_rows()
+        if hasattr(self, "_page"):
+            self._page.set_title(self.stage.name)
 
     def _load_stage_toolset(self):
         from .toolset_selection import sorted_toolsets, toolset_has_applications, default_toolset

@@ -30,6 +30,32 @@ class ProjectStageOverridesTests(unittest.TestCase):
                 project_stage_overrides.mark_explicit("/projects/demo", "stage-id", "packages", explicit=False)
                 self.assertEqual(project_stage_overrides.get("/projects/demo", "stage-id")["explicit"], [])
 
+    def test_discard_restores_explicit_markers_from_last_commit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(project_stage_overrides, "_projects_location", return_value=temporary):
+                project_stage_overrides.set_defaults("/projects/demo", "stage-id", {"packages": {"value": "default"}})
+                project_stage_overrides.mark_explicit("/projects/demo", "stage-id", "packages")
+                project_stage_overrides.checkpoint_committed("/projects/demo")
+
+                project_stage_overrides.mark_explicit("/projects/demo", "stage-id", "releng_template")
+                project_stage_overrides.restore_committed("/projects/demo")
+
+                metadata = project_stage_overrides.get("/projects/demo", "stage-id")
+                self.assertEqual(metadata["explicit"], ["packages"])
+                self.assertEqual(metadata["committed_explicit"], ["packages"])
+
+    def test_discard_clears_uncheckpointed_explicit_markers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(project_stage_overrides, "_projects_location", return_value=temporary):
+                project_stage_overrides.set_defaults("/projects/demo", "stage-id", {"packages": {"value": "default"}})
+                project_stage_overrides.mark_explicit("/projects/demo", "stage-id", "packages")
+
+                project_stage_overrides.restore_committed("/projects/demo")
+
+                metadata = project_stage_overrides.get("/projects/demo", "stage-id")
+                self.assertEqual(metadata["explicit"], [])
+                self.assertEqual(metadata["defaults"], {"packages": {"value": "default"}})
+
 
 if __name__ == "__main__":
     unittest.main()

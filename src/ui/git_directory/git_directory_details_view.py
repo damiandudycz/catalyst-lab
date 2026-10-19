@@ -116,6 +116,9 @@ class GitDirectoryDetailsView(Gtk.Box):
         """Updates controls visibility and sensitivity for current status."""
         self.tag_unknown.set_visible(self.git_directory.status in (GitDirectoryStatus.UNKNOWN, GitDirectoryStatus.ERROR))
         self.tag_unknown.set_label("Error" if self.git_directory.status == GitDirectoryStatus.ERROR else "Unknown")
+        self.tag_unknown.set_css_classes(["tag-label", "caption-heading"] + (
+            ["error"] if self.git_directory.status == GitDirectoryStatus.ERROR else []
+        ))
         self.tag_unchanged.set_visible(self.git_directory.status == GitDirectoryStatus.UNCHANGED)
         self.tag_update_available.set_visible(self.git_directory.has_remote_changes)
         self.tag_updating.set_visible(
@@ -148,6 +151,9 @@ class GitDirectoryDetailsView(Gtk.Box):
         )
         self.tag_changed.set_visible(self.git_directory.status in (GitDirectoryStatus.CHANGED, GitDirectoryStatus.CONFLICTED))
         self.tag_changed.set_label("Conflicts" if self.git_directory.status == GitDirectoryStatus.CONFLICTED else "Changed")
+        self.tag_changed.set_css_classes(["tag-label", "caption-heading"] + (
+            ["error"] if self.git_directory.status == GitDirectoryStatus.CONFLICTED else ["changed"]
+        ))
         self.action_button_save_changes.set_sensitive(
             self.git_directory.status == GitDirectoryStatus.CHANGED
             and (

@@ -5,6 +5,7 @@ from .multistage_process import (
     MultiStageProcessStageState
 )
 from .git_directory import GitDirectory
+from .git_directory import GitDirectoryEvent
 from .git_manager import GitManager
 
 # ------------------------------------------------------------------------------
@@ -34,6 +35,9 @@ class GitUpdate(MultiStageProcess):
     def complete_process(self, success: bool):
         if success:
             self.__class__.manager().repository().save()
+            self.directory.checkpoint_committed_contents()
+            self.directory.reload_contents()
+            self.directory.event_bus.emit(GitDirectoryEvent.CONTENT_RELOADED, self.directory)
 
 # ------------------------------------------------------------------------------
 # Update process steps.

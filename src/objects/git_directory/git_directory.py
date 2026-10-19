@@ -15,6 +15,7 @@ class GitDirectoryEvent(Enum):
     LOGS_CHANGED = auto()
     NAME_CHANGED = auto()
     CONTENT_CHANGED = auto()
+    CONTENT_RELOADED = auto()
 
 class GitDirectoryStatus(Enum):
     # Git status
@@ -217,6 +218,7 @@ class GitDirectory(Serializable, ABC):
 
     def update_status(self, wait: bool = False):
         def worker():
+            previous_status = self.status
             directory = self.directory_path()
             if not self.is_git_directory(directory):
                 self.status = GitDirectoryStatus.ERROR
@@ -272,6 +274,10 @@ class GitDirectory(Serializable, ABC):
                 self.status = GitDirectoryStatus.ERROR
                 self.last_commit_date = None
                 self.branch_name = None
+            if previous_status == GitDirectoryStatus.UNKNOWN and self.status == GitDirectoryStatus.UNCHANGED:
+                # On first inspection, a clean checkout is a safe baseline for companion state
+                # stored outside Git (such as customized stage markers).
+                self.checkpoint_committed_contents()
             self.event_bus.emit(SharedEvent.STATE_UPDATED, self)
         _run_worker(worker, wait)
 
@@ -309,23 +315,37 @@ class GitDirectory(Serializable, ABC):
             self.event_bus.emit(GitDirectoryEvent.LOGS_CHANGED, self.logs)
         _run_worker(worker, wait)
 
-    def _run_change(self, name, action, wait: bool):
+    def _run_change(self, name, action, wait: bool, reload_contents_on_success: bool = False,
+                    checkpoint_contents_on_success: bool = False):
         def worker():
             with self.operation():
+                succeeded = False
                 try:
                     action()
+                    succeeded = True
                 except Exception as error:
                     print(f"{name} EXCEPTION: {error}")
                 finally:
                     self.update_status(wait=True)
                     self.update_logs(wait=True)
+                    if succeeded and checkpoint_contents_on_success:
+                        self.checkpoint_committed_contents()
+                    if succeeded and reload_contents_on_success:
+                        self.reload_contents()
+                        self.event_bus.emit(GitDirectoryEvent.CONTENT_RELOADED, self)
         _run_worker(worker, wait)
 
     def discard_changes(self, wait: bool = False):
         def discard():
             self._run_git("reset", "--hard", check=True)
             self._run_git("clean", "-fdx", check=True)
-        self._run_change("DISCARD", discard, wait)
+        self._run_change("DISCARD", discard, wait, reload_contents_on_success=True)
+
+    def reload_contents(self):
+        """Hook for directory types with cached, tracked content that needs reloading after Git changes."""
+
+    def checkpoint_committed_contents(self):
+        """Hook for directory types with companion state that follows committed content."""
 
     DEFAULT_COMMIT_MESSAGE = "Save changes"
 
@@ -337,7 +357,7 @@ class GitDirectory(Serializable, ABC):
             # Nothing to commit when changes were reverted outside of app (status shown was outdated).
             if self._run_git("diff", "--cached", "--quiet").returncode != 0:
                 self._run_git("commit", "-m", message, check=True)
-        self._run_change("COMMIT", commit, wait)
+        self._run_change("COMMIT", commit, wait, checkpoint_contents_on_success=True)
 
     @classmethod
     def directory_path_for_name(cls, name: str) -> str:
