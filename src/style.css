@@ -102,6 +102,21 @@ button.stage-toolset-change-button label {
   font-size: 11px;
   font-weight: normal;
 }
+button.stage-delete-button {
+  min-height: 20px;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: @error_color;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+button.stage-delete-button:hover {
+  color: @error_color;
+  background-color: alpha(@window_fg_color, 0.08);
+  background-image: none;
+}
 .project-actions-panel {
   background-color: transparent;
 }

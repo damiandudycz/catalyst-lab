@@ -117,21 +117,6 @@
                 <property name="visible">False</property>
               </object>
             </child>
-            <child>
-              <object class="GtkButton" id="delete_button">
-                <property name="halign">center</property>
-                <style>
-                  <class name="destructive-action"/>
-                </style>
-                <child>
-                  <object class="AdwButtonContent">
-                    <property name="label">Delete stage</property>
-                    <property name="icon-name">trash-bin-trash-svgrepo-com-symbolic</property>
-                  </object>
-                </child>
-                <signal name="clicked" handler="on_delete_clicked"/>
-              </object>
-            </child>
           </object>
         </child>
       </object>
@@ -179,6 +164,23 @@
             <child>
               <object class="GtkLabel">
                 <property name="hexpand">True</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="delete_button">
+                <property name="tooltip-text">Delete stage</property>
+                <property name="valign">center</property>
+                <child>
+                  <object class="AdwButtonContent">
+                    <property name="label">Delete stage</property>
+                    <property name="icon-name">trash-bin-trash-svgrepo-com-symbolic</property>
+                  </object>
+                </child>
+                <style>
+                  <class name="flat"/>
+                  <class name="stage-delete-button"/>
+                </style>
+                <signal name="clicked" handler="on_delete_clicked"/>
               </object>
             </child>
           </object>
