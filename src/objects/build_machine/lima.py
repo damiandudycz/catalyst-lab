@@ -131,6 +131,22 @@ def lima_unavailable_reason() -> str | None:
         return "Lima (limactl) is not available on PATH. Install Lima for your system."
     return None
 
+def kvm_access_warning() -> str | None:
+    """Explains when Linux VM runners cannot use hardware acceleration."""
+    if not sys.platform.startswith("linux") or platform.machine().lower() not in ("aarch64", "arm64", "x86_64", "amd64"):
+        return None
+    try:
+        descriptor = os.open("/dev/kvm", os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
+    except FileNotFoundError:
+        return "KVM is unavailable (/dev/kvm was not found). VM runners will use slower software emulation."
+    except PermissionError:
+        return "Your account cannot access /dev/kvm. Add it to the kvm group, then log out and back in to enable hardware acceleration."
+    except OSError as error:
+        return f"KVM is unavailable ({error}). VM runners may use slower software emulation."
+    else:
+        os.close(descriptor)
+        return None
+
 def list_instances(home: str | None = None) -> dict[str, dict]:
     """Lima instances by name, with their status (Running, Stopped...)."""
     path = limactl_path()

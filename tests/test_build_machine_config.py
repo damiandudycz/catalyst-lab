@@ -41,6 +41,25 @@ class VMRunnerConfigTests(unittest.TestCase):
         with patch.object(lima, 'limactl_path', return_value=None):
             self.assertFalse(lima.virtual_machines_supported())
 
+    def test_kvm_warning_is_shown_when_device_cannot_be_opened(self):
+        with patch.object(lima.sys, 'platform', 'linux'), \
+             patch.object(lima.platform, 'machine', return_value='aarch64'), \
+             patch.object(lima.os, 'open', side_effect=PermissionError):
+            warning = lima.kvm_access_warning()
+
+        self.assertIn('/dev/kvm', warning)
+        self.assertIn('kvm group', warning)
+
+    def test_kvm_warning_is_hidden_when_device_is_accessible(self):
+        with patch.object(lima.sys, 'platform', 'linux'), \
+             patch.object(lima.platform, 'machine', return_value='aarch64'), \
+             patch.object(lima.os, 'open', return_value=42), \
+             patch.object(lima.os, 'close') as close:
+            warning = lima.kvm_access_warning()
+
+        self.assertIsNone(warning)
+        close.assert_called_once_with(42)
+
     def test_linux_discovers_private_gentoo_lima_binary(self):
         private_path = '/usr/libexec/catalyst-lab/lima/bin/limactl'
         with patch.object(lima.sys, 'platform', 'linux'), \

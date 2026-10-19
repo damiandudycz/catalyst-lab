@@ -4,6 +4,7 @@ from gi.repository import Gtk, Adw
 from .build_machine_installation import VMRunnerInstallation
 from .build_machine import VMRunner
 from .build_machine_manager import VMRunnerManager
+from .lima import kvm_access_warning
 from .wizard_view import WizardView
 from .name_suggestion import unique_name
 
@@ -20,6 +21,7 @@ class VMRunnerCreateView(Gtk.Box):
     disk_row = Gtk.Template.Child()
     swap_row = Gtk.Template.Child()
     set_as_default_checkbox = Gtk.Template.Child()
+    kvm_warning_row = Gtk.Template.Child()
 
     def __init__(self, installation_in_progress: VMRunnerInstallation | None = None, content_navigation_view: Adw.NavigationView | None = None):
         super().__init__()
@@ -30,6 +32,9 @@ class VMRunnerCreateView(Gtk.Box):
         self.cpus_row.set_value(max(1, min(8, (os.cpu_count() or 4) // 2)))
         self.memory_row.set_value(VMRunner.DEFAULT_MEMORY_GIB)
         self.set_as_default_checkbox.set_active(True)
+        if warning := kvm_access_warning():
+            self.kvm_warning_row.set_subtitle(warning)
+            self.kvm_warning_row.set_visible(True)
         self.connect("realize", self.on_realize)
 
     def on_realize(self, widget):

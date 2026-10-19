@@ -66,6 +66,25 @@
                   </object>
                 </child>
                 <child>
+                  <object class="AdwActionRow" id="kvm_warning_row">
+                    <property name="title">Hardware acceleration unavailable</property>
+                    <property name="subtitle">KVM access is not available.</property>
+                    <property name="visible">False</property>
+                    <style>
+                      <class name="warning"/>
+                    </style>
+                    <child type="prefix">
+                      <object class="GtkImage">
+                        <property name="icon-name">dialog-warning-symbolic</property>
+                        <property name="valign">center</property>
+                        <style>
+                          <class name="warning"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
                   <object class="AdwPreferencesGroup">
                     <property name="title">Resources</property>
                     <property name="description">The VM runner itself takes only a few hundred MB. While toolsets run, their working files are kept in a temporary workspace that grows as needed and is deleted when they finish. Builds need space for an extracted toolset, snapshot, and stage.</property>
