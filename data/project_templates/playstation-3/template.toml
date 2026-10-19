@@ -13,10 +13,12 @@ name = "ps3-gentoo-overlay"
 url = "https://github.com/damiandudycz/ps3-gentoo-overlay.git"
 
 [[variables]]
-id = "init"
-title = "Init system"
-description = "Services of stage4 are enabled automatically with OpenRC."
-default = "openrc"
+id = "init_systems"
+title = "Init systems"
+description = "Choose one or both. OpenRC services are enabled automatically."
+type = "multiple"
+minimum_selected = 1
+default = ["openrc"]
 options = [
     { value = "openrc", title = "OpenRC" },
     { value = "systemd", title = "systemd" },
@@ -40,13 +42,13 @@ default = false
 id = "extra_stages"
 title = "Extra stages"
 section = "Extra stages"
-description = "Select the console stage4, optional Xfce stage4, or a live installation ISO. The ISO boots from petitboot."
+description = "Select the console stage4, optional Xfce stage4, or a live installation ISO. Xfce and the installation ISO use OpenRC; the ISO boots from petitboot."
 type = "multiple"
 default = []
 options = [
     { value = "stage4", title = "Console stage4", when = "accept_all_licenses" },
-    { value = "xfce", title = "Xfce stage4", when = "accept_all_licenses and init == 'openrc'" },
-    { value = "iso", title = "Installation ISO", when = "init == 'openrc'" },
+    { value = "xfce", title = "Xfce stage4", when = "accept_all_licenses and 'openrc' in init_systems" },
+    { value = "iso", title = "Installation ISO", when = "'openrc' in init_systems" },
 ]
 
 [[variables]]
@@ -62,8 +64,8 @@ options = [
 
 [values]
 openrc = "{{ init == 'openrc' }}"
-iso = "{{ 'iso' in extra_stages }}"
-with_desktop = "{{ accept_all_licenses and 'xfce' in extra_stages }}"
+iso = "{{ init == 'openrc' and 'iso' in extra_stages }}"
+with_desktop = "{{ init == 'openrc' and accept_all_licenses and 'xfce' in extra_stages }}"
 common_flags = "-O2 -pipe -mcpu=cell -mtune=cell -mabi=altivec -mno-string -mno-update -mno-multiple{{ ' -flto -Werror=odr -Werror=lto-type-mismatch -Werror=strict-aliasing' if lto else '' }}"
 stage1_name = "stage1-{{ init }}"
 stage4_name = "stage4-{{ init }}"

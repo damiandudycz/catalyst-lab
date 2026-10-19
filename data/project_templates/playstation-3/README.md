@@ -22,5 +22,5 @@ stage1 ─┬─ stage3 ─┬─ stage4                       (optional console
 
 Requires Catalyst Lab 2.0.0 or newer.
 
-Stage build identities include the selected init system. Switching between OpenRC and systemd keeps the same
-stage layout and creates new stage IDs, preventing reuse of builds from the previous init system.
+Select OpenRC, systemd, or both. The console stages support either init system; Xfce and the installation ISO use
+OpenRC. Selecting both creates parallel stage graphs with distinct build identities.

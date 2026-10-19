@@ -8,10 +8,12 @@ groups_title = "Software"
 architecture = "amd64"
 
 [[variables]]
-id = "init"
-title = "Init system"
-description = "Services of stage4 are enabled automatically with OpenRC."
-default = "openrc"
+id = "init_systems"
+title = "Init systems"
+description = "Choose one or both. OpenRC services are enabled automatically."
+type = "multiple"
+minimum_selected = 1
+default = ["openrc"]
 options = [
     { value = "openrc", title = "OpenRC" },
     { value = "systemd", title = "systemd" },
@@ -386,11 +388,11 @@ stage4_rcadd = "{{ ['bluetooth|default'] if openrc else [] }}"
 [[groups]]
 id = "development"
 title = "Development tools"
-description = "git, eselect-repository, distcc and kernel headers."
+description = "git, eselect-repository and kernel headers."
 when = "accept_all_licenses and ('stage4' in extra_stages or 'gnome' in extra_stages or 'plasma' in extra_stages)"
 stages = ["stage4", "stage4-gnome", "stage4-plasma"]
 [groups.arguments]
-stage4_packages = ["dev-vcs/git", "app-eselect/eselect-repository", "sys-devel/distcc", "sys-kernel/linux-headers"]
+stage4_packages = ["dev-vcs/git", "app-eselect/eselect-repository", "sys-kernel/linux-headers"]
 
 [[groups]]
 id = "docker"

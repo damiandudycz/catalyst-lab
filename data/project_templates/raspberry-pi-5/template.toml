@@ -10,7 +10,7 @@ architecture = "arm64"
 [[variables]]
 id = "init_systems"
 title = "Init systems"
-description = "Choose one or both. OpenRC services are enabled automatically; Plasma graphical login works with either init system."
+description = "Choose one or both. OpenRC services are enabled automatically."
 type = "multiple"
 minimum_selected = 1
 default = ["openrc"]
@@ -27,13 +27,6 @@ options = [
     { value = "tuned", title = "ARM Cortex-A76 (cortex-a76)" },
     { value = "generic", title = "Generic baseline" },
 ]
-
-[[variables]]
-id = "lto"
-title = "Link-time optimization (LTO)"
-description = "Programs can be faster and smaller, but builds take longer and some packages may fail to build."
-type = "boolean"
-default = false
 
 [[variables]]
 id = "overclock"
@@ -54,6 +47,13 @@ type = "boolean"
 default = true
 
 [[variables]]
+id = "lto"
+title = "Link-time optimization (LTO)"
+description = "Programs can be faster and smaller, but builds take longer and some packages may fail to build."
+type = "boolean"
+default = false
+
+[[variables]]
 id = "accept_all_licenses"
 title = "Accept all licenses"
 description = "Required to enable stage4 builds (console, GNOME or KDE Plasma) because the Raspberry Pi kernel uses a restricted license. Allows Portage to install packages with any license in those selected stage4 builds. Does not affect stage3 or ISO builds."
@@ -72,8 +72,8 @@ options = [
     { value = "gnome", title = "GNOME stage4", when = "accept_all_licenses" },
     { value = "gnome_customized", title = "Customized GNOME stage4", when = "accept_all_licenses and 'gnome' in extra_stages" },
     { value = "plasma", title = "KDE Plasma stage4", when = "accept_all_licenses" },
-    { value = "iso", title = "Installation ISO (experimental)", when = "'openrc' in init_systems" },
-    { value = "iso_gui", title = "Live ISO with desktop (experimental)", when = "'openrc' in init_systems" },
+    { value = "iso", title = "Installation ISO", when = "'openrc' in init_systems" },
+    { value = "iso_gui", title = "Live ISO with desktop", when = "'openrc' in init_systems" },
 ]
 
 [[variables]]
@@ -416,11 +416,11 @@ stage4_packages = ["dev-embedded/raspberrypi-utils"]
 [[groups]]
 id = "development"
 title = "Development tools"
-description = "git, eselect-repository, distcc and kernel headers."
+description = "git, eselect-repository and kernel headers."
 when = "'stage4' in extra_stages or 'gnome' in extra_stages or 'plasma' in extra_stages"
 stages = ["stage4", "stage4-gnome", "stage4-plasma"]
 [groups.arguments]
-stage4_packages = ["dev-vcs/git", "app-eselect/eselect-repository", "sys-devel/distcc", "sys-kernel/linux-headers"]
+stage4_packages = ["dev-vcs/git", "app-eselect/eselect-repository", "sys-kernel/linux-headers"]
 
 [[groups]]
 id = "docker"

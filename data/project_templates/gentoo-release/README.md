@@ -10,12 +10,12 @@ LiveGUI ISO under Extra stages; all are optional and off by default.
   AVX-512 restriction appears for x86-64-v4 and Zen 4/5, for cross-building under QEMU; leave it off for native builds.
   More specific targets require matching hardware; x86-64-v4 requires AVX-512.
 - Link-time optimization (LTO): optional, stage1 is built with `-flto` added to selected CPU flags, later stages inherit it.
-- Init system: OpenRC or systemd. Network: NetworkManager, dhcpcd (OpenRC) or systemd-networkd (systemd).
+- Init systems: select OpenRC, systemd, or both. Network: NetworkManager works with either; dhcpcd is available for OpenRC-only projects, and systemd-networkd for systemd-only projects.
 - Installation ISO: where releng has installcd specs, built from OpenRC stage3.
 - LiveGUI ISO: amd64/OpenRC only, based on the Releng desktop stage3 and LiveGUI specs, including its Releng kernel settings.
 - Software of stage4: kernel and firmware, GRUB, sudo, vim, administration tools. Stage4 is optional.
 - Stage4 builds are unavailable until **Accept all licenses** is enabled. This opt-in applies `*/* *` to the stage4
   Portage configuration only; stage1, stage3, and ISO builds are unaffected.
 
-Stage build identities include the selected init system. Switching between OpenRC and systemd keeps the same
-stage layout and creates new stage IDs, preventing reuse of builds from the previous init system.
+Stage build identities include the selected init system. Selecting both creates parallel OpenRC and systemd stage
+graphs; switching selections keeps the same stage layout and creates distinct stage IDs.

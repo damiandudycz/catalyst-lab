@@ -385,6 +385,12 @@ class ProjectTemplate:
             names["architecture"] = self.architecture.name
         for variable in self.variables:
             selected_value = selected.get(variable.id)
+            if variable.id == "init_systems" and not isinstance(selected_value, list):
+                # Preserve a previous single-init template selection when updating to the
+                # multi-init schema. New projects still use the template's normal default.
+                previous_init = selected.get("init")
+                if previous_init in ("openrc", "systemd"):
+                    selected_value = [previous_init]
             if not evaluate_condition(variable.when, names):
                 names[variable.id] = None
                 continue

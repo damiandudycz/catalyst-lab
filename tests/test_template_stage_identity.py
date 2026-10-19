@@ -112,8 +112,11 @@ target = "stage3"
             for init in ['openrc', 'systemd']:
                 with self.subTest(template=path.parent.name, init=init):
                     selection = {'init_systems': [init]} if any(variable.id == 'init_systems' for variable in template.variables) else {'init': init}
-                    names = template.resolve({**selection, 'extra_stages': ['stage4', 'gnome', 'plasma', 'xfce', 'iso', 'iso_gui', 'livegui']})
-                    generated = template.generate(names)
+                    names = template.resolve({**selection, 'accept_all_licenses': True,
+                                              'extra_stages': ['stage4', 'gnome', 'plasma', 'xfce', 'iso', 'iso_gui', 'livegui']})
+                    with patch('catalystlab.project_template._template_argument_value',
+                               side_effect=lambda _key, value, _context: value):
+                        generated = template.generate(names)
                     stages = {s.template_id: s for s in generated.stages}
                     self.assertFalse(any('iso-seed' in key for key in stages))
                     template_id_suffix = f'-{init}' if 'init_systems' in selection else ''

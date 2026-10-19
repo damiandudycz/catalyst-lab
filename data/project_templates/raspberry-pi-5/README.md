@@ -23,8 +23,8 @@ from `sys-kernel/raspberrypi-image`. They also include NetworkManager, SSH, NTP,
 | Link-time optimization (LTO) | Off by default. Includes workarounds for packages that fail with LTO |
 | Kernel | Prebuilt Raspberry Pi kernel and modules (`sys-kernel/raspberrypi-image`) are installed in stage4 builds |
 | Accept all licenses | Off by default. Required to make stage4 builds selectable because the Raspberry Pi kernel uses a restricted license. When enabled, accepts all licenses for selected stage4 builds through `package.license` |
-| Installation ISO (experimental) | OpenRC only. Live ISO (`livecd-stage1`, `livecd-stage2` from console stage3) with installation tools. Raspberry Pi firmware boots from FAT partitions, not ISO images, so it's for testing |
-| Live ISO with desktop (experimental) | OpenRC only. KDE Plasma live system like Gentoo LiveGUI (`livegui-stage1`, `livegui-stage2` from desktop stage3): SDDM logs user `gentoo` in to Plasma, basic applications (Konsole, Dolphin, Kate, Firefox, GParted) and installation tools. For testing, like the installation ISO |
+| Installation ISO | OpenRC only. Live ISO (`livecd-stage1`, `livecd-stage2` from console stage3) with installation tools. Raspberry Pi firmware boots from FAT partitions, not ISO images, so this experimental option is for testing |
+| Live ISO with desktop | OpenRC only. KDE Plasma live system like Gentoo LiveGUI (`livegui-stage1`, `livegui-stage2` from desktop stage3): SDDM logs user `gentoo` in to Plasma, basic applications (Konsole, Dolphin, Kate, Firefox, GParted) and installation tools. This experimental option is for testing |
 | Desktops | GNOME, KDE Plasma (any of them, each gets its own stage4) |
 | CPU frequency | 2.4 GHz (stock), 2.6 GHz, 2.8 GHz (needs good cooling) |
 | Serial console | UART enabled in `config.txt` |
@@ -56,5 +56,5 @@ Existing projects need **Update template** and a rebuild of the Plasma stage4 to
 
 See [Project templates](https://github.com/damiandudycz/catalyst-lab/blob/main/docs/project-templates.md).
 
-Stage build identities include the selected init system. Switching between OpenRC and systemd keeps the same
-stage layout and creates new stage IDs, preventing reuse of builds from the previous init system.
+Selecting both init systems creates parallel OpenRC and systemd stage graphs. Stage build identities include the
+selected init system, preventing reuse of builds across variants.

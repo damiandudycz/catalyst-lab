@@ -25,6 +25,18 @@ options = [
 ]
 
 [[variables]]
+id = "init_systems"
+title = "Init systems"
+description = "Choose one or both. OpenRC services are enabled automatically."
+type = "multiple"
+minimum_selected = 1
+default = ["openrc"]
+options = [
+    { value = "openrc", title = "OpenRC" },
+    { value = "systemd", title = "systemd" },
+]
+
+[[variables]]
 id = "variant"
 title = "Variant"
 description = "Directory of releng specs for this architecture."
@@ -105,22 +117,13 @@ type = "boolean"
 default = false
 
 [[variables]]
-id = "init"
-title = "Init system"
-default = "openrc"
-options = [
-    { value = "openrc", title = "OpenRC" },
-    { value = "systemd", title = "systemd" },
-]
-
-[[variables]]
 id = "network"
 title = "Network"
 default = "networkmanager"
 options = [
     { value = "networkmanager", title = "NetworkManager" },
-    { value = "dhcpcd", title = "dhcpcd", when = "init == 'openrc'" },
-    { value = "networkd", title = "systemd-networkd", when = "init == 'systemd'" },
+    { value = "dhcpcd", title = "dhcpcd", when = "init_systems == ['openrc']" },
+    { value = "networkd", title = "systemd-networkd", when = "init_systems == ['systemd']" },
 ]
 
 [[variables]]
@@ -131,9 +134,9 @@ description = "Select optional stage4 systems and ISO builds based on official G
 type = "multiple"
 default = []
 options = [
-    { value = "stage4", title = "Stage4", when = "accept_all_licenses" },
-    { value = "iso", title = "Installation ISO", when = "init == 'openrc' and (architecture in ['amd64', 'arm64', 'ppc', 'ppc64le'] or variant in ['sparc64', 'i486'])" },
-    { value = "livegui", title = "LiveGUI ISO", when = "architecture == 'amd64' and init == 'openrc'" },
+    { value = "stage4", title = "Console stage4", when = "accept_all_licenses" },
+    { value = "iso", title = "Installation ISO", when = "'openrc' in init_systems and (architecture in ['amd64', 'arm64', 'ppc', 'ppc64le'] or variant in ['sparc64', 'i486'])" },
+    { value = "livegui", title = "LiveGUI ISO", when = "architecture == 'amd64' and 'openrc' in init_systems" },
 ]
 
 [values]
@@ -143,8 +146,8 @@ spec_flavor = "{{ init + ('-power9le' if power9 else '') }}"
 spec_prefix = "{{ 'hardfloat-' if hardfloat else '' }}"
 iso_suffix = "{{ '-openrc' if variant == 'i486' else '' }}"
 stage4_name = "stage4-{{ init }}"
-iso = "{{ 'iso' in extra_stages }}"
-livegui = "{{ 'livegui' in extra_stages }}"
+iso = "{{ init == 'openrc' and 'iso' in extra_stages }}"
+livegui = "{{ init == 'openrc' and 'livegui' in extra_stages }}"
 # Release type names optimizations (eg. 23.0-power9-lto), stages without them use 23.0-default of releng specs.
 optimizations = "{{ (['power9'] if power9 else []) + ([cpu_target] if cpu_target and cpu_target != 'generic' else []) + (['lto'] if lto else []) }}"
 rel_type = "{{ '23.0-' + join('-', optimizations) if optimizations else '' }}"
