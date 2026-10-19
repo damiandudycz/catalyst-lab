@@ -32,6 +32,11 @@ SLOT="0"
 IUSE="+deploy vm-runners"
 REQUIRED_USE="${PYTHON_REQUIRED_USE}"
 
+case ${ARCH} in
+	amd64) QEMU_SOFTMMU_TARGET="x86_64" ;;
+	arm64) QEMU_SOFTMMU_TARGET="aarch64" ;;
+	esac
+
 # Toolsets run in bubblewrap namespaces, mounted from squashfs images. Without unprivileged user namespaces, root
 # helper is started with pkexec.
 RDEPEND="
@@ -49,7 +54,7 @@ RDEPEND="
 	sys-auth/polkit
 	sys-fs/squashfs-tools
 	vm-runners? (
-		app-emulation/qemu[virtfs]
+		app-emulation/qemu[virtfs,qemu_softmmu_targets_${QEMU_SOFTMMU_TARGET}]
 		net-misc/openssh
 	)
 	deploy? (

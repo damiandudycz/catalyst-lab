@@ -92,6 +92,22 @@ class VMRunnerConfigTests(unittest.TestCase):
 
         self.assertIn('virtio-9p-pci', warning)
 
+    def test_qemu_system_warning_when_native_emulator_is_missing(self):
+        with patch.object(lima.sys, 'platform', 'linux'), \
+             patch.object(lima.platform, 'machine', return_value='aarch64'), \
+             patch.object(lima.shutil, 'which', return_value=None):
+            warning = lima.qemu_system_unavailable_warning()
+
+        self.assertIn('qemu-system-aarch64', warning)
+
+    def test_qemu_system_warning_is_hidden_when_native_emulator_exists(self):
+        with patch.object(lima.sys, 'platform', 'linux'), \
+             patch.object(lima.platform, 'machine', return_value='aarch64'), \
+             patch.object(lima.shutil, 'which', return_value='/usr/bin/qemu-system-aarch64'):
+            warning = lima.qemu_system_unavailable_warning()
+
+        self.assertIsNone(warning)
+
     def test_linux_discovers_private_gentoo_lima_binary(self):
         private_path = '/usr/libexec/catalyst-lab/lima/bin/limactl'
         with patch.object(lima.sys, 'platform', 'linux'), \

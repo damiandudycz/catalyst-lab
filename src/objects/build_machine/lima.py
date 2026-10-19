@@ -173,6 +173,18 @@ def kvm_access_warning() -> str | None:
     """Explains when Linux VM runners cannot use hardware acceleration."""
     return _kvm_access_issue()
 
+def qemu_system_unavailable_warning() -> str | None:
+    """Explains when the host lacks QEMU system emulation for its native architecture."""
+    if not sys.platform.startswith("linux"):
+        return None
+    qemu_arch, _machine = _native_qemu_configuration()
+    if not qemu_arch:
+        return None
+    if shutil.which(f"qemu-system-{qemu_arch}") is None:
+        return (f"QEMU system emulation for this host ({qemu_arch}) is not installed. "
+                f"Install qemu-system-{qemu_arch} to create VM runners.")
+    return None
+
 def qemu_9p_unavailable_warning() -> str | None:
     """Explains when the host QEMU lacks the 9p device required by Linux runner mounts."""
     if not sys.platform.startswith("linux"):

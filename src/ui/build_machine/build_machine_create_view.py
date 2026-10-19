@@ -4,7 +4,7 @@ from gi.repository import Gtk, Adw
 from .build_machine_installation import VMRunnerInstallation
 from .build_machine import VMRunner
 from .build_machine_manager import VMRunnerManager
-from .lima import kvm_access_warning, qemu_9p_unavailable_warning
+from .lima import kvm_access_warning, qemu_9p_unavailable_warning, qemu_system_unavailable_warning
 from .wizard_view import WizardView
 from .name_suggestion import unique_name
 
@@ -32,7 +32,8 @@ class VMRunnerCreateView(Gtk.Box):
         self.cpus_row.set_value(max(1, min(8, (os.cpu_count() or 4) // 2)))
         self.memory_row.set_value(VMRunner.DEFAULT_MEMORY_GIB)
         self.set_as_default_checkbox.set_active(True)
-        warnings = [warning for warning in (kvm_access_warning(), qemu_9p_unavailable_warning()) if warning]
+        warnings = [warning for warning in (kvm_access_warning(), qemu_system_unavailable_warning(),
+                                             qemu_9p_unavailable_warning()) if warning]
         if warnings:
             self.kvm_warning_row.set_subtitle("\n".join(warnings))
             self.kvm_warning_row.set_visible(True)
