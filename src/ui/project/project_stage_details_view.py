@@ -109,8 +109,7 @@ class ProjectStageDetailsView(Gtk.Box):
     # --------------------------------------------------------------------------
 
     def _setup_mode_toggle(self):
-        """Basic / Advanced toggle in header bar, like Compact / Full of stages. Basic mode hides advanced settings,
-        note under them lists hidden settings with values set by stage."""
+        """Basic / Advanced / Customized toggle in the header bar."""
         self.mode_toggle = CLToggleGroup(valign=Gtk.Align.CENTER)
         self.mode_toggle.add_css_class("round")
         self.mode_toggle.add_css_class("caption")
@@ -119,10 +118,6 @@ class ProjectStageDetailsView(Gtk.Box):
         self.mode_toggle.add(CLToggle(label="Customized"))
         self.mode_toggle.set_active(1 if self.advanced else 0)
         self.mode_toggle.connect("notify::active", self._on_mode_changed)
-        self.hidden_settings_label = Gtk.Label(wrap=True, xalign=0, margin_start=12, margin_end=12, visible=False)
-        self.hidden_settings_label.add_css_class("caption")
-        self.hidden_settings_label.add_css_class("dimmed")
-        self.build_behavior_pref_group.get_parent().insert_child_after(self.hidden_settings_label, self.build_behavior_pref_group)
         self.no_changed_settings_row = Adw.ActionRow(title="No settings differ from the template or defaults")
         self.no_changed_settings_row.add_css_class("dim-label")
         self.no_changed_settings_row.set_visible(False)
@@ -146,18 +141,23 @@ class ProjectStageDetailsView(Gtk.Box):
     def apply_mode(self):
         """Shows rows of current mode, and groups which have any of them."""
         changed_only = self.mode_toggle.get_active() == 2
-        hidden_custom = []
         for row in getattr(self, "configuration_rows", []):
             changed = self._is_stage_argument_changed(row.argument.attribute_name)
             _set_customized_style(row, changed)
-            visible = (self.advanced or row.level == StageArgumentLevel.BASIC)
-            if changed_only:
-                visible = visible and changed
+            visible = (changed if changed_only else
+                       self.advanced or row.level == StageArgumentLevel.BASIC)
             row.set_visible(visible)
             if getattr(row, "restore_default_button", None):
                 row.restore_default_button.set_visible(changed)
-            if not visible and _has_own_value(self.stage, row.argument.attribute_name):
-                hidden_custom.append(row.argument.display_name)
+        changed_configuration = any(
+            self._is_stage_argument_changed(row.argument.attribute_name)
+            for row in self.configuration_rows
+        )
+        changed_basic_configuration = any(
+            row.pref_group is self.basic_config_pref_group
+            and self._is_stage_argument_changed(row.argument.attribute_name)
+            for row in self.configuration_rows
+        )
         name_changed = self._is_stage_argument_changed(StageArgumentDetails.name.value)
         _set_customized_style(self.stage_name_row, name_changed)
         self.stage_name_row.set_visible(not changed_only or name_changed)
@@ -168,7 +168,7 @@ class ProjectStageDetailsView(Gtk.Box):
         for row in getattr(self, "kernel_rows", []):
             if isinstance(row, StageKernelRow):
                 _set_customized_style(row, row.has_stage_overrides())
-                hidden_custom += [f"{row.kernel_name}: {title}" for title in row.set_advanced(self.advanced, changed_only)]
+                row.set_advanced(self.advanced, changed_only)
                 changed_kernel_settings |= row.has_stage_overrides()
                 own = own_kernel_settings(self.stage).get(row.kernel_name, {})
                 for setting, setting_row in row.entry_rows:
@@ -183,9 +183,9 @@ class ProjectStageDetailsView(Gtk.Box):
                 changed_kernel_toggle |= changed
             elif getattr(row, "is_kernel_add_action", False):
                 row.set_visible(not changed_only)
-        self.no_changed_settings_row.set_visible(changed_only and not name_changed and not changed_kernel_settings and not any(
-            self._is_stage_argument_changed(row.argument.attribute_name) for row in self.configuration_rows
-        ))
+        self.no_changed_settings_row.set_visible(
+            changed_only and not name_changed and not changed_kernel_settings and not changed_configuration
+        )
         if changed_kernel_toggle:
             self.no_changed_settings_row.set_visible(False)
         groups = (self.architecture_pref_group, self.release_pref_group, self.packages_pref_group,
@@ -197,19 +197,18 @@ class ProjectStageDetailsView(Gtk.Box):
             # then incorrectly keep the group empty when switching back to Advanced.
             has_visible_rows = any(
                 row.pref_group is group
-                and (self.advanced or row.level == StageArgumentLevel.BASIC)
-                and (not changed_only or self._is_stage_argument_changed(row.argument.attribute_name))
+                and (self._is_stage_argument_changed(row.argument.attribute_name) if changed_only else
+                     self.advanced or row.level == StageArgumentLevel.BASIC)
                 for row in self.configuration_rows
             )
             group.set_visible(has_visible_rows)
-        self.basic_config_pref_group.set_visible(not changed_only or name_changed or self.no_changed_settings_row.get_visible())
+        self.basic_config_pref_group.set_visible(
+            not changed_only or name_changed or changed_basic_configuration or self.no_changed_settings_row.get_visible()
+        )
         self.kernels_pref_group.set_visible(
             getattr(self, "boot_kernel_argument", None) is not None
             and (not changed_only or changed_kernel_settings or changed_kernel_toggle)
         )
-        self.hidden_settings_label.set_label(
-            f"Advanced settings set by this stage: {', '.join(hidden_custom)}. Switch to Advanced to see them." if hidden_custom else "")
-        self.hidden_settings_label.set_visible(bool(hidden_custom))
 
     def on_realize(self, widget):
         self.get_root().set_focus(None)
@@ -701,6 +700,9 @@ class ProjectStageDetailsView(Gtk.Box):
     def create_row_for_argument(self, argument: StageArgumentTargetDetails, toolset=None) -> Adw.PreferencesRow:
         if argument.details in CACHE_ARGUMENTS:
             return StageCacheRow(project_directory=self.project_directory, stage=self.stage, argument=argument)
+        if argument.details == StageArgumentDetails.interpreter:
+            return StageTextListRow(project_directory=self.project_directory, stage=self.stage, argument=argument,
+                                    content_navigation_view=self.content_navigation_view)
         match argument.type:
             case StageArgumentType.select | StageArgumentType.multiselect | StageArgumentType.boolean:
                 return StageOptionExpanderRow(
@@ -819,7 +821,8 @@ class ProjectStageDetailsView(Gtk.Box):
         return self.can_change_argument(row=row, option=option)
 
     def argument_changed(self, row):
-        if row.argument.type in (StageArgumentType.raw_single_line, StageArgumentType.string_list, StageArgumentType.raw):
+        if (row.argument.type in (StageArgumentType.raw_single_line, StageArgumentType.string_list, StageArgumentType.raw)
+                or isinstance(row, StageTextSourceRow)):
             ProjectManager.shared().change_stage_argument(
                 project=self.project_directory,
                 stage=self.stage,
@@ -1030,11 +1033,6 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
                 current_values = []
             elif not isinstance(current_values, list):
                 current_values = [current_values]
-            if (not current_values and details == StageArgumentDetails.interpreter
-                    and details.name not in getattr(self.stage, "_explicit_none_arguments", set())):
-                # Display Automatic as the implicit default without persisting it. Once the user selects it, the normal
-                # edit path stores that explicit choice and the Customized view marks it accordingly.
-                current_values = [StageAutomaticOption.GENERATE_AUTOMATICALLY]
             if self.argument.details in FILE_OVERLAY_ARGUMENTS:
                 # Values stored by older versions (inherit options, path of stage folder) are shown as sources.
                 current_values = root_overlay_values(self.project_directory, self.stage, self.argument.details)
@@ -1333,6 +1331,10 @@ class StageTextSourceRow(Adw.ExpanderRow):
 
     def load_state(self):
         current_value = getattr(self.stage, self.argument.attribute_name, None)
+        if (self.argument.details == StageArgumentDetails.interpreter and current_value is None
+                and self.argument.attribute_name not in getattr(self.stage, "_explicit_none_arguments", set())):
+            # Show Automatic as the implicit default without writing it into stage.json.
+            current_value = StageAutomaticOption.GENERATE_AUTOMATICALLY
         self._loading = True
         joined = split_additions(current_value) if self.allows_additions else None
         if isinstance(current_value, StageAutomaticOption) or (isinstance(current_value, list) and current_value
@@ -1910,9 +1912,9 @@ class StageKernelRow(Adw.ExpanderRow):
         own = own_kernel_settings(self.stage).get(self.kernel_name, {})
         for setting, row in self.entry_rows:
             if setting.key == "distkernel":
-                level_visible = self._advanced or KERNEL_SETTING_LEVELS[setting.key] == StageArgumentLevel.BASIC
-                changed_visible = not self._changed_only or setting.key in own
-                row.set_visible(level_visible and changed_visible and self._switch_needed)
+                visible = (setting.key in own if self._changed_only else
+                           self._advanced or KERNEL_SETTING_LEVELS[setting.key] == StageArgumentLevel.BASIC)
+                row.set_visible(visible and self._switch_needed)
 
     def _on_rename(self, row: Adw.EntryRow, on_rename):
         if error := on_rename(self.kernel_name, row.get_text().strip()):
@@ -1922,25 +1924,20 @@ class StageKernelRow(Adw.ExpanderRow):
     def has_stage_overrides(self) -> bool:
         return bool(own_kernel_settings(self.stage).get(self.kernel_name, {}))
 
-    def set_advanced(self, advanced: bool, changed_only: bool = False) -> list[str]:
-        """Shows settings of mode, returns titles of hidden settings set by stage."""
+    def set_advanced(self, advanced: bool, changed_only: bool = False) -> None:
+        """Shows settings appropriate for the selected mode."""
         own = own_kernel_settings(self.stage).get(self.kernel_name, {})
-        hidden = []
         self._advanced = advanced
         self._changed_only = changed_only
         self.set_visible(not changed_only or bool(own))
         self.name_row.set_visible(not changed_only or bool(own))
         for setting, row in self.entry_rows:
-            visible = advanced or KERNEL_SETTING_LEVELS[setting.key] == StageArgumentLevel.BASIC
-            if changed_only:
-                visible = visible and setting.key in own
+            visible = (setting.key in own if changed_only else
+                       advanced or KERNEL_SETTING_LEVELS[setting.key] == StageArgumentLevel.BASIC)
             row.set_visible(visible)
             if setting.key == "sources" and isinstance(row, KernelPackageRow):
                 row.custom_row.set_visible(visible and row.is_custom_selected())
-            if not visible and own.get(setting.key) not in (None, "", []) and setting.key != "distkernel":
-                hidden.append(setting.title)
         self._update_switch_visibility()
-        return hidden
 
     def load_state(self):
         self._loading = True
@@ -2070,16 +2067,6 @@ class KernelListRow(Adw.ExpanderRow):
             self._apply()
             return True
         return False
-
-def _has_own_value(stage: ProjectStage, attribute: str) -> bool:
-    """Stage sets value itself (not automatic option like inheriting from parent or releng spec)."""
-    value = getattr(stage, attribute, None)
-    if value is None or value == "" or value == []:
-        return False
-    if isinstance(value, list):
-        return not all(isinstance(item, StageAutomaticOption) for item in value)
-    return not isinstance(value, StageAutomaticOption)
-
 
 def _set_customized_style(widget: Gtk.Widget, customized: bool):
     if customized:

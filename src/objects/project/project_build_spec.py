@@ -10,7 +10,7 @@ from .project_stage_arguments import StageArgumentDetails
 from .project_stage_automatic_option import StageAutomaticOption
 from .project_stage_compression_mode import StageCompressionMode
 from .project_stage_value_resolver import (
-    resolve_stage_argument, load_stage_releng_template_values, stage_argument_uses_option, UNRESOLVED,
+    resolve_stage_argument, load_stage_releng_template_values, stage_argument_uses_option, split_additions, UNRESOLVED,
 )
 from .project_stage_portage_confdir import (
     StagePortageConfdirSource, portage_confdir_sources, releng_portage_variant, parent_overlay_stages,
@@ -87,14 +87,8 @@ def _format_spec_line(name: str, value, path_mapper, placeholders: dict[str, str
     return f"{name}: {text}"
 
 def _argument_value(project_directory, stage, name: str, argument, context: StageSpecContext):
-    if (argument.details == StageArgumentDetails.interpreter
-            and project_directory.get_architecture() == Architecture.amd64
-            and context.rosetta_amd64
-            and stage_argument_uses_option(project_directory, stage, argument.attribute_name, {
-                StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE,
-                StageAutomaticOption.GENERATE_AUTOMATICALLY,
-            })):
-        return None
+    if argument.details == StageArgumentDetails.interpreter:
+        return _interpreter_argument_value(project_directory, stage, argument, context)
     match argument.details:
         case StageArgumentDetails.target:
             return stage.target.replace("_", "-")
@@ -120,6 +114,44 @@ def _argument_value(project_directory, stage, name: str, argument, context: Stag
             project_directory, stage, argument.attribute_name, {StageAutomaticOption.GENERATE_AUTOMATICALLY}):
         value = _automatic_value(project_directory, argument, context)
     return value
+
+def _interpreter_argument_value(project_directory, stage, argument, context: StageSpecContext):
+    """Resolve automatic, inherited, and user-supplied interpreter entries together."""
+    attribute = argument.attribute_name
+    stored = getattr(stage, attribute, None)
+    if stored is None:
+        if attribute in getattr(stage, "_explicit_none_arguments", set()):
+            return None
+        return _automatic_value(project_directory, argument, context)
+
+    if isinstance(stored, StageAutomaticOption):
+        options, own = [stored], []
+    elif isinstance(stored, list):
+        if (combined := split_additions(stored)) is not None:
+            options, own = combined
+        elif stored and all(isinstance(item, StageAutomaticOption) for item in stored):
+            options, own = stored, []
+        else:
+            options, own = [], stored
+    else:
+        return stored
+
+    # Rosetta already runs native amd64 programs, so omit inherited/generated QEMU interpreters. Keep any explicit
+    # custom entries the user added alongside Automatic or template inheritance.
+    skip_emulated = project_directory.get_architecture() == Architecture.amd64 and context.rosetta_amd64
+    values = []
+    for option in options:
+        if option in (StageAutomaticOption.GENERATE_AUTOMATICALLY, StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE) \
+                and skip_emulated:
+            continue
+        value = (_automatic_value(project_directory, argument, context)
+                 if option == StageAutomaticOption.GENERATE_AUTOMATICALLY else
+                 resolve_stage_argument(project_directory, stage, argument.name, option=option))
+        if value is UNRESOLVED or value is None:
+            continue
+        values.extend(value if isinstance(value, list) else [value])
+    values.extend(own if isinstance(own, list) else [own])
+    return list(dict.fromkeys(value for value in values if value not in (None, "", []))) or None
 
 def _automatic_value(project_directory, argument, context: StageSpecContext):
     """Automatic values determined when building. None means catalyst default."""

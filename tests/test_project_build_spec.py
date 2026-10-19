@@ -13,12 +13,35 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab.project_build_spec import (
-    StageSpecContext, _copy_folders, _format_spec_line, generate_stage_spec, select_seed_url,
+    StageSpecContext, _argument_value, _copy_folders, _format_spec_line, generate_stage_spec, select_seed_url,
 )
 from catalystlab.project_stage_arguments import StageArgumentDetails, StageArgumentTargetDetails
+from catalystlab.project_stage_automatic_option import StageAutomaticOption
 
 
 class StageSpecFormattingTests(unittest.TestCase):
+    def test_interpreter_custom_values_can_be_added_to_automatic_value(self):
+        project = types.SimpleNamespace(get_architecture=lambda: None)
+        stage = types.SimpleNamespace(interpreter=[StageAutomaticOption.GENERATE_AUTOMATICALLY, "qemu-custom"])
+        argument = StageArgumentTargetDetails("interpreter", False, StageArgumentDetails.interpreter)
+        context = StageSpecContext(timestamp="now", source_subpath="seed", portage_confdir=None)
+
+        with patch("catalystlab.project_build_spec._automatic_value", return_value="qemu-aarch64"):
+            value = _argument_value(project, stage, "interpreter", argument, context)
+
+        self.assertEqual(value, ["qemu-aarch64", "qemu-custom"])
+
+    def test_unset_interpreter_uses_automatic_but_explicit_none_stays_empty(self):
+        project = types.SimpleNamespace(get_architecture=lambda: None)
+        argument = StageArgumentTargetDetails("interpreter", False, StageArgumentDetails.interpreter)
+        context = StageSpecContext(timestamp="now", source_subpath="seed", portage_confdir=None)
+        stage = types.SimpleNamespace()
+
+        with patch("catalystlab.project_build_spec._automatic_value", return_value="qemu-aarch64"):
+            self.assertEqual(_argument_value(project, stage, "interpreter", argument, context), "qemu-aarch64")
+            stage._explicit_none_arguments = {"interpreter"}
+            self.assertIsNone(_argument_value(project, stage, "interpreter", argument, context))
+
     def test_formats_multiline_values_and_replaces_placeholders(self):
         line = _format_spec_line('boot/kernel/linux/packages',
                                  ['@PROJECT_DIR@/kernel', '@TIMESTAMP@'], str,

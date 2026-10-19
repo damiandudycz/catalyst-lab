@@ -508,6 +508,7 @@ def stage_argument_level(details: StageArgumentDetails | None) -> StageArgumentL
 # (decompressor search order, filesystem operations), kernel settings, and single values (paths, names) are not joined.
 _ARGUMENTS_WITH_ADDITIONS = {
     StageArgumentDetails.repos,
+    StageArgumentDetails.interpreter,
     StageArgumentDetails.stage4_users, StageArgumentDetails.stage4_groups, StageArgumentDetails.livecd_users,
     StageArgumentDetails.common_flags, StageArgumentDetails.cflags, StageArgumentDetails.cxxflags,
     StageArgumentDetails.fcflags, StageArgumentDetails.fflags, StageArgumentDetails.asflags, StageArgumentDetails.ldflags,
