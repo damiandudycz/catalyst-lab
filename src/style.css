@@ -103,7 +103,7 @@ button.stage-toolset-change-button:hover {
 }
 button.stage-toolset-change-button.source-updates-available,
 button.stage-toolset-change-button.source-updates-available label {
-  color: white;
+  color: #174a7e;
 }
 button.stage-toolset-change-button.source-updates-available {
   background-color: alpha(#3584e4, 0.42);
@@ -115,18 +115,6 @@ button.stage-toolset-change-button.source-updates-available:hover {
 }
 button.stage-toolset-change-button.source-updates-available:disabled {
   background-color: rgba(53, 132, 228, 0.3);
-  color: rgba(255, 255, 255, 0.65);
-}
-button.stage-toolset-change-button.source-updates-available:disabled label {
-  color: rgba(255, 255, 255, 0.65);
-}
-window.light button.stage-toolset-change-button.source-updates-available,
-window.light button.stage-toolset-change-button.source-updates-available label {
-  color: #174a7e;
-}
-window.light button.stage-toolset-change-button.source-updates-available:disabled,
-window.light button.stage-toolset-change-button.source-updates-available:disabled label {
-  color: alpha(#174a7e, 0.65);
 }
 splitbutton.project-footer-save-changes {
   min-height: 20px;
@@ -144,7 +132,7 @@ splitbutton.project-footer-save-changes button {
 }
 splitbutton.project-footer-save-changes.source-updates-available button,
 splitbutton.project-footer-save-changes.source-updates-available button label {
-  color: white;
+  color: #174a7e;
 }
 splitbutton.project-footer-save-changes.source-updates-available {
   background-color: alpha(#3584e4, 0.42);
@@ -170,22 +158,10 @@ splitbutton.project-footer-save-changes.source-updates-available:hover {
 }
 splitbutton.project-footer-save-changes.source-updates-available:disabled button {
   background-color: transparent;
-  color: rgba(255, 255, 255, 0.65);
 }
 splitbutton.project-footer-save-changes.source-updates-available:disabled {
   background-color: alpha(#3584e4, 0.16);
   box-shadow: none;
-}
-splitbutton.project-footer-save-changes.source-updates-available:disabled button label {
-  color: rgba(255, 255, 255, 0.65);
-}
-window.light splitbutton.project-footer-save-changes.source-updates-available button,
-window.light splitbutton.project-footer-save-changes.source-updates-available button label {
-  color: #174a7e;
-}
-window.light splitbutton.project-footer-save-changes.source-updates-available:disabled button,
-window.light splitbutton.project-footer-save-changes.source-updates-available:disabled button label {
-  color: alpha(#174a7e, 0.65);
 }
 button.stage-delete-button {
   min-height: 20px;

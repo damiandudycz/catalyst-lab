@@ -1,0 +1,14 @@
+/* Blue transparent footer actions use a light foreground in dark appearance. */
+button.stage-toolset-change-button.source-updates-available,
+button.stage-toolset-change-button.source-updates-available label,
+splitbutton.project-footer-save-changes.source-updates-available button,
+splitbutton.project-footer-save-changes.source-updates-available button label {
+  color: white;
+}
+
+button.stage-toolset-change-button.source-updates-available:disabled,
+button.stage-toolset-change-button.source-updates-available:disabled label,
+splitbutton.project-footer-save-changes.source-updates-available:disabled button,
+splitbutton.project-footer-save-changes.source-updates-available:disabled button label {
+  color: rgba(255, 255, 255, 0.65);
+}
