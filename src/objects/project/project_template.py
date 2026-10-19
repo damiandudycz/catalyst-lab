@@ -1017,17 +1017,18 @@ def _copy_template_files(source: str, destination: str, names: dict[str, Any], l
 
 def _stage_argument_names(project_directory, target: str, toolset=None) -> set[str] | None:
     """Names of arguments of catalyst target (attribute names in stages), None when they can't be loaded."""
+    if toolset is None:
+        # Templates store their declared settings directly. Catalyst compatibility is
+        # checked when the stage is opened with its selected (usually default) toolset.
+        return None
     from .project_stage import load_catalyst_stage_arguments_details
     try:
-        if toolset is None:
-            from .toolset_selection import default_toolset
-            toolset = default_toolset()
         arguments = load_catalyst_stage_arguments_details(toolset=toolset, target_name=target)
         return {argument.attribute_name for argument in arguments.values()}
     except Exception:
         return None
 
-def _enable_stage_overlays(project_directory, stage, log: Callable[[str], None]):
+def _enable_stage_overlays(project_directory, stage, log: Callable[[str], None], toolset=None):
     """Stage overlays (portage, root_overlay and overlay folders of stage) with files from template are used by stage,
     as stage overlay source of Portage confdir, root overlay and ISO overlay."""
     from .project_stage_portage_confdir import (
@@ -1044,7 +1045,10 @@ def _enable_stage_overlays(project_directory, stage, log: Callable[[str], None])
         value = getattr(stage, attribute, None)
         if not isinstance(value, list):
             from .project_stage import parent_supports_argument
-            value = default_portage_confdir_sources(has_parent=parent_supports_argument(project_directory, stage, StageArgumentDetails[attribute]))
+            has_parent = bool(stage.parent) if toolset is None else parent_supports_argument(
+                project_directory, stage, StageArgumentDetails[attribute], toolset=toolset
+            )
+            value = default_portage_confdir_sources(has_parent=has_parent)
         sources = [item for item in value if isinstance(item, StagePortageConfdirSource)]
         if StagePortageConfdirSource.STAGE_OVERLAY not in sources:
             sources.append(StagePortageConfdirSource.STAGE_OVERLAY)
@@ -1094,9 +1098,9 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
                            log: Callable[[str], None], replace_content: bool = False,
                            overlay_ids: dict[str, uuid.UUID] | None = None,
                            stage_ids: dict[str, uuid.UUID] | None = None, toolset=None) -> dict[str, uuid.UUID]:
-    """Creates files and stages of template in project directory. Project needs configuration (toolset, releng) set
-    already, default arguments of stages are set like for stages added in app. With replace_content other files of
-    directory (eg. cloned template repository) are removed first, Git directory is kept."""
+    """Creates files and stages from a template. Releng and architecture configuration must already be set.
+    Template values are stored without requiring Catalyst introspection; an optional toolset adds validation and
+    automatic defaults. With replace_content, other files are removed first while Git is kept."""
     from .project_stage import ProjectStage, apply_default_stage_arguments
     from .project_manager import ProjectManager
     generated = template.generate(names)
@@ -1139,12 +1143,13 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
         if any(existing.name == generated_stage.name for existing in existing_stages) or os.path.exists(
                 os.path.join(project_directory.stage_directory_path(generated_stage.name), "stage.json")):
             raise TemplateError(f"Stage {generated_stage.name} already exists")
+        persistent_id = generated_stage.persistent_id or generated_stage.template_id
+        existing_id = known_stage_ids.get(persistent_id)
         stage = ProjectStage(
-            id=known_stage_ids.get(generated_stage.persistent_id or generated_stage.template_id),
+            id=existing_id,
             parent_id=stage_ids[generated_stage.parent] if generated_stage.parent else None,
             name=generated_stage.name, target_name=generated_stage.target,
             releng_template_name=generated_stage.releng_template,
-            toolset_id=str(toolset.uuid) if toolset else None
         )
         valid_arguments = _stage_argument_names(project_directory, generated_stage.target, toolset=toolset)
         for key, value in generated_stage.arguments.items():
@@ -1165,18 +1170,19 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
                     log(f"Warning: releng template {generated_stage.releng_template} not found in {releng_directory.name}")
         # Parent can't give values of arguments its target doesn't have (eg. root overlay of stage3).
         from .project_stage import remove_unsupported_parent_options
-        if changed := remove_unsupported_parent_options(project_directory, stage, toolset=toolset):
-            log(f"Not inheriting {', '.join(changed)} of {stage.name} from parent, its target doesn't have them")
-        try:
-            apply_default_stage_arguments(project_directory=project_directory, stage=stage, toolset=toolset)
-        except Exception as e:
-            # Stage can still be configured manually.
-            log(f"Failed to set default values of {stage.name}: {e}")
+        if toolset is not None:
+            if changed := remove_unsupported_parent_options(project_directory, stage, toolset=toolset):
+                log(f"Not inheriting {', '.join(changed)} of {stage.name} from parent, its target doesn't have them")
+            try:
+                apply_default_stage_arguments(project_directory=project_directory, stage=stage, toolset=toolset)
+            except Exception as e:
+                # Stage can still be configured manually.
+                log(f"Failed to set default values of {stage.name}: {e}")
         # Files of template that stage already gets from parent overlays are not kept in its overlays.
         from .project_stage_portage_confdir import remove_stage_overlays_inherited_files
         for folder, files in remove_stage_overlays_inherited_files(project_directory, stage).items():
             log(f"Skipped {len(files)} file{'s' if len(files) != 1 else ''} of {folder} of {stage.name} inherited from parent: {', '.join(files)}")
-        _enable_stage_overlays(project_directory, stage, log)
+        _enable_stage_overlays(project_directory, stage, log, toolset=toolset)
         ProjectManager.shared().save_stage(project=project_directory, stage=stage)
         project_directory.stages.append(stage)
         stage_ids[generated_stage.template_id] = stage.id

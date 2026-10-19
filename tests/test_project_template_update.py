@@ -1,11 +1,10 @@
 """Project template version comparison and loading."""
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import types
 import unittest
-import uuid
-from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 if 'catalystlab' not in sys.modules:
@@ -14,7 +13,7 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab.project_template_update import (
-    ProjectVersion, compare_versions, project_template_toolset, read_project_version
+    ProjectVersion, compare_versions, read_project_version, project_stage_baseline
 )
 
 
@@ -53,19 +52,37 @@ class ProjectTemplateUpdateTests(unittest.TestCase):
         self.assertEqual(version.entries['README.md'], b'project')
         self.assertNotIn('stage:stage-id/ignored-link', version.entries)
 
-    def test_template_update_uses_toolset_from_an_existing_template_stage(self):
-        stage_id = uuid.uuid4()
-        toolset_id = uuid.uuid4()
-        toolset = SimpleNamespace(uuid=toolset_id)
-        project = SimpleNamespace(stages=[
-            SimpleNamespace(id=uuid.uuid4(), toolset_id=str(uuid.uuid4())),
-            SimpleNamespace(id=stage_id, toolset_id=str(toolset_id)),
-        ])
+    def test_stage_baseline_uses_git_upstream_for_cloned_projects(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(['git', 'init', '-q', '-b', 'main', str(root)], check=True)
+            stage_dir = root / 'stages' / 'stage4'
+            stage_dir.mkdir(parents=True)
+            (stage_dir / 'stage.json').write_text(
+                '{"id":{"type":"str","value":"stage-id"},'
+                '"name":{"type":"str","value":"Original"}}', encoding='utf-8'
+            )
+            subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
+            subprocess.run(['git', '-C', str(root), '-c', 'user.name=Test', '-c',
+                            'user.email=test@example.com', 'commit', '-qm', 'base'], check=True)
+            base = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
+            subprocess.run(['git', '-C', str(root), 'remote', 'add', 'origin', 'https://example.invalid/project.git'], check=True)
+            subprocess.run(['git', '-C', str(root), 'update-ref', 'refs/remotes/origin/main', base], check=True)
+            subprocess.run(['git', '-C', str(root), 'branch', '--set-upstream-to=origin/main', 'main'],
+                           check=True, stdout=subprocess.DEVNULL)
+            (stage_dir / 'stage.json').write_text(
+                '{"id":{"type":"str","value":"stage-id"},'
+                '"name":{"type":"str","value":"Changed"}}', encoding='utf-8'
+            )
 
-        selected = project_template_toolset(project, {'stage1': stage_id}, [toolset])
+            baseline = project_stage_baseline(str(root), 'stage-id')
 
-        self.assertIs(selected, toolset)
+        self.assertEqual(baseline['name'], {'type': 'str', 'value': 'Original'})
 
+    def test_stage_baseline_is_empty_for_fresh_project_without_remote(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            baseline = project_stage_baseline(temporary, 'stage-id')
+        self.assertEqual(baseline, {})
 
 if __name__ == '__main__':
     unittest.main()

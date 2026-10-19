@@ -123,6 +123,9 @@ button.project-action-button.suggested-action:disabled {
   background-color: rgba(53, 132, 228, 0.3);
   color: rgba(255, 255, 255, 0.65);
 }
+row.customized-setting > box > box > label.title {
+  font-weight: 700;
+}
 .toolset-chooser.boxed-list > row.default-toolset-row {
   background-color: alpha(@accent_bg_color, 0.28);
   background-image: none;

@@ -16,7 +16,7 @@
         <property name="show_welcome_screen">True</property>
         <property name="welcome_screen_icon_name">notes-minimalistic-svgrepo-com-symbolic</property>
         <property name="welcome_screen_title">Create Project</property>
-        <property name="welcome_screen_description">A project contains a tree of stages built together. Select its Releng directory, snapshot and architecture. Toolsets are selected for each action that needs one.</property>
+        <property name="welcome_screen_description">A project contains a tree of stages built together. Select its Releng directory, snapshot and architecture. Stage settings use a default Catalyst toolset when opened, and each build can use its own toolset.</property>
         <property name="install_button_label">Create project</property>
 
         <!-- Page 1: Config screen -->
@@ -59,41 +59,7 @@
           </object>
         </child>
 
-        <!-- Page 3: Toolset screen -->
-        <child>
-          <object class="GtkScrolledWindow" id="toolset_page">
-            <property name="hscrollbar-policy">never</property>
-            <property name="vscrollbar-policy">automatic</property>
-            <property name="hexpand">True</property>
-            <property name="vexpand">True</property>
-            <child>
-              <object class="GtkBox">
-                <property name="margin-start">24</property>
-                <property name="margin-end">24</property>
-                <property name="margin-top">4</property>
-                <property name="margin-bottom">4</property>
-                <property name="orientation">vertical</property>
-                <property name="spacing">12</property>
-                <child>
-                  <object class="ItemSelectionView" id="toolset_selection_view">
-                    <property name="title">Toolset</property>
-                    <property name="description">Toolset with Catalyst installed, used only to read template stage settings during this creation. Projects do not keep a toolset assignment.</property>
-                    <property name="item_icon">toolbox-symbolic</property>
-                    <property name="item_title_property_name">name</property>
-                    <property name="item_subtitle_property_name">short_details</property>
-                    <property name="item_status_property_name">status_indicator_values</property>
-                    <property name="autoselect_default">True</property>
-                    <signal name="is-item-selectable" handler="is_item_selectable"/>
-                    <signal name="is-item-usable" handler="is_item_usable"/>
-                    <signal name="setup-items-monitoring" handler="setup_items_monitoring"/>
-                  </object>
-                </child>
-              </object>
-            </child>
-          </object>
-        </child>
-
-        <!-- Page 4: Releng screen -->
+        <!-- Page 3: Releng screen -->
         <child>
           <object class="GtkScrolledWindow" id="releng_page">
             <property name="hscrollbar-policy">never</property>
@@ -128,7 +94,7 @@
           </object>
         </child>
 
-        <!-- Page 5: Snapshot screen -->
+        <!-- Page 4: Snapshot screen -->
         <child>
           <object class="GtkScrolledWindow" id="snapshot_page">
             <property name="hscrollbar-policy">never</property>
@@ -163,7 +129,7 @@
           </object>
         </child>
 
-        <!-- Page 6: Architecture screen (not for templates with architecture option) -->
+        <!-- Page 5: Architecture screen (not for templates with architecture option) -->
         <child>
           <object class="GtkScrolledWindow" id="arch_page">
             <property name="hscrollbar-policy">never</property>
@@ -193,7 +159,7 @@
           </object>
         </child>
 
-        <!-- Page 7: Binary packages screen -->
+        <!-- Page 6: Binary packages screen -->
         <child>
           <object class="GtkScrolledWindow" id="packages_page">
             <property name="hscrollbar-policy">never</property>

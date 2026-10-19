@@ -27,8 +27,11 @@ from .tree_node import walk_tree
 
 class ProjectStage(Serializable):
 
-    def __init__(self, id: uuid.UUID | None = None, parent_id: uuid.UUID | None = None, name: str = None, target_name: str | None = None, releng_template_name: str | None = None, profile: PortageProfile | None = None, toolset_id: str | None = None, data: dict | None = None):
+    def __init__(self, id: uuid.UUID | None = None, parent_id: uuid.UUID | None = None, name: str = None, target_name: str | None = None, releng_template_name: str | None = None, profile: PortageProfile | None = None, data: dict | None = None):
         self.event_bus = EventBus[ProjectStageEvent]()
+        self._explicit_none_arguments = set()
+        self._default_stage_arguments = {}
+        self._explicit_stage_arguments = set()
         # Required variables in case not set in json:
         self.id = id or uuid.uuid4()
         self.parent = parent_id
@@ -36,10 +39,15 @@ class ProjectStage(Serializable):
         self.name = name
         self.releng_template = releng_template_name
         self.profile = profile
-        self.toolset_id = str(toolset_id) if toolset_id else None
         # Load available values from data dictionary
         for key, value in (data or {}).items():
-            setattr(self, key, ProjectStageArgumentSerialization.deserialize(value))
+            if key == "toolset_id":
+                continue
+            value = ProjectStageArgumentSerialization.deserialize(value)
+            setattr(self, key, value)
+            self._explicit_stage_arguments.add(key)
+            if value is None:
+                self._explicit_none_arguments.add(key)
 
     # Quick access properties:
 
@@ -49,7 +57,9 @@ class ProjectStage(Serializable):
         return {
             key: ProjectStageArgumentSerialization.serialize(value)
             for key, value in self.__dict__.items()
-            if key != "event_bus" and value is not None
+            if key not in {"event_bus", "_explicit_none_arguments", "_default_stage_arguments", "_explicit_stage_arguments"}
+            and (key not in self._default_stage_arguments or key in self._explicit_stage_arguments)
+            and (value is not None or key in self._explicit_none_arguments)
         }
 
     @classmethod
@@ -417,10 +427,12 @@ def load_catalyst_stage_automatic_arguments_options(stage: ProjectStage, arg_det
     return [options[automatic_option] for automatic_option in arg_details.details.automatic_options]
 
 def apply_default_stage_arguments(project_directory, stage: ProjectStage, toolset=None) -> dict[str, Any]:
-    """Sets default automatic options (inherit from parent, releng template...) for arguments valid for stage target.
-    From default options of argument available for the stage (parent selected, releng template selected...), first one
-    that resolves to some value is used. If none of them does, first available is used anyway, as releng template or
-    parent can define the value later. Returns arguments that were set."""
+    """Sets only stage defaults that have a concrete source in the selected parent or template.
+
+    Catalyst handles omitted values as its own defaults. App-managed values (such as portage_confdir sources) are
+    still initialized because the build pipeline needs them to combine project overlays. Automatic markers are not
+    written just to make an implicit Catalyst default visible in the project.
+    """
     from .project_stage_value_resolver import resolve_stage_argument, UNRESOLVED
     has_parent = getattr(stage, StageArgumentDetails.parent.name, None) is not None
     has_template = bool(getattr(stage, StageArgumentDetails.releng_template.name, None))
@@ -435,7 +447,7 @@ def apply_default_stage_arguments(project_directory, stage: ProjectStage, toolse
         return False
     def has_value(argument: StageArgumentDetails, option: StageAutomaticOption) -> bool:
         if option == StageAutomaticOption.GENERATE_AUTOMATICALLY:
-            return True # Determined when building, even if not known yet.
+            return False # Generated values are supplied by the build pipeline when needed.
         value = resolve_stage_argument(project_directory, stage, argument.value, option=option)
         return value is not UNRESOLVED and value not in (None, "", [])
     if toolset is None:
@@ -446,16 +458,17 @@ def apply_default_stage_arguments(project_directory, stage: ProjectStage, toolse
     arguments = load_catalyst_stage_arguments_details(toolset=toolset, target_name=stage.target)
     applied = {}
     for name, argument in arguments.items():
-        if argument.details is None or getattr(stage, argument.attribute_name, None) is not None:
+        if (argument.details is None or getattr(stage, argument.attribute_name, None) is not None
+                or argument.attribute_name in getattr(stage, "_explicit_none_arguments", set())):
             continue
         if argument.details == StageArgumentDetails.portage_confdir:
             setattr(stage, argument.attribute_name, default_portage_confdir_sources(has_parent=has_parent))
-            applied[name] = getattr(stage, argument.attribute_name)
+            applied[argument.attribute_name] = getattr(stage, argument.attribute_name)
             continue
         if argument.details in FILE_OVERLAY_ARGUMENTS:
             setattr(stage, argument.attribute_name, default_portage_confdir_sources(
                 has_parent=has_parent and parent_supports_argument(project_directory, stage, argument.details, toolset)))
-            applied[name] = getattr(stage, argument.attribute_name)
+            applied[argument.attribute_name] = getattr(stage, argument.attribute_name)
             continue
         if argument.details == StageArgumentDetails.boot_kernel:
             # Releng kernel inheritance is the default only when the selected spec
@@ -463,13 +476,19 @@ def apply_default_stage_arguments(project_directory, stage: ProjectStage, toolse
             option = StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE
             if has_template and has_value(argument.details, option):
                 setattr(stage, argument.attribute_name, option)
-                applied[name] = option
+                applied[argument.attribute_name] = option
             continue
         available = [option for option in argument.details.default_options if is_available(argument.details, option)]
-        option = next((option for option in available if has_value(argument.details, option)), available[0] if available else None)
+        # Do not add an inherit marker if the source is empty or not yet defined. This keeps a new stage sparse and
+        # avoids making an unset setting look like a user customization. A later template/parent edit will be picked
+        # up when defaults are refreshed or the stage is opened again.
+        option = next((option for option in available if has_value(argument.details, option)), None)
         if option is not None:
             setattr(stage, argument.attribute_name, option)
-            applied[name] = option
+            applied[argument.attribute_name] = option
+    defaults = getattr(stage, "_default_stage_arguments", None)
+    if defaults is not None:
+        defaults.update(applied)
     return applied
 
 def load_catalyst_targets(toolset: Toolset) -> list[str]:

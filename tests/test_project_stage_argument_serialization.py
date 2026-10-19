@@ -51,7 +51,7 @@ class StageArgumentSerializationTests(unittest.TestCase):
             Serialization.deserialize({'value': 'missing type'})
 
     def test_project_stage_round_trip_omits_runtime_and_empty_values(self):
-        stage = ProjectStage(name='stage4', target_name='stage4', profile=None, toolset_id='toolset-uuid')
+        stage = ProjectStage(name='stage4', target_name='stage4', profile=None)
         stage.packages = ['app-admin/sudo']
 
         saved = stage.serialize()
@@ -59,8 +59,35 @@ class StageArgumentSerializationTests(unittest.TestCase):
 
         self.assertNotIn('event_bus', saved)
         self.assertNotIn('profile', saved)
-        self.assertEqual(restored.toolset_id, 'toolset-uuid')
+        self.assertNotIn('toolset_id', saved)
         self.assertEqual(restored.serialize(), saved)
+
+    def test_legacy_toolset_id_is_ignored(self):
+        stage = ProjectStage.init_from({'toolset_id': {'type': 'str', 'value': 'old-toolset'}})
+        self.assertFalse(hasattr(stage, 'toolset_id'))
+        self.assertNotIn('toolset_id', stage.serialize())
+
+    def test_project_stage_round_trip_preserves_explicit_none_settings(self):
+        stage = ProjectStage.init_from({
+            'stage4_empty': {'type': 'NoneType', 'value': None},
+        })
+
+        saved = stage.serialize()
+        restored = ProjectStage.init_from(saved)
+
+        self.assertIn('stage4_empty', saved)
+        self.assertIsNone(restored.stage4_empty)
+        self.assertEqual(restored.serialize(), saved)
+
+    def test_toolset_defaults_are_not_serialized_until_explicitly_changed(self):
+        stage = ProjectStage(name='stage4', target_name='stage4')
+        stage.packages = ['app-admin/sudo']
+        stage._default_stage_arguments['packages'] = ['app-admin/sudo']
+
+        self.assertNotIn('packages', stage.serialize())
+
+        stage._explicit_stage_arguments.add('packages')
+        self.assertEqual(stage.serialize()['packages'], Serialization.serialize(['app-admin/sudo']))
 
 
 if __name__ == '__main__':

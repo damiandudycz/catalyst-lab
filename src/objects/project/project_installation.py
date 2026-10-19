@@ -2,7 +2,6 @@ from typing import final
 import subprocess
 from .git_installation import GitInstallation, GitDirectorySetupConfiguration, GitDirectorySource
 from .project_manager import ProjectManager
-from .toolset import Toolset
 from .releng_directory import RelengDirectory
 from .snapshot import Snapshot, LATEST_SNAPSHOT
 from .project_directory import ProjectConfiguration
@@ -25,14 +24,12 @@ class ProjectInstallation(GitInstallation):
     def __init__(
         self,
         source_config: GitDirectorySetupConfiguration,
-        toolset: Toolset,
         releng_directory: RelengDirectory,
         snapshot: Snapshot,
         architecture: Architecture,
         packages_directory=None
     ):
         self.packages_directory = packages_directory # Existing binary packages folder, None creates new one.
-        self.toolset = toolset
         self.releng_directory = releng_directory
         # Latest snapshot is only remembered, builds get it before building.
         self.latest_snapshot = snapshot is LATEST_SNAPSHOT
@@ -55,7 +52,6 @@ class ProjectInstallation(GitInstallation):
         super().setup_stages()
         save_config = ProjectInstallationStepSaveConfig(
             multistage_process=self,
-            toolset=self.toolset,
             releng_directory=self.releng_directory,
             architecture=self.architecture
         )
@@ -76,7 +72,6 @@ class ProjectInstallationStepSaveConfig(MultiStageProcessStage):
     def __init__(
         self,
         multistage_process: MultiStageProcess,
-        toolset: Toolset,
         releng_directory: RelengDirectory,
         architecture: Architecture
     ):
@@ -85,7 +80,6 @@ class ProjectInstallationStepSaveConfig(MultiStageProcessStage):
             description="Stores metadata about selected components",
             multistage_process=multistage_process
         )
-        self.toolset = toolset
         self.releng_directory = releng_directory
         self.architecture = architecture
     def start(self):
@@ -163,8 +157,7 @@ class ProjectInstallationStepApplyTemplate(MultiStageProcessStage):
                 # Cloned template repository is replaced with generated content, its history is kept.
                 stage_ids = apply_project_template(project_directory=directory, template=template, names=names, log=self.log,
                                                    replace_content=is_repository_template,
-                                                   overlay_ids=getattr(self.multistage_process, "template_overlay_ids", None),
-                                                   toolset=self.multistage_process.toolset)
+                                                   overlay_ids=getattr(self.multistage_process, "template_overlay_ids", None))
                 # Template and generated files are remembered, so project can be updated when template changes.
                 record_template_state(directory.directory_path(), template, dict(selection.selected), template_commit, stage_ids,
                                       template_directory_tree)

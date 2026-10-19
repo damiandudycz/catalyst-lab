@@ -5,6 +5,7 @@ from .project_stage import (
     ProjectStage, ProjectStageEvent,
     load_catalyst_stage_arguments_options, load_catalyst_stage_arguments_options_for_boolean,
     load_catalyst_stage_arguments_details, load_catalyst_stage_automatic_arguments_options,
+    apply_default_stage_arguments,
 )
 from .project_stage_arguments import (
     StageArgumentTargetDetails, StageArgumentOption,
@@ -21,7 +22,11 @@ from .item_select_expander_row import ItemSelectionExpanderRow
 from .event_bus import EventBus
 from .project_stage_automatic_option import StageAutomaticOption
 from .project_stage_argument_descriptions import stage_argument_description
-from .project_stage_value_resolver import UNRESOLVED, resolved_stage_argument_display, resolve_stage_argument, split_additions
+from .project_stage_value_resolver import (
+    UNRESOLVED, format_stage_argument_value, resolved_stage_argument_display,
+    resolve_stage_argument, split_additions,
+)
+from .project_stage_argument_serialization import ProjectStageArgumentSerialization
 from .project_stage_portage_confdir import (
     StagePortageConfdirSource, stage_overlay_path, stage_root_overlay_path, root_overlay_values, FILE_OVERLAY_ARGUMENTS
 )
@@ -35,6 +40,8 @@ from .project_stage_kernels import (
 )
 from .project_kernel_packages import load_kernel_packages, KernelPackageKind, default_kernel_package, derived_distkernel
 from .stage_package_picker_view import StagePackagePickerView, _as_list
+
+_MISSING_STAGE_VALUE = object()
 
 
 def set_row_description(row: Gtk.Widget, description: str | None):
@@ -88,6 +95,9 @@ class ProjectStageDetailsView(Gtk.Box):
         self.stage_toolsets = []
         self.active_stage_toolset = None
         self._unsupported_option_rows = []
+        self.template_stage_baseline = {}
+        self.stage_override_metadata = {}
+        self._name_is_used = False
         self._setup_mode_toggle()
         self.connect("realize", self.on_realize)
         # Reapply the selected mode once the page is mapped. Rows are populated during
@@ -106,36 +116,78 @@ class ProjectStageDetailsView(Gtk.Box):
         self.mode_toggle.add_css_class("caption")
         self.mode_toggle.add(CLToggle(label="Basic"))
         self.mode_toggle.add(CLToggle(label="Advanced"))
+        self.mode_toggle.add(CLToggle(label="Customized"))
         self.mode_toggle.set_active(1 if self.advanced else 0)
         self.mode_toggle.connect("notify::active", self._on_mode_changed)
         self.hidden_settings_label = Gtk.Label(wrap=True, xalign=0, margin_start=12, margin_end=12, visible=False)
         self.hidden_settings_label.add_css_class("caption")
         self.hidden_settings_label.add_css_class("dimmed")
         self.build_behavior_pref_group.get_parent().insert_child_after(self.hidden_settings_label, self.build_behavior_pref_group)
+        self.no_changed_settings_row = Adw.ActionRow(title="No settings differ from the template or defaults")
+        self.no_changed_settings_row.add_css_class("dim-label")
+        self.no_changed_settings_row.set_visible(False)
+        self.basic_config_pref_group.add(self.no_changed_settings_row)
+        self._attach_restore_default_button(self.stage_name_row, StageArgumentDetails.name.value)
 
     def header_bar_end_widgets(self) -> list[Gtk.Widget]:
         return [self.mode_toggle]
 
     def _on_mode_changed(self, group, _param):
-        self.advanced = group.get_active() == 1
-        ProjectStageDetailsView.advanced_default = self.advanced
+        mode = group.get_active()
+        self.advanced = mode != 0
+        if mode != 2:
+            ProjectStageDetailsView.advanced_default = self.advanced
         self.apply_mode()
 
     def _on_map(self, _widget):
-        self.advanced = self.mode_toggle.get_active() == 1
+        self.advanced = self.mode_toggle.get_active() != 0
         self.apply_mode()
 
     def apply_mode(self):
         """Shows rows of current mode, and groups which have any of them."""
+        changed_only = self.mode_toggle.get_active() == 2
         hidden_custom = []
         for row in getattr(self, "configuration_rows", []):
-            visible = self.advanced or row.level == StageArgumentLevel.BASIC
+            changed = self._is_stage_argument_changed(row.argument.attribute_name)
+            _set_customized_style(row, changed)
+            visible = (self.advanced or row.level == StageArgumentLevel.BASIC)
+            if changed_only:
+                visible = visible and changed
             row.set_visible(visible)
+            if getattr(row, "restore_default_button", None):
+                row.restore_default_button.set_visible(changed)
             if not visible and _has_own_value(self.stage, row.argument.attribute_name):
                 hidden_custom.append(row.argument.display_name)
+        name_changed = self._is_stage_argument_changed(StageArgumentDetails.name.value)
+        _set_customized_style(self.stage_name_row, name_changed)
+        self.stage_name_row.set_visible(not changed_only or name_changed)
+        self.stage_name_row.restore_default_button.set_visible(name_changed)
+        self.name_used_row.set_visible(not changed_only and self._name_is_used)
+        changed_kernel_settings = False
+        changed_kernel_toggle = False
         for row in getattr(self, "kernel_rows", []):
             if isinstance(row, StageKernelRow):
-                hidden_custom += [f"{row.kernel_name}: {title}" for title in row.set_advanced(self.advanced)]
+                _set_customized_style(row, row.has_stage_overrides())
+                hidden_custom += [f"{row.kernel_name}: {title}" for title in row.set_advanced(self.advanced, changed_only)]
+                changed_kernel_settings |= row.has_stage_overrides()
+                own = own_kernel_settings(self.stage).get(row.kernel_name, {})
+                for setting, setting_row in row.entry_rows:
+                    _set_customized_style(setting_row, setting.key in own)
+                _set_customized_style(row.name_row, bool(own))
+            elif getattr(row, "changed_filter_key", None):
+                changed = self._is_stage_argument_changed(row.changed_filter_key)
+                _set_customized_style(row, changed)
+                row.set_visible(not changed_only or changed)
+                if getattr(row, "restore_default_button", None):
+                    row.restore_default_button.set_visible(changed)
+                changed_kernel_toggle |= changed
+            elif getattr(row, "is_kernel_add_action", False):
+                row.set_visible(not changed_only)
+        self.no_changed_settings_row.set_visible(changed_only and not name_changed and not changed_kernel_settings and not any(
+            self._is_stage_argument_changed(row.argument.attribute_name) for row in self.configuration_rows
+        ))
+        if changed_kernel_toggle:
+            self.no_changed_settings_row.set_visible(False)
         groups = (self.architecture_pref_group, self.release_pref_group, self.packages_pref_group,
                   self.stage_setup_pref_group, self.live_image_pref_group,
                   self.live_system_pref_group, self.build_behavior_pref_group, self.other_pref_group)
@@ -144,11 +196,17 @@ class ProjectStageDetailsView(Gtk.Box):
             # effective child visibility. That value can be false while the group is hidden and
             # then incorrectly keep the group empty when switching back to Advanced.
             has_visible_rows = any(
-                row.pref_group is group and (self.advanced or row.level == StageArgumentLevel.BASIC)
+                row.pref_group is group
+                and (self.advanced or row.level == StageArgumentLevel.BASIC)
+                and (not changed_only or self._is_stage_argument_changed(row.argument.attribute_name))
                 for row in self.configuration_rows
             )
             group.set_visible(has_visible_rows)
-        self.kernels_pref_group.set_visible(getattr(self, "boot_kernel_argument", None) is not None)
+        self.basic_config_pref_group.set_visible(not changed_only or name_changed or self.no_changed_settings_row.get_visible())
+        self.kernels_pref_group.set_visible(
+            getattr(self, "boot_kernel_argument", None) is not None
+            and (not changed_only or changed_kernel_settings or changed_kernel_toggle)
+        )
         self.hidden_settings_label.set_label(
             f"Advanced settings set by this stage: {', '.join(hidden_custom)}. Switch to Advanced to see them." if hidden_custom else "")
         self.hidden_settings_label.set_visible(bool(hidden_custom))
@@ -167,24 +225,125 @@ class ProjectStageDetailsView(Gtk.Box):
     def load_stage_details(self):
         self.stage_name_row.set_text(self.stage.name)
         set_row_description(self.stage_name_row, stage_argument_description(StageArgumentDetails.name.value))
+        from .project_template_update import project_stage_baseline
+        from catalystlab import project_stage_overrides
+        project_path = self.project_directory.directory_path()
+        self.template_stage_baseline = project_stage_baseline(project_path, self.stage.id)
+        self.stage_override_metadata = project_stage_overrides.get(project_path, self.stage.id)
         self._load_stage_toolset()
 
     def _load_stage_toolset(self):
         from .toolset_selection import sorted_toolsets, toolset_has_applications, default_toolset
         from .toolset_application import ToolsetApplication
+        from catalystlab import project_stage_toolsets
         available = sorted_toolsets()
         self.stage_toolsets = [toolset for toolset in available
                                if toolset_has_applications(toolset, [ToolsetApplication.CATALYST])
                                and os.path.isfile(toolset.file_path())]
-        remembered = next((item for item in self.stage_toolsets if str(item.uuid) == str(self.stage.toolset_id)), None)
+        project_path = self.project_directory.directory_path()
+        saved_toolset_id = project_stage_toolsets.get(project_path, self.stage.id)
+        remembered = next((item for item in self.stage_toolsets if str(item.uuid) == str(saved_toolset_id)), None)
         fallback = default_toolset(applications=[ToolsetApplication.CATALYST], toolsets=self.stage_toolsets)
         self.active_stage_toolset = remembered or fallback or (self.stage_toolsets[0] if self.stage_toolsets else None)
         name = self.active_stage_toolset.name if self.active_stage_toolset else "No Catalyst toolset available"
         self.toolset_footer_label.set_label(f"Catalyst toolset · {name}")
         self.toolset_footer_button.set_sensitive(bool(self.stage_toolsets))
-        if self.active_stage_toolset and str(self.stage.toolset_id) != str(self.active_stage_toolset.uuid):
-            self.stage.toolset_id = str(self.active_stage_toolset.uuid)
-            ProjectManager.shared().save_stage(self.project_directory, self.stage)
+        if self.active_stage_toolset:
+            project_stage_toolsets.set(project_path, self.stage.id, str(self.active_stage_toolset.uuid))
+        if self.active_stage_toolset:
+            try:
+                apply_default_stage_arguments(
+                    project_directory=self.project_directory,
+                    stage=self.stage,
+                    toolset=self.active_stage_toolset,
+                )
+            except Exception as error:
+                print(f"Failed to set missing defaults for {self.stage.name}: {error}")
+        # Defaults are only an in-memory starting point while viewing the stage.
+        # A toolset preference alone must never dirty tracked project data.
+
+    def _is_stage_argument_changed(self, name: str) -> bool:
+        """Whether this value differs from template/default, or was explicitly chosen by the user."""
+        current = self.stage.serialize().get(name, _MISSING_STAGE_VALUE)
+        metadata = self.stage_override_metadata
+        # Explicit edits take precedence over equality with the template: saving the same value is meaningful because
+        # it opts this stage out of following future template changes.
+        if name in metadata.get("explicit", []):
+            return True
+        template_value = self.template_stage_baseline.get(name, _MISSING_STAGE_VALUE)
+        if template_value is not _MISSING_STAGE_VALUE:
+            return current != template_value
+        default_value = metadata.get("defaults", {}).get(name, _MISSING_STAGE_VALUE)
+        if default_value is _MISSING_STAGE_VALUE:
+            runtime_default = getattr(self.stage, "_default_stage_arguments", {}).get(name, _MISSING_STAGE_VALUE)
+            if runtime_default is not _MISSING_STAGE_VALUE:
+                default_value = ProjectStageArgumentSerialization.serialize(runtime_default)
+        if default_value is not _MISSING_STAGE_VALUE:
+            # Runtime toolset defaults are deliberately not serialized into stage.json.
+            # Compare the effective in-memory value, while preserving an explicit
+            # same-as-default edit through the sidecar marker above.
+            effective_value = getattr(self.stage, name, _MISSING_STAGE_VALUE)
+            if effective_value is _MISSING_STAGE_VALUE:
+                return False
+            return ProjectStageArgumentSerialization.serialize(effective_value) != default_value
+        if name in {"id", "parent", "target", "name", "releng_template"}:
+            # These are initial stage identity/selection values for a fresh project,
+            # rather than edits to a generated Catalyst setting.
+            return False
+        return current is not _MISSING_STAGE_VALUE
+
+    def _attach_restore_default_button(self, row, name: str):
+        button = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Restore template or default value",
+                            valign=Gtk.Align.CENTER)
+        button.add_css_class("flat")
+        button.connect("clicked", self._restore_stage_argument, name)
+        row.add_suffix(button)
+        row.restore_default_button = button
+
+    def _restore_stage_argument(self, _button, name: str):
+        from catalystlab import project_stage_overrides
+        template_value = self.template_stage_baseline.get(name, _MISSING_STAGE_VALUE)
+        manager = ProjectManager.shared()
+        project_path = self.project_directory.directory_path()
+        if template_value is not _MISSING_STAGE_VALUE:
+            value = ProjectStageArgumentSerialization.deserialize(template_value)
+            if name == StageArgumentDetails.name.value:
+                if value != self.stage.name:
+                    manager.rename_stage(project=self.project_directory, stage=self.stage, name=value)
+            else:
+                manager.change_stage_argument(
+                    project=self.project_directory, stage=self.stage, argument=name, value=value
+                )
+            project_stage_overrides.mark_explicit(project_path, self.stage.id, name, explicit=False)
+        else:
+            metadata_default = self.stage_override_metadata.get("defaults", {}).get(name, _MISSING_STAGE_VALUE)
+            default_value = (ProjectStageArgumentSerialization.deserialize(metadata_default)
+                             if metadata_default is not _MISSING_STAGE_VALUE else _MISSING_STAGE_VALUE)
+            if name == StageArgumentDetails.name.value and default_value is not _MISSING_STAGE_VALUE:
+                if default_value != self.stage.name:
+                    manager.rename_stage(project=self.project_directory, stage=self.stage, name=default_value)
+                project_stage_overrides.mark_explicit(project_path, self.stage.id, name, explicit=False)
+            else:
+                manager.remove_stage_argument(
+                    project=self.project_directory, stage=self.stage, argument=name
+                )
+            self.stage._default_stage_arguments.pop(name, None)
+            if default_value is not _MISSING_STAGE_VALUE and default_value is not None and name != StageArgumentDetails.name.value:
+                setattr(self.stage, name, default_value)
+                if name in {"id", "parent", "target", "releng_template"}:
+                    manager.save_stage(project=self.project_directory, stage=self.stage)
+                else:
+                    self.stage._default_stage_arguments[name] = default_value
+            elif self.active_stage_toolset:
+                try:
+                    apply_default_stage_arguments(
+                        project_directory=self.project_directory, stage=self.stage,
+                        toolset=self.active_stage_toolset,
+                    )
+                except Exception as error:
+                    print(f"Failed to restore default for {name}: {error}")
+        self.stage_override_metadata = project_stage_overrides.get(project_path, self.stage.id)
+        self.load_configuration_rows()
 
     @Gtk.Template.Callback()
     def _on_change_toolset_clicked(self, button):
@@ -214,8 +373,20 @@ class ProjectStageDetailsView(Gtk.Box):
         def choose_toolset(_list, row):
             toolset = row.toolset
             self.active_stage_toolset = toolset
-            self.stage.toolset_id = str(toolset.uuid)
-            ProjectManager.shared().save_stage(self.project_directory, self.stage)
+            from catalystlab import project_stage_toolsets
+            project_stage_toolsets.set(
+                self.project_directory.directory_path(), self.stage.id, str(toolset.uuid)
+            )
+            try:
+                apply_default_stage_arguments(
+                    project_directory=self.project_directory,
+                    stage=self.stage,
+                    toolset=toolset,
+                )
+            except Exception as error:
+                print(f"Failed to set missing defaults for {self.stage.name}: {error}")
+            # Persist the toolset preference only. Any stage values are saved when
+            # the user explicitly changes a setting.
             self.toolset_footer_label.set_label(f"Catalyst toolset · {toolset.name}")
             self.load_configuration_rows()
             dialog.close()
@@ -249,73 +420,88 @@ class ProjectStageDetailsView(Gtk.Box):
         self._row_load_warnings = []
         self.boot_kernel_argument = None
         for row in self._unsupported_option_rows:
-            self.unsupported_options_group.remove(row)
+            row.pref_group.remove(row)
         self._unsupported_option_rows = []
         # Load arguments rows
+        toolset = self.active_stage_toolset
+        arguments_details = {}
+        metadata_available = False
         try:
-            toolset = self.active_stage_toolset
             if toolset is None:
                 from .toolset_selection import default_toolset
                 toolset = default_toolset()
-            arguments_details = load_catalyst_stage_arguments_details(
-                toolset=toolset,
-                target_name=self.stage.target
-            )
+            if toolset is not None:
+                arguments_details = load_catalyst_stage_arguments_details(
+                    toolset=toolset,
+                    target_name=self.stage.target
+                )
+                metadata_available = True
         except Exception as error:
             self._row_load_warnings.append(f"Could not read Catalyst settings: {self._short_error(error)}")
-            self._update_row_load_warnings()
-            self.apply_mode()
-            return
         supported_names = {argument.attribute_name for argument in arguments_details.values()}
-        structural = {"event_bus", "id", "parent", "target", "name", "releng_template", "toolset_id"}
+        explicit_none = getattr(self.stage, "_explicit_none_arguments", set())
+        structural = {
+            "event_bus", "_explicit_none_arguments", "_default_stage_arguments",
+            "_explicit_stage_arguments", "id", "parent", "target", "name", "releng_template",
+        }
         stored_names = {
             name for name, value in self.stage.__dict__.items()
-            if name not in structural and value is not None
+            if name not in structural and (value is not None or name in explicit_none)
         }
         missing_names = stored_names - supported_names
         for name in sorted(missing_names):
-            # Keep a saved setting from another Catalyst version only when its
-            # effective value is still meaningful. In particular, an inherited
-            # setting whose parent/template resolves to None is not an active
-            # unsupported setting and should not clutter the editor.
-            value = resolve_stage_argument(self.project_directory, self.stage, name)
-            if value is None or value is UNRESOLVED or value == "" or value == []:
-                continue
             details = StageArgumentDetails.named(name)
             if details is not None:
                 arguments_details[name] = StageArgumentTargetDetails(name=name, required=False, details=details)
             else:
-                row = Adw.ActionRow(title=name, subtitle=f"Saved value: {value!r} · Not recognized by this Catalyst toolset")
-                icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
-                icon.add_css_class("warning")
-                row.add_prefix(icon)
-                self.unsupported_options_group.add(row)
-                self._unsupported_option_rows.append(row)
-        self.unsupported_options_group.set_visible(bool(self._unsupported_option_rows))
+                arguments_details[name] = StageArgumentTargetDetails(name=name, required=False, details=None)
         for name, arg in arguments_details.items():
-            if arg.details == StageArgumentDetails.boot_kernel:
+            if arg.details == StageArgumentDetails.boot_kernel and metadata_available and name not in missing_names:
                 # Edited as list of kernels in Kernels group (load_kernel_rows).
                 self.boot_kernel_argument = arg
                 continue
             try:
                 group = self.pref_group_for_argument(argument=arg)
+                if group is None and arg.details != StageArgumentDetails.name:
+                    group = self.other_pref_group
                 if group:
-                    row = self.create_row_for_argument(argument=arg, toolset=toolset)
+                    if arg.details in (StageArgumentDetails.snapshot_treeish, StageArgumentDetails.source_subpath):
+                        row = self._create_saved_value_row(
+                            name, self._resolved_or_stored_value(arg.attribute_name), "Managed by Catalyst Lab"
+                        )
+                    elif not metadata_available:
+                        value = self._resolved_or_stored_value(arg.attribute_name)
+                        row = self._create_saved_value_row(name, value, "Support not verified: no Catalyst toolset available")
+                    elif arg.details == StageArgumentDetails.boot_kernel and name in missing_names:
+                        row = self._create_saved_value_row(
+                            name, self._resolved_or_stored_value(arg.attribute_name),
+                            "Not supported by the selected Catalyst toolset",
+                        )
+                    elif arg.details is None:
+                        row = self._create_saved_value_row(
+                            name, self._resolved_or_stored_value(arg.attribute_name),
+                            "Not recognized by the selected Catalyst toolset",
+                        )
+                    else:
+                        try:
+                            row = self.create_row_for_argument(argument=arg, toolset=toolset)
+                        except Exception as error:
+                            self._row_load_warnings.append(f"{arg.display_name}: {self._short_error(error)}")
+                            row = self._create_saved_value_row(
+                                name, self._resolved_or_stored_value(arg.attribute_name),
+                                "Could not load editor for the selected Catalyst toolset",
+                            )
                     if name in missing_names:
-                        warning_icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
-                        warning_icon.add_css_class("warning")
-                        if hasattr(row, "add_prefix"):
-                            row.add_prefix(warning_icon)
-                        row.set_tooltip_text("This saved setting is not recognized by the selected Catalyst toolset. Its value is preserved.")
+                        self._mark_saved_setting_unavailable(row, name, metadata_available)
                     set_row_description(row, stage_argument_description(arg.name))
                     row.pref_group = group
                     row.level = stage_argument_level(arg.details)
-                    row.event_bus.subscribe(
-                        ItemSelectionViewEvent.ITEM_CHANGED,
-                        self.argument_changed,
-                        self
-                    )
+                    row.argument = arg
+                    if not hasattr(row, "event_bus"):
+                        row.event_bus = EventBus[ItemSelectionViewEvent]()
+                    row.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self.argument_changed, self)
                     row.pref_group.add(row)
+                    self._attach_restore_default_button(row, name)
                     self.configuration_rows.append(row)
                     # Kernels depend on boot/kernel and releng template, refreshed after argument is saved.
                     row.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self.load_kernel_rows, "kernels")
@@ -329,6 +515,71 @@ class ProjectStageDetailsView(Gtk.Box):
             self._row_load_warnings.append(f"Kernels: {self._short_error(error)}")
         self._update_row_load_warnings()
         self.apply_mode()
+
+    def _create_saved_value_row(self, name: str, value, note: str | None = None) -> Adw.ActionRow:
+        """Read-only fallback that keeps saved settings visible without Catalyst metadata."""
+        details = StageArgumentDetails.named(name)
+        title = details.display_name if details else name
+        if value is UNRESOLVED:
+            stored = getattr(self.stage, details.name if details else name, None)
+            subtitle = self._format_stored_value(stored) or "Saved value could not be resolved"
+        elif value is None:
+            subtitle = "(None)"
+        else:
+            subtitle = self._format_stored_value(value) or "(empty)"
+        if note:
+            subtitle = f"{subtitle} · {note}"
+        row = Adw.ActionRow(title=title, subtitle=subtitle)
+        return row
+
+    def _remove_unsupported_setting(self, _button, name: str):
+        ProjectManager.shared().remove_stage_argument(
+            project=self.project_directory,
+            stage=self.stage,
+            argument=name,
+        )
+        self.load_configuration_rows()
+
+    def _mark_saved_setting_unavailable(self, row, name: str, metadata_available: bool):
+        if metadata_available:
+            message = "This saved setting is not supported by the selected Catalyst toolset. Its value is preserved."
+            button_label = "Remove unsupported saved setting"
+        else:
+            message = "Catalyst support cannot be verified because no toolset is available. This saved value is preserved."
+            button_label = "Remove saved setting"
+        warning_icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
+        warning_icon.add_css_class("warning")
+        warning_icon.set_valign(Gtk.Align.CENTER)
+        if hasattr(row, "add_prefix"):
+            row.add_prefix(warning_icon)
+        row.set_tooltip_text(message)
+        remove_button = Gtk.Button(
+            icon_name="user-trash-symbolic",
+            tooltip_text=button_label,
+            valign=Gtk.Align.CENTER,
+        )
+        remove_button.add_css_class("flat")
+        remove_button.connect("clicked", self._remove_unsupported_setting, name)
+        row.add_suffix(remove_button)
+
+    def _resolved_or_stored_value(self, name: str):
+        """Prefer the effective value, but never hide an explicitly stored value."""
+        value = resolve_stage_argument(self.project_directory, self.stage, name)
+        if value is UNRESOLVED or value is None:
+            return getattr(self.stage, name) if hasattr(self.stage, name) else value
+        return value
+
+    @staticmethod
+    def _format_stored_value(value) -> str | None:
+        if isinstance(value, StageAutomaticOption):
+            return {
+                StageAutomaticOption.INHERIT_FROM_PARENT: "Inherit from parent",
+                StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE: "Inherit from Releng template",
+                StageAutomaticOption.GENERATE_AUTOMATICALLY: "Generate automatically",
+            }.get(value, value.name.replace("_", " ").title())
+        if isinstance(value, list):
+            return ", ".join(ProjectStageDetailsView._format_stored_value(item) or "" for item in value)
+        return format_stage_argument_value(value)
 
     @staticmethod
     def _short_error(error: Exception) -> str:
@@ -381,6 +632,8 @@ class ProjectStageDetailsView(Gtk.Box):
             set_row_description(inherit_row, "On: use the Releng template's kernel list and settings as-is. Off: use a "
                                              "stage-specific kernel list, initially copied from Releng.")
             inherit_row.connect("notify::active", self._on_inherit_kernels_changed)
+            inherit_row.changed_filter_key = self.boot_kernel_argument.attribute_name
+            self._attach_restore_default_button(inherit_row, self.boot_kernel_argument.attribute_name)
             self._add_kernel_row(inherit_row)
         # Inherit-only kernels are summarized by the switch. Only stage-specific
         # additions get editable rows while inheritance remains enabled.
@@ -400,6 +653,7 @@ class ProjectStageDetailsView(Gtk.Box):
                 row.add_suffix(icon)
             self._add_kernel_row(row)
         add_row = Adw.ButtonRow(title="Add kernel", start_icon_name="add-square-svgrepo-com-symbolic")
+        add_row.is_kernel_add_action = True
         add_row.connect("activated", self._on_add_kernel)
         self._add_kernel_row(add_row)
 
@@ -576,6 +830,7 @@ class ProjectStageDetailsView(Gtk.Box):
             for r in self.configuration_rows:
                 if r.argument != row.argument and isinstance(r, (StageTextSourceRow, StageCacheRow)):
                     r.refresh_options()
+            self._refresh_changed_filter()
             return
         if row.argument.details.type == StageArgumentType.select:
             ProjectManager.shared().change_stage_argument(
@@ -586,6 +841,7 @@ class ProjectStageDetailsView(Gtk.Box):
             )
             if row.argument.details == StageArgumentDetails.target:
                 # Target determines which Catalyst arguments and editors are valid.
+                self._refresh_changed_filter()
                 self.load_configuration_rows()
                 return
         if row.argument.details.type == StageArgumentType.multiselect:
@@ -608,6 +864,14 @@ class ProjectStageDetailsView(Gtk.Box):
                 r.load_state()
             elif r.argument != row.argument and isinstance(r, (StageTextSourceRow, StageCacheRow)):
                 r.refresh_options() # Keeps possibly unapplied text, only updates availability of automatic options.
+        self._refresh_changed_filter()
+
+    def _refresh_changed_filter(self):
+        from catalystlab import project_stage_overrides
+        self.stage_override_metadata = project_stage_overrides.get(
+            self.project_directory.directory_path(), self.stage.id
+        )
+        self.apply_mode()
     def _on_unrealize(self, widget):
         if getattr(self, "_window_active_handler", None) and (root := self.get_root()):
             root.disconnect(self._window_active_handler)
@@ -653,6 +917,7 @@ class ProjectStageDetailsView(Gtk.Box):
             ProjectManager.shared().rename_stage(project=self.project_directory, stage=self.stage, name=new_name)
             self.get_root().set_focus(None)
             self.load_stage_details()
+            self._refresh_changed_filter()
         except Exception as e:
             print(f"Error renaming stage: {e}")
             self.stage_name_row.add_css_class("error")
@@ -691,7 +956,8 @@ class ProjectStageDetailsView(Gtk.Box):
             project=self.project_directory,
             name=self.stage_name_row.get_text()
         ) or self.stage_name_row.get_text() == self.stage.name
-        self.name_used_row.set_visible(not is_name_available)
+        self._name_is_used = not is_name_available
+        self.name_used_row.set_visible(self._name_is_used and self.mode_toggle.get_active() != 2)
         self.stage_name_row.remove_css_class("error")
 
     # Helper functions
@@ -1611,6 +1877,7 @@ class StageKernelRow(Adw.ExpanderRow):
         # are read in background (cached), switch is hidden until then.
         self.packages = None
         self._advanced = True
+        self._changed_only = False
         self._switch_needed = False
         self.load_state()
         def load_packages():
@@ -1635,24 +1902,36 @@ class StageKernelRow(Adw.ExpanderRow):
         return derived_distkernel(package, self.packages) if self.packages is not None else None
 
     def _update_switch_visibility(self):
+        own = own_kernel_settings(self.stage).get(self.kernel_name, {})
         for setting, row in self.entry_rows:
             if setting.key == "distkernel":
                 level_visible = self._advanced or KERNEL_SETTING_LEVELS[setting.key] == StageArgumentLevel.BASIC
-                row.set_visible(level_visible and self._switch_needed)
+                changed_visible = not self._changed_only or setting.key in own
+                row.set_visible(level_visible and changed_visible and self._switch_needed)
 
     def _on_rename(self, row: Adw.EntryRow, on_rename):
         if error := on_rename(self.kernel_name, row.get_text().strip()):
             row.add_css_class("error")
             row.set_tooltip_text(error)
 
-    def set_advanced(self, advanced: bool) -> list[str]:
+    def has_stage_overrides(self) -> bool:
+        return bool(own_kernel_settings(self.stage).get(self.kernel_name, {}))
+
+    def set_advanced(self, advanced: bool, changed_only: bool = False) -> list[str]:
         """Shows settings of mode, returns titles of hidden settings set by stage."""
         own = own_kernel_settings(self.stage).get(self.kernel_name, {})
         hidden = []
         self._advanced = advanced
+        self._changed_only = changed_only
+        self.set_visible(not changed_only or bool(own))
+        self.name_row.set_visible(not changed_only or bool(own))
         for setting, row in self.entry_rows:
             visible = advanced or KERNEL_SETTING_LEVELS[setting.key] == StageArgumentLevel.BASIC
+            if changed_only:
+                visible = visible and setting.key in own
             row.set_visible(visible)
+            if setting.key == "sources" and isinstance(row, KernelPackageRow):
+                row.custom_row.set_visible(visible and row.is_custom_selected())
             if not visible and own.get(setting.key) not in (None, "", []) and setting.key != "distkernel":
                 hidden.append(setting.title)
         self._update_switch_visibility()
@@ -1795,3 +2074,30 @@ def _has_own_value(stage: ProjectStage, attribute: str) -> bool:
     if isinstance(value, list):
         return not all(isinstance(item, StageAutomaticOption) for item in value)
     return not isinstance(value, StageAutomaticOption)
+
+
+def _set_customized_style(widget: Gtk.Widget, customized: bool):
+    if customized:
+        widget.add_css_class("customized-setting")
+    else:
+        widget.remove_css_class("customized-setting")
+    # Expander rows (for example Version stamp) render their title in a nested ActionRow. Apply the class there too so
+    # only the setting title gets the customized emphasis, never the option/value labels inside the expander.
+    if isinstance(widget, Adw.ExpanderRow):
+        def find_header(container):
+            child = container.get_first_child()
+            while child is not None:
+                if isinstance(child, Gtk.Revealer):
+                    return None
+                if isinstance(child, Adw.ActionRow):
+                    return child
+                if found := find_header(child):
+                    return found
+                child = child.get_next_sibling()
+            return None
+        header = find_header(widget)
+        if header:
+            if customized:
+                header.add_css_class("customized-setting")
+            else:
+                header.remove_css_class("customized-setting")

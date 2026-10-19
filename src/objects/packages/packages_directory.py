@@ -151,9 +151,64 @@ def project_cpu_flags(project) -> str | None:
     from .project_stage_arguments import StageArgumentDetails
     flags = sorted({value.strip() for stage in project.stages
                     if getattr(stage, StageArgumentDetails.parent.name, None) is None
-                    and isinstance(value := getattr(stage, StageArgumentDetails.common_flags.name, None), str)
+                    and isinstance(value := _effective_common_flags(project, stage), str)
                     and value.strip()})
     return " | ".join(flags) or None
+
+
+def _effective_common_flags(project, stage, visited: frozenset = frozenset()):
+    """Resolve common flags as the stage editor does, including defaults kept only in memory."""
+    from .project_stage_arguments import StageArgumentDetails, parent_stage
+    from .project_stage_automatic_option import StageAutomaticOption
+    from .project_stage_value_resolver import UNRESOLVED, resolve_stage_argument
+
+    if stage is None or stage.id in visited:
+        return UNRESOLVED
+    argument = StageArgumentDetails.common_flags
+    value = getattr(stage, argument.value, None)
+    if value is not None:
+        from .project_stage_value_resolver import split_additions
+        options, own = split_additions(value) or (
+            ([value[0]], []) if isinstance(value, list) and len(value) == 1
+            and isinstance(value[0], StageAutomaticOption) else
+            ([value], []) if isinstance(value, StageAutomaticOption) else ([], [])
+        )
+        if options:
+            inherited_values = []
+            for option in options:
+                if option == StageAutomaticOption.INHERIT_FROM_PARENT:
+                    inherited = _effective_common_flags(project, parent_stage(project, stage), visited | {stage.id})
+                else:
+                    inherited = resolve_stage_argument(project, stage, argument.value, option=option)
+                if inherited is UNRESOLVED:
+                    return UNRESOLVED
+                if inherited:
+                    inherited_values.append(str(inherited))
+            inherited_values.extend(str(item) for item in own if str(item).strip())
+            return " ".join(inherited_values) or None
+        return resolve_stage_argument(project, stage, argument.value)
+
+    # apply_default_stage_arguments prefers the Releng value, then the parent.
+    # Those defaults are shown and used by the editor without being written to
+    # stage.json, so compatibility checks must evaluate them too.
+    visited = visited | {stage.id}
+    has_available_default = False
+    if getattr(stage, StageArgumentDetails.releng_template.value, None):
+        has_available_default = True
+        releng_value = resolve_stage_argument(
+            project, stage, argument.value,
+            option=StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE,
+        )
+        if releng_value not in (UNRESOLVED, None, "", []):
+            return releng_value
+    parent = parent_stage(project, stage)
+    if parent is not None:
+        has_available_default = True
+        parent_value = _effective_common_flags(project, parent, visited)
+        if parent_value not in (UNRESOLVED, None, "", []):
+            return parent_value
+    return None if has_available_default else UNRESOLVED
+
 
 def stages_with_other_cpu_flags(project) -> list[tuple]:
     """Stages built with other common flags than root stage they are built from (stage, its flags, flags of root).
@@ -162,7 +217,7 @@ def stages_with_other_cpu_flags(project) -> list[tuple]:
     from .project_stage_arguments import StageArgumentDetails
     from .project_stage_value_resolver import resolve_stage_argument, parent_stage, UNRESOLVED
     def flags_of(stage):
-        value = resolve_stage_argument(project, stage, StageArgumentDetails.common_flags.value)
+        value = _effective_common_flags(project, stage)
         if value is UNRESOLVED:
             return UNRESOLVED
         return (value.strip() or None) if isinstance(value, str) else None

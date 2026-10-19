@@ -32,7 +32,27 @@ class ProjectManager(GitManager):
         """Argument can be passed as plain name for arguments not described by StageArgumentDetails."""
         attribute_name = argument.name if isinstance(argument, StageArgumentDetails) else argument
         setattr(stage, attribute_name, value)
+        explicit_none_arguments = getattr(stage, "_explicit_none_arguments", None)
+        if explicit_none_arguments is not None:
+            if value is None:
+                explicit_none_arguments.add(attribute_name)
+            else:
+                explicit_none_arguments.discard(attribute_name)
+        stage._explicit_stage_arguments.add(attribute_name)
+        from .project_stage_overrides import mark_explicit
+        mark_explicit(project.directory_path(), stage.id, attribute_name)
         self.save_stage(project=project, stage=stage)
+
+    def remove_stage_argument(self, project: ProjectDirectory, stage: ProjectStage, argument: StageArgumentDetails | str):
+        """Remove a saved stage setting rather than leaving an explicit None value."""
+        attribute_name = argument.name if isinstance(argument, StageArgumentDetails) else argument
+        getattr(stage, "_explicit_none_arguments", set()).discard(attribute_name)
+        getattr(stage, "_explicit_stage_arguments", set()).discard(attribute_name)
+        from .project_stage_overrides import mark_explicit
+        mark_explicit(project.directory_path(), stage.id, attribute_name, explicit=False)
+        if hasattr(stage, attribute_name):
+            delattr(stage, attribute_name)
+            self.save_stage(project=project, stage=stage)
 
     def save_stage(self, project: ProjectDirectory, stage: ProjectStage):
         stage_path = project.stage_directory_path(name=stage.name)

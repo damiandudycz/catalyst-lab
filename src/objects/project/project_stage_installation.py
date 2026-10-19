@@ -77,16 +77,22 @@ class ProjectStageInstallationStepCreate(MultiStageProcessStage):
         super().start()
         try:
             stage = ProjectStage(id=None, parent_id=self.parent_id, name=self.stage_name, target_name=self.target_name,
-                                 releng_template_name=self.releng_template_name, profile=None,
-                                 toolset_id=str(self.toolset.uuid) if getattr(self, "toolset", None) else None)
+                                 releng_template_name=self.releng_template_name, profile=None)
+            default_arguments = {}
             try:
-                for name, option in apply_default_stage_arguments(project_directory=self.project_directory, stage=stage,
-                                                                  toolset=self.toolset).items():
+                default_arguments = apply_default_stage_arguments(
+                    project_directory=self.project_directory, stage=stage, toolset=self.toolset
+                )
+                for name, option in default_arguments.items():
                     self.log(f"{name}: {option.name if hasattr(option, 'name') else ', '.join(item.name for item in option)}")
             except Exception as e:
                 # Stage can still be created and configured manually.
                 self.log(f"Failed to set default values: {e}")
-            self.project_directory.install_stage(stage=stage)
+            self.project_directory.install_stage(
+                stage=stage,
+                toolset_id=str(self.toolset.uuid) if getattr(self, "toolset", None) else None,
+                default_arguments=default_arguments,
+            )
             self.multistage_process.stage = stage
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:

@@ -6,13 +6,10 @@ from .git_directory_default_content_builder import DefaultDirContentBuilder
 from .git_installation import GitDirectorySetupConfiguration, GitDirectorySource
 from .project_template import ProjectTemplateSelection
 from .project_template_views import ProjectTemplateChooser, ProjectTemplateOptionsView
-from .toolset_application import ToolsetApplication
-from .toolset import ToolsetEvents
 from .wizard_view import WizardView
 from .item_select_view import ItemSelectionViewEvent
 from .architecture import Architecture
 from .snapshot import LATEST_SNAPSHOT
-from .toolset_selection import sorted_toolsets
 import os
 
 class DefaultProjectDirContentBuilder(DefaultDirContentBuilder):
@@ -32,8 +29,6 @@ class ProjectCreateView(Gtk.Box):
     source_view = Gtk.Template.Child()
     template_page = Gtk.Template.Child()
     template_options_container = Gtk.Template.Child()
-    toolset_page = Gtk.Template.Child()
-    toolset_selection_view = Gtk.Template.Child()
     releng_page = Gtk.Template.Child()
     releng_selection_view = Gtk.Template.Child()
     snapshot_page = Gtk.Template.Child()
@@ -47,10 +42,8 @@ class ProjectCreateView(Gtk.Box):
         super().__init__()
         self.installation_in_progress = installation_in_progress
         self.content_navigation_view = content_navigation_view
-        self.apps_requirements = [ToolsetApplication.CATALYST]
-        self.toolset_selection_view.set_static_list(sorted_toolsets(applications=self.apps_requirements))
         self.arch_selection_view.set_static_list(sorted(Architecture, key=lambda arch: arch.name))
-        # Latest snapshot (default) is generated with the selected toolset when building.
+        # Latest snapshot is selected here; a toolset is chosen for each build.
         self.snapshot_selection_view.set_leading_items([LATEST_SNAPSHOT])
         # Templates: chooser in source page, options of selected template in next page.
         self.template_chooser = ProjectTemplateChooser()
@@ -62,10 +55,6 @@ class ProjectCreateView(Gtk.Box):
         self.source_view.event_bus.subscribe(
             GitDirectoryCreateConfigViewEvent.CONFIGURATION_READY_CHANGED,
             self.config_ready_changed
-        )
-        self.toolset_selection_view.event_bus.subscribe(
-            ItemSelectionViewEvent.ITEM_CHANGED,
-            self.toolset_changed
         )
         self.releng_selection_view.event_bus.subscribe(
             ItemSelectionViewEvent.ITEM_CHANGED,
@@ -102,12 +91,7 @@ class ProjectCreateView(Gtk.Box):
         architecture variable)."""
         template = self.template_chooser.selected_template if self._uses_template else None
         self.wizard_view.set_page_visible(self.template_page, self._uses_template)
-        self.wizard_view.set_page_visible(self.toolset_page, self._uses_template)
         self.wizard_view.set_page_visible(self.arch_page, template is None or (template.architecture_variable is None and template.architecture is None))
-
-    def toolset_changed(self, data):
-        self.snapshot_selection_view.refresh_items_state() # Latest snapshot is generated with toolset (it needs Catalyst).
-        self.wizard_view._refresh_buttons_state()
 
     def releng_changed(self, data):
         self.wizard_view._refresh_buttons_state()
@@ -134,8 +118,6 @@ class ProjectCreateView(Gtk.Box):
     @Gtk.Template.Callback()
     def is_item_selectable(self, sender, item) -> bool:
         match sender:
-            case self.toolset_selection_view:
-                return all(item.get_app_install(app) is not None for app in self.apps_requirements)
             case self.releng_selection_view:
                 return True
             case self.snapshot_selection_view:
@@ -151,8 +133,6 @@ class ProjectCreateView(Gtk.Box):
     @Gtk.Template.Callback()
     def is_item_usable(self, sender, item) -> bool:
         match sender:
-            case self.toolset_selection_view:
-                return True # Project only refers to toolset, it can be used by other process at this time.
             case self.releng_selection_view:
                 return True
             case self.snapshot_selection_view:
@@ -166,17 +146,6 @@ class ProjectCreateView(Gtk.Box):
     @Gtk.Template.Callback()
     def setup_items_monitoring(self, sender, items):
         match sender:
-            case self.toolset_selection_view:
-                if hasattr(self, 'monitored_items_toolset'):
-                    for item in self.monitored_items_toolset:
-                        item.event_bus.unsubscribe(ToolsetEvents.IS_RESERVED_CHANGED, self)
-                self.monitored_items_toolset = items
-                for item in items:
-                    item.event_bus.subscribe(
-                        ToolsetEvents.IS_RESERVED_CHANGED,
-                        self.toolset_selection_view.refresh_items_state,
-                        self
-                    )
             case self.releng_selection_view:
                 pass
             case self.snapshot_selection_view:
@@ -191,12 +160,6 @@ class ProjectCreateView(Gtk.Box):
                 return self.source_view.configuration_ready
             case self.template_page:
                 return self.template_options_view.generated is not None
-            case self.toolset_page:
-                return (
-                    self.toolset_selection_view.selected_item is not None
-                    and self.is_item_usable(self.toolset_selection_view, self.toolset_selection_view.selected_item)
-                    and self.is_item_selectable(self.toolset_selection_view, self.toolset_selection_view.selected_item)
-                )
             case self.releng_page:
                 return self.releng_selection_view.selected_item is not None
             case self.snapshot_page:
@@ -220,7 +183,6 @@ class ProjectCreateView(Gtk.Box):
                 default_dir_content_builder=DefaultProjectDirContentBuilder(),
                 template_selection=template_selection
             ),
-            toolset=self.toolset_selection_view.selected_item,
             releng_directory=self.releng_selection_view.selected_item,
             snapshot=self.snapshot_selection_view.selected_item,
             architecture=architecture,
@@ -237,7 +199,6 @@ class ProjectCreateView(Gtk.Box):
     def _start_installation(
         self,
         source_config: GitDirectorySetupConfiguration,
-        toolset: Toolset,
         releng_directory: RelengDirectory,
         snapshot: Snapshot,
         architecture: Architecture,
@@ -245,7 +206,6 @@ class ProjectCreateView(Gtk.Box):
     ):
         installation_in_progress = ProjectInstallation(
             source_config=source_config,
-            toolset=toolset,
             releng_directory=releng_directory,
             snapshot=snapshot,
             architecture=architecture,

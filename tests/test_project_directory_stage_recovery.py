@@ -14,9 +14,65 @@ if 'catalystlab' not in sys.modules:
     sys.modules['catalystlab'] = package
 
 from catalystlab.project_directory import ProjectDirectory
+from catalystlab import project_stage_toolsets
 
 
 class ProjectDirectoryStageRecoveryTests(unittest.TestCase):
+    def test_stage_toolset_metadata_is_stored_outside_project_git_tree(self):
+        stage_id, toolset_id = uuid.uuid4(), uuid.uuid4()
+        with tempfile.TemporaryDirectory() as temporary:
+            project_path = Path(temporary) / 'project'
+            stage_path = project_path / 'stages' / 'stage1'
+            stage_path.mkdir(parents=True)
+            config_path = stage_path / 'stage.json'
+            config_path.write_text(
+                '{'
+                f'"id":{{"type":"UUID","value":"{stage_id}"}},'
+                '"name":{"type":"str","value":"stage1"},'
+                f'"toolset_id":{{"type":"str","value":"{toolset_id}"}}'
+                '}'
+            )
+            original_config = config_path.read_text()
+            project = ProjectDirectory(name='project')
+            with (
+                patch.object(ProjectDirectory, 'directory_path_for_name', return_value=str(project_path)),
+                patch.object(ProjectDirectory, 'base_location', return_value=str(Path(temporary))),
+            ):
+                loaded_stage, = project.stages
+                project_stage_toolsets.set(str(project_path), stage_id, str(toolset_id))
+                sidecar_path = Path(temporary) / '.catalystlab' / 'stage-toolsets.json'
+                saved_toolset_id = project_stage_toolsets.get(str(project_path), stage_id)
+
+            self.assertEqual(saved_toolset_id, str(toolset_id))
+            self.assertTrue(sidecar_path.is_file())
+            self.assertFalse((project_path / '.catalystlab').exists())
+            self.assertEqual(config_path.read_text(), original_config)
+            self.assertNotIn('toolset_id', loaded_stage.serialize())
+            self.assertFalse(hasattr(loaded_stage, 'toolset_id'))
+
+    def test_old_stage_toolset_field_is_ignored_without_migration(self):
+        stage_id, toolset_id = uuid.uuid4(), uuid.uuid4()
+        with tempfile.TemporaryDirectory() as temporary:
+            project_path = Path(temporary) / 'project'
+            stage_path = project_path / 'stages' / 'stage1'
+            stage_path.mkdir(parents=True)
+            config_path = stage_path / 'stage.json'
+            config_path.write_text(
+                '{'
+                f'"id":{{"type":"UUID","value":"{stage_id}"}},'
+                '"name":{"type":"str","value":"stage1"},'
+                f'"toolset_id":{{"type":"str","value":"{toolset_id}"}}'
+                '}'
+            )
+            project = ProjectDirectory(name='project')
+            with (
+                patch.object(ProjectDirectory, 'directory_path_for_name', return_value=str(project_path)),
+                patch.object(ProjectDirectory, 'base_location', return_value=str(Path(temporary))),
+            ):
+                loaded_stage, = project.stages
+                self.assertIsNone(project_stage_toolsets.get(str(project_path), stage_id))
+            self.assertFalse(hasattr(loaded_stage, 'toolset_id'))
+
     def test_malformed_stage_is_recovered_from_the_text_that_failed_to_parse(self):
         stage_id, parent_id = uuid.uuid4(), uuid.uuid4()
         with tempfile.TemporaryDirectory() as temporary:

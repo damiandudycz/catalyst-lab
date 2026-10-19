@@ -4,14 +4,10 @@ from gi.repository import Gtk, GLib, Adw
 from .cl_toggle_group import CLToggle, CLToggleGroup
 from .project_template_update import (
     prepare_template_update, prepare_repository_update, describe_value, TemplateChange, TemplateState,
-    own_commits_count, project_template_toolset
+    own_commits_count
 )
 from .project_template import load_app_template_definition, fetch_template_repository, ProjectTemplate
 from .project_template_views import ProjectTemplateOptionsView
-from .item_select_view import ItemSelectionView, ItemSelectionViewEvent
-from .repository import Repository
-from .toolset_application import ToolsetApplication
-from .toolset_selection import sorted_toolsets, toolset_has_applications
 
 class ProjectUpdateView(Gtk.Box):
     """Updates project from its template or Git repository: downloads latest version, lists changes and lets user
@@ -27,25 +23,7 @@ class ProjectUpdateView(Gtk.Box):
         self.source_name = "template" if source == "template" else "repository"
         self.update = None
         self._window = None
-        self.selected_toolset = None
         self._template_options_ready = False
-        if source == "template":
-            self.toolset_selection_view = ItemSelectionView()
-            self.toolset_selection_view.title = "Catalyst toolset"
-            self.toolset_selection_view.description = (
-                "Used only to generate the updated template and its stage configuration. "
-                "Generated stages are assigned this toolset. The project’s current toolset is selected when available."
-            )
-            self.toolset_selection_view.item_icon = "toolbox-symbolic"
-            self.toolset_selection_view.item_title_property_name = "name"
-            self.toolset_selection_view.item_subtitle_property_name = "short_details"
-            self.toolset_selection_view.item_status_property_name = "status_indicator_values"
-            self.toolset_selection_view.autoselect_default = True
-            self.toolset_selection_view.connect("is-item-selectable", self._is_toolset_selectable)
-            self.toolset_selection_view.event_bus.subscribe(
-                ItemSelectionViewEvent.ITEM_CHANGED, self._toolset_changed
-            )
-            self.toolset_selection_view.set_static_list(sorted_toolsets())
         scrolled_window = Gtk.ScrolledWindow(hexpand=True, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24, margin_start=24, margin_end=24,
                                margin_top=12, margin_bottom=24)
@@ -107,17 +85,10 @@ class ProjectUpdateView(Gtk.Box):
             return False
         options = ProjectTemplateOptionsView()
         options.set_template(template, selected)
-        state = TemplateState.load(self.project_directory.directory_path())
-        if state is not None:
-            self.toolset_selection_view.preferred_item = project_template_toolset(
-                self.project_directory, state.uuid_stage_ids, Repository.Toolset.value
-            )
-        self.toolset_selection_view._load_items()
         description = self._label("Options of the latest version of template, with values selected for project. "
-                                  "Changed options change generated stages and files.")
-        # Toolset selection comes first because it controls which Catalyst arguments are
-        # available while generating the updated template and its stages.
-        widgets = [self.toolset_selection_view, description]
+                                  "Changed options change generated stages and files. Catalyst toolsets are selected "
+                                  "when stage settings are opened or a build is started.")
+        widgets = [description]
         # Project with own commits can get clean version of template, chosen before options.
         own_commits = own_commits_count(self.project_directory.directory_path())
         drop_row = None
@@ -132,7 +103,6 @@ class ProjectUpdateView(Gtk.Box):
         widgets.append(options)
         def on_continue():
             self.selected = dict(options.selected)
-            self.selected_toolset = self.toolset_selection_view.selected_item
             if drop_row is not None and drop_row.get_active():
                 self._drop_project_changes = True
                 self.force = True # Clean version is prepared also when template has nothing new.
@@ -149,17 +119,9 @@ class ProjectUpdateView(Gtk.Box):
         on_changed()
         return False
 
-    def _is_toolset_selectable(self, _view, item) -> bool:
-        return toolset_has_applications(item, [ToolsetApplication.CATALYST])
-
-    def _toolset_changed(self, *_):
-        self._update_continue_sensitivity()
-
     def _update_continue_sensitivity(self):
         if self.source == "template" and self._action is not None:
-            self.action_button.set_sensitive(
-                self._template_options_ready and self.toolset_selection_view.selected_item is not None
-            )
+            self.action_button.set_sensitive(self._template_options_ready)
 
     # Preparing:
 
@@ -195,8 +157,7 @@ class ProjectUpdateView(Gtk.Box):
                 self.overlay_errors.append(f"{overlay.name}: {e}")
         try:
             if self.source == "template":
-                update = prepare_template_update(self.project_directory, log, selected=self.selected, force=self.force,
-                                                 toolset=self.selected_toolset)
+                update = prepare_template_update(self.project_directory, log, selected=self.selected, force=self.force)
             else:
                 update = prepare_repository_update(self.project_directory, log, force=self.force)
             GLib.idle_add(self._show_update, update, None)

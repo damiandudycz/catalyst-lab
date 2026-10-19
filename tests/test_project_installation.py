@@ -75,7 +75,9 @@ class ProjectInstallationTests(unittest.TestCase):
              patch.object(MultiStageProcessStage, "complete", side_effect=completed.append):
             step.start()
 
-        project.install_stage.assert_called_once_with(stage=stage)
+        project.install_stage.assert_called_once_with(
+            stage=stage, toolset_id="toolset-uuid", default_arguments={}
+        )
         self.assertIs(process.stage, stage)
         self.assertEqual(completed, [MultiStageProcessStageState.COMPLETED])
 

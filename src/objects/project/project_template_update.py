@@ -101,17 +101,6 @@ def template_tree(repository: str, repository_path: str) -> str | None:
                             capture_output=True, text=True)
     return result.stdout.strip() if result.returncode == 0 else None
 
-def project_template_toolset(project_directory, stage_ids: dict[str, uuid.UUID], toolsets):
-    """Toolset used by stages from this template, if it is still installed."""
-    template_stage_ids = {str(stage_id) for stage_id in stage_ids.values()}
-    toolsets_by_id = {str(toolset.uuid): toolset for toolset in toolsets}
-    for stage in project_directory.stages:
-        if str(stage.id) not in template_stage_ids or not stage.toolset_id:
-            continue
-        if toolset := toolsets_by_id.get(str(stage.toolset_id)):
-            return toolset
-    return None
-
 def template_update_available(project_directory) -> bool | None:
     """Check whether the source template changed. In-app templates compare only their own directory tree; external
     templates also compare regenerated project output. None when it can't be checked (eg. offline)."""
@@ -597,6 +586,35 @@ def template_base_commit(project_path: str) -> str | None:
                                  capture_output=True).returncode == 0
     return by_message if is_ancestor else by_state
 
+
+def project_stage_baseline(project_path: str, stage_id: uuid.UUID | str) -> dict[str, Any]:
+    """Serialized baseline values for a stage from its template or cloned Git repository."""
+    if TemplateState.load(project_path) is not None:
+        base = template_base_commit(project_path)
+    else:
+        # A project cloned from Git uses its merge-base with the configured upstream.
+        # A newly created project has no remote and therefore falls back to runtime
+        # defaults when settings are restored.
+        upstream = _git(project_path, "rev-parse", "@{upstream}", check=False)
+        if not upstream:
+            upstream = _git(project_path, "rev-parse", "origin/HEAD", check=False)
+        base = _git(project_path, "merge-base", "HEAD", upstream, check=False) if upstream else None
+    if base is None:
+        return {}
+    paths = _git(project_path, "ls-tree", "-r", "--name-only", base, "--", _STAGES_DIRECTORY,
+                 check=False).splitlines()
+    for relative_path in paths:
+        if not relative_path.endswith("/" + _STAGE_FILE):
+            continue
+        raw = _git(project_path, "show", f"{base}:{relative_path}", check=False)
+        try:
+            stage = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if str((stage.get("id") or {}).get("value")) == str(stage_id):
+            return stage
+    return {}
+
 def prepare_template_update(project_directory, log: Callable[[str], None],
                             selected: dict[str, Any] | None = None, force: bool = False, toolset=None) -> ProjectUpdate | None:
     """Downloads latest version of template, generates project from it (as commit on top of base) and compares it with
@@ -627,12 +645,6 @@ def prepare_template_update(project_directory, log: Callable[[str], None],
         generated = os.path.join(temporary, "template")
         os.makedirs(generated)
         log(f"Generating project from {template.name}")
-        if toolset is None:
-            from .repository import Repository
-            from .toolset_selection import default_toolset
-            toolset = project_template_toolset(project_directory, state.uuid_stage_ids, Repository.Toolset.value)
-            if toolset is None:
-                toolset = default_toolset()
         stage_ids = apply_project_template(_RenderTarget(project_directory, generated), template,
                                            template.resolve(selected if selected is not None else state.selected,
                                                             project_name=project_directory.name),

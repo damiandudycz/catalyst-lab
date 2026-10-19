@@ -111,6 +111,11 @@ def _argument_value(project_directory, stage, name: str, argument, context: Stag
         case StageArgumentDetails.livecd_overlay:
             return context.iso_overlay
     value = resolve_stage_argument(project_directory, stage, name)
+    if (value is None and argument.details == StageArgumentDetails.interpreter
+            and argument.attribute_name not in getattr(stage, "_explicit_none_arguments", set())):
+        # An omitted interpreter means CatalystLab should choose one for an emulated target. Keep the project setting
+        # unset; an explicitly stored None remains a deliberate override.
+        value = _automatic_value(project_directory, argument, context)
     if value is UNRESOLVED and stage_argument_uses_option(
             project_directory, stage, argument.attribute_name, {StageAutomaticOption.GENERATE_AUTOMATICALLY}):
         value = _automatic_value(project_directory, argument, context)

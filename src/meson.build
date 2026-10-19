@@ -94,6 +94,8 @@ catalystlab_sources = [
   'objects/overlay/overlay_manager.py',
   'objects/overlay/overlay_update.py',
   'objects/project/project_directory.py',
+  'objects/project/project_stage_toolsets.py',
+  'objects/project/project_stage_overrides.py',
   'objects/project/project_installation.py',
   'objects/project/project_template.py',
   'objects/project/project_template_expressions.py',
