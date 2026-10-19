@@ -277,7 +277,12 @@ def compare_versions(base: ProjectVersion, project: ProjectVersion, template: Pr
         project_date = project.stage_property_dates.get(stage_id, {}).get(argument, _MISSING) if stage_id else _MISSING
         template_date = template.stage_property_dates.get(stage_id, {}).get(argument, _MISSING) if stage_id else _MISSING
         project_changed = project_value != base_value or project_date != base_date
-        template_changed = base_value != template_value or base_date != template_date
+        # Template timestamps are no longer source metadata. Older project
+        # commits can still contain them, so a regenerated template with no
+        # timestamp must not look like a value change by itself. Keep project
+        # timestamps in project_changed above: they still detect local edits,
+        # including an explicit choice of the value already in the template.
+        template_changed = base_value != template_value
         if not template_changed or (project_value == template_value and project_date == template_date):
             continue # Same resulting value, or template didn't change this setting.
         if key.startswith("stage:"):

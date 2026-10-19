@@ -54,7 +54,7 @@ class ProjectTemplateUpdateTests(unittest.TestCase):
         self.assertTrue(changes[0].conflict)
         self.assertFalse(changes[0].use_template)
 
-    def test_template_timestamp_only_change_is_applied_for_same_value(self):
+    def test_removing_old_template_timestamp_does_not_report_same_value_as_changed(self):
         base = ProjectVersion(
             entries={'stage:stage-id#subarch': {'type': 'str', 'value': 'amd64'}},
             stage_names={'stage-id': 'stage1'},
@@ -73,9 +73,7 @@ class ProjectTemplateUpdateTests(unittest.TestCase):
 
         changes = compare_versions(base, project, template)
 
-        self.assertEqual([change.key for change in changes], ['stage:stage-id#subarch'])
-        self.assertFalse(changes[0].conflict)
-        self.assertTrue(changes[0].use_template)
+        self.assertEqual(changes, [])
 
     def test_comparison_can_list_changes_from_current_project_to_clean_result(self):
         current = ProjectVersion(entries={"README.md": b"local", "setting": b"same"})
