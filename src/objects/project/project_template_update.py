@@ -101,6 +101,17 @@ def template_tree(repository: str, repository_path: str) -> str | None:
                             capture_output=True, text=True)
     return result.stdout.strip() if result.returncode == 0 else None
 
+def project_template_toolset(project_directory, stage_ids: dict[str, uuid.UUID], toolsets):
+    """Toolset used by stages from this template, if it is still installed."""
+    template_stage_ids = {str(stage_id) for stage_id in stage_ids.values()}
+    toolsets_by_id = {str(toolset.uuid): toolset for toolset in toolsets}
+    for stage in project_directory.stages:
+        if str(stage.id) not in template_stage_ids or not stage.toolset_id:
+            continue
+        if toolset := toolsets_by_id.get(str(stage.toolset_id)):
+            return toolset
+    return None
+
 def template_update_available(project_directory) -> bool | None:
     """Check whether the source template changed. In-app templates compare only their own directory tree; external
     templates also compare regenerated project output. None when it can't be checked (eg. offline)."""
@@ -587,7 +598,7 @@ def template_base_commit(project_path: str) -> str | None:
     return by_message if is_ancestor else by_state
 
 def prepare_template_update(project_directory, log: Callable[[str], None],
-                            selected: dict[str, Any] | None = None, force: bool = False) -> ProjectUpdate | None:
+                            selected: dict[str, Any] | None = None, force: bool = False, toolset=None) -> ProjectUpdate | None:
     """Downloads latest version of template, generates project from it (as commit on top of base) and compares it with
     project. Options are the ones selected before, or new selected values. None when template didn't change project,
     unless forced (clean version of template is prepared to drop changes of project)."""
@@ -616,10 +627,16 @@ def prepare_template_update(project_directory, log: Callable[[str], None],
         generated = os.path.join(temporary, "template")
         os.makedirs(generated)
         log(f"Generating project from {template.name}")
+        if toolset is None:
+            from .repository import Repository
+            from .toolset_selection import default_toolset
+            toolset = project_template_toolset(project_directory, state.uuid_stage_ids, Repository.Toolset.value)
+            if toolset is None:
+                toolset = default_toolset()
         stage_ids = apply_project_template(_RenderTarget(project_directory, generated), template,
                                            template.resolve(selected if selected is not None else state.selected,
                                                             project_name=project_directory.name),
-                                           log=log, stage_ids=state.uuid_stage_ids)
+                                           log=log, stage_ids=state.uuid_stage_ids, toolset=toolset)
         base_version = _read_commit(project_path, base, os.path.join(temporary, "base"))
         changes = compare_versions(base_version, read_project_version(project_path), read_project_version(generated))
         commit = repository_commit(repository) if repository else None

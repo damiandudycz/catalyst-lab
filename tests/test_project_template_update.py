@@ -4,6 +4,8 @@ import sys
 import tempfile
 import types
 import unittest
+import uuid
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 if 'catalystlab' not in sys.modules:
@@ -11,7 +13,9 @@ if 'catalystlab' not in sys.modules:
     package.__path__ = [str(ROOT / 'src')] + [str(path) for path in (ROOT / 'src').rglob('*') if path.is_dir()]
     sys.modules['catalystlab'] = package
 
-from catalystlab.project_template_update import ProjectVersion, compare_versions, read_project_version
+from catalystlab.project_template_update import (
+    ProjectVersion, compare_versions, project_template_toolset, read_project_version
+)
 
 
 class ProjectTemplateUpdateTests(unittest.TestCase):
@@ -48,6 +52,19 @@ class ProjectTemplateUpdateTests(unittest.TestCase):
         self.assertEqual(version.entries['stage:stage-id/package.use'], b'feature\n')
         self.assertEqual(version.entries['README.md'], b'project')
         self.assertNotIn('stage:stage-id/ignored-link', version.entries)
+
+    def test_template_update_uses_toolset_from_an_existing_template_stage(self):
+        stage_id = uuid.uuid4()
+        toolset_id = uuid.uuid4()
+        toolset = SimpleNamespace(uuid=toolset_id)
+        project = SimpleNamespace(stages=[
+            SimpleNamespace(id=uuid.uuid4(), toolset_id=str(uuid.uuid4())),
+            SimpleNamespace(id=stage_id, toolset_id=str(toolset_id)),
+        ])
+
+        selected = project_template_toolset(project, {'stage1': stage_id}, [toolset])
+
+        self.assertIs(selected, toolset)
 
 
 if __name__ == '__main__':
