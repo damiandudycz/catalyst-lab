@@ -19,6 +19,7 @@ from catalystlab.project_stage_arguments import StageArgumentDetails, StageArgum
 from catalystlab.project_stage_automatic_option import StageAutomaticOption
 from catalystlab.project_stage_value_resolver import UNRESOLVED
 from catalystlab.architecture import Architecture
+from catalystlab.project_stage_portage_confdir import StagePortageConfdirSource
 
 
 class StageDefaultTests(unittest.TestCase):
@@ -251,6 +252,28 @@ class StageDefaultTests(unittest.TestCase):
             {'subarch': 'amd64'},
         ))
 
+    def test_template_portage_confdir_matches_source_even_when_runtime_default_differs(self):
+        stage = ProjectStage(name='stage1', target_name='stage1')
+        stage.portage_confdir = [
+            StagePortageConfdirSource.RELENG,
+            StagePortageConfdirSource.STAGE_OVERLAY,
+        ]
+        stage._default_stage_arguments['portage_confdir'] = [StagePortageConfdirSource.RELENG]
+        baseline = {
+            'portage_confdir': {
+                'type': 'list',
+                'value': [
+                    {'type': 'StagePortageConfdirSource', 'value': 'RELENG'},
+                    {'type': 'StagePortageConfdirSource', 'value': 'STAGE_OVERLAY'},
+                ],
+            },
+        }
+
+        self.assertFalse(stage_argument_is_customized(stage, 'portage_confdir', set(), baseline))
+
+        stage.portage_confdir = [StagePortageConfdirSource.RELENG]
+        self.assertTrue(stage_argument_is_customized(stage, 'portage_confdir', set(), baseline))
+
     def test_unsaved_stage_without_source_baseline_is_not_marked_customized(self):
         stage = ProjectStage(name='user-stage', target_name='stage1')
         stage.subarch = 'amd64'
@@ -304,6 +327,39 @@ class StageDefaultTests(unittest.TestCase):
 
         stage._explicit_user_argument_dates['subarch'] = '2026-10-19T00:00:00Z'
         self.assertFalse(stage_argument_is_customized(stage, 'subarch', set(), baseline))
+
+    def test_matching_template_timestamp_ignores_recalculated_default_hidden_by_serialization(self):
+        stage = ProjectStage(name='stage1', target_name='stage1')
+        stage.common_flags = StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE
+        stage._default_stage_arguments['common_flags'] = StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE
+        timestamp = '2026-10-19T20:00:00+00:00'
+        stage._explicit_user_argument_dates['common_flags'] = timestamp
+        baseline = {
+            'common_flags': {
+                'type': 'NoneType', 'value': None, 'last_changed': timestamp,
+            },
+        }
+
+        # Runtime defaults are deliberately omitted from the saved stage data.
+        self.assertNotIn('common_flags', stage.serialize())
+        self.assertFalse(stage_argument_is_customized(stage, 'common_flags', set(), baseline))
+
+    def test_template_values_need_no_template_timestamp_and_local_same_value_edit_is_customized(self):
+        stage = ProjectStage(name='stage1', target_name='stage1')
+        stage.rel_type = '23.0-default'
+        stage._explicit_stage_arguments.add('rel_type')
+        stage._default_stage_arguments['rel_type'] = StageAutomaticOption.INHERIT_FROM_RELENG_TEMPLATE
+        baseline = {'rel_type': {'type': 'str', 'value': '23.0-default'}}
+
+        self.assertFalse(stage_argument_is_customized(stage, 'rel_type', set(), baseline))
+
+        # A local timestamp records intent even though the chosen value is equal.
+        stage._explicit_user_argument_dates['rel_type'] = '2026-10-19T22:00:00Z'
+        self.assertTrue(stage_argument_is_customized(stage, 'rel_type', set(), baseline))
+
+        stage._explicit_user_argument_dates.pop('rel_type')
+        stage.rel_type = '23.0'
+        self.assertTrue(stage_argument_is_customized(stage, 'rel_type', set(), baseline))
 
     def test_default_table_prefers_target_value_then_any_and_allows_explicit_none(self):
         stage = ProjectStage(name='stage4', target_name='stage4')

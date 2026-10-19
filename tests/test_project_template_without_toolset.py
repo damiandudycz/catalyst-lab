@@ -1,4 +1,4 @@
-"""Templates store declared stage values without requiring a Catalyst toolset."""
+"""Templates store declared stage values without template-owned edit timestamps or a Catalyst toolset."""
 from pathlib import Path
 import sys
 import tempfile
@@ -94,11 +94,7 @@ common_flags = "-O2 -pipe -march=armv8-a"
             self.assertEqual(len(project.stages), 1)
             self.assertEqual(project.stages[0].common_flags, '-O2 -pipe -march=armv8-a')
             self.assertIsNone(getattr(project.stages[0], "toolset_id", None))
-            self.assertEqual(project.stages[0]._explicit_user_argument_dates, {
-                'name': '2025-02-01T00:00:00Z',
-                'target': '2025-02-01T00:00:00Z',
-                'common_flags': '2025-03-01T00:00:00Z',
-            })
+            self.assertEqual(getattr(project.stages[0], '_explicit_user_argument_dates', {}), {})
             defaults.assert_not_called()
 
 

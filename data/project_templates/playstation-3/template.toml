@@ -1,5 +1,4 @@
 format = 1
-updated_at = "2026-10-19T00:00:00Z"
 min_app_version = "2.0.0"
 # Build identities change with init system; stage layout and group references stay the same.
 stage_id_suffix = "{{ init }}"
@@ -81,7 +80,6 @@ base_packages = "{{ ['app-admin/sudo', 'app-misc/ps3pf_utils', 'app-portage/gent
 base_services = "{{ (['ps3vram-swap|boot', 'dbus|default', 'NetworkManager|default', 'sysklogd|default', 'chronyd|default', 'sshd|default'] + ([] if zram == 'off' else ['zram-init|boot'])) if openrc else [] }}"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z", subarch = "2026-10-19T00:00:00Z", common_flags = "2026-10-19T00:00:00Z", catalyst_use = "2026-10-19T00:00:00Z", rel_type = "2026-10-19T00:00:00Z", repos = "2026-10-19T00:00:00Z" }
 id = "stage1"
 name = "{{ stage1_name }}"
 target = "stage1"
@@ -94,7 +92,6 @@ rel_type = "{{ '23.0-ps3-lto' if lto else '23.0-ps3' }}"
 repos = [{ type = "Overlay", value = "ps3" }]
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z" }
 id = "stage3"
 parent = "stage1"
 name = "stage3-{{ init }}"
@@ -102,7 +99,6 @@ target = "stage3"
 releng_template = "stage3-{{ init }}-23.spec"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", stage4_use = "2026-10-19T00:00:00Z", stage4_packages = "2026-10-19T00:00:00Z", stage4_rcadd = "2026-10-19T00:00:00Z", stage4_empty = "2026-10-19T00:00:00Z", stage4_rm = "2026-10-19T00:00:00Z" }
 id = "stage4"
 parent = "stage3"
 name = "{{ stage4_name }}"
@@ -116,7 +112,6 @@ stage4_empty = ["/var/cache/distfiles"]
 stage4_rm = ["/root/.bash_history"]
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z", profile = "2026-10-19T00:00:00Z", version_stamp = "2026-10-19T00:00:00Z" }
 id = "stage3-desktop"
 parent = "stage1"
 name = "{{ desktop_stage3_name }}"
@@ -128,7 +123,6 @@ profile = { type = "PortageProfile", value = { path = "default/linux/ppc64/23.0/
 version_stamp = "desktop-openrc-@TIMESTAMP@"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", version_stamp = "2026-10-19T00:00:00Z", stage4_use = "2026-10-19T00:00:00Z", stage4_packages = "2026-10-19T00:00:00Z", stage4_rcadd = "2026-10-19T00:00:00Z", stage4_empty = "2026-10-19T00:00:00Z", stage4_rm = "2026-10-19T00:00:00Z" }
 id = "stage4-desktop"
 parent = "stage3-desktop"
 name = "{{ desktop_stage4_name }}"
@@ -145,7 +139,6 @@ stage4_rm = ["/root/.bash_history"]
 # Installation ISO: live system with PS3 kernel, built by catalyst (boot/kernel). Kernel and initramfs are /boot/ps3 and
 # /boot/ps3.igz, loaded by petitboot with yaboot.conf on ISO (livecd/overlay). Volume label Gentoo-ps3 is used by it.
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", livecd_use = "2026-10-19T00:00:00Z", livecd_packages = "2026-10-19T00:00:00Z" }
 id = "livecd-stage1"
 parent = "stage3"
 name = "{{ iso_stage1_name }}"
@@ -156,7 +149,6 @@ livecd_use = ["ps3", "compile-locales", "fbcon", "socks5", "unicode", "xml"]
 livecd_packages = "{{ iso_packages }}"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", boot_kernel = "2026-10-19T00:00:00Z", livecd_type = "2026-10-19T00:00:00Z", livecd_fstype = "2026-10-19T00:00:00Z", livecd_volid = "2026-10-19T00:00:00Z", livecd_iso = "2026-10-19T00:00:00Z", livecd_overlay = "2026-10-19T00:00:00Z", livecd_rcadd = "2026-10-19T00:00:00Z", livecd_unmerge = "2026-10-19T00:00:00Z", livecd_empty = "2026-10-19T00:00:00Z", livecd_rm = "2026-10-19T00:00:00Z", boot_kernels = "2026-10-19T00:00:00Z" }
 id = "livecd-stage2"
 parent = "livecd-stage1"
 name = "{{ iso_stage2_name }}"
@@ -216,7 +208,6 @@ destination = "stages/{{ desktop_stage4_name }}"
 when = "with_desktop"
 
 [[groups]]
-last_changed = { stage4_packages = "2026-10-19T00:00:00Z" }
 id = "development"
 title = "Development tools"
 description = "git, eselect-repository, distcc and kernel headers."

@@ -780,9 +780,12 @@ def stage_argument_is_customized(stage: ProjectStage, name: str, explicit_argume
     if changed_at is not missing:
         if baseline_changed_at is missing or changed_at != baseline_changed_at:
             return True
-        baseline_value = baseline_property
-        if baseline_value is not missing:
-            return current != baseline_value
+        # A matching template timestamp means the value still comes from the
+        # template. Runtime defaults can resolve that value differently in
+        # memory (and serialize() intentionally omits calculated defaults), so
+        # comparing the transient value here would mark untouched fields as
+        # customized until the app is restarted.
+        return False
 
     template_value = baseline_property
     baseline_kind = template_baseline.get("__catalystlab_baseline_kind__")
@@ -795,6 +798,40 @@ def stage_argument_is_customized(stage: ProjectStage, name: str, explicit_argume
 
     if baseline_kind in {"first_commit", "initial_snapshot"} and template_value is not missing:
         return current != template_value
+
+    if template_value is not missing and name != StageArgumentDetails.portage_confdir.name:
+        effective_value = getattr(stage, name, missing)
+        if effective_value is not missing:
+            normalized_current = ProjectStageArgumentSerialization.serialize(effective_value)
+            normalized_template = template_value
+            if isinstance(template_value, dict) and {"type", "value"} <= template_value.keys():
+                normalized_template = ProjectStageArgumentSerialization.serialize(
+                    ProjectStageArgumentSerialization.deserialize(template_value)
+                )
+            if normalized_current == normalized_template:
+                return False
+        elif current == template_value:
+            return False
+        # A stored value that differs from its source is a real project edit;
+        # calculated values that aren't stored still fall through to the
+        # active runtime default below.
+        if name in getattr(stage, "_explicit_stage_arguments", set()):
+            return True
+
+    # Portage confdir is partly derived from generated project files: template
+    # overlays add STAGE_OVERLAY after the generic runtime default has been
+    # calculated. Compare it to the saved source state first, otherwise that
+    # intentional template value always differs from the runtime default
+    # ([RELENG], optionally with PARENT_OVERLAY).
+    if name == StageArgumentDetails.portage_confdir.name and template_value is not missing:
+        effective_value = getattr(stage, name, missing)
+        if effective_value is missing:
+            return current != template_value
+        normalized_baseline = template_value
+        if isinstance(template_value, dict) and {"type", "value"} <= template_value.keys():
+            normalized_baseline = ProjectStageArgumentSerialization.deserialize(template_value)
+        return (ProjectStageArgumentSerialization.serialize(effective_value)
+                != ProjectStageArgumentSerialization.serialize(normalized_baseline))
 
     runtime_default = getattr(stage, "_default_stage_arguments", {}).get(name, missing)
     if runtime_default is not missing:

@@ -1,5 +1,4 @@
 format = 1
-updated_at = "2026-10-19T00:00:00Z"
 min_app_version = "2.0.0"
 # Build identities change with init system; stage layout and group references stay the same.
 stage_id_suffix = "{{ init }}"
@@ -171,7 +170,6 @@ destination = "stages/{{ stage4_name }}/portage"
 when = "accept_all_licenses and 'stage4' in extra_stages"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z", common_flags = "2026-10-19T00:00:00Z", catalyst_use = "2026-10-19T00:00:00Z", rel_type = "2026-10-19T00:00:00Z" }
 id = "stage1"
 name = "stage1-{{ init }}"
 target = "stage1"
@@ -182,7 +180,6 @@ catalyst_use = "{{ ['lto'] if lto else [] }}"
 rel_type = "{{ rel_type }}"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z" }
 id = "stage3"
 parent = "stage1"
 name = "stage3-{{ init }}"
@@ -190,7 +187,6 @@ target = "stage3"
 releng_template = "{{ spec_directory }}stage3-{{ spec_prefix }}{{ spec_flavor }}-23.spec"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", stage4_packages = "2026-10-19T00:00:00Z", stage4_rcadd = "2026-10-19T00:00:00Z" }
 id = "stage4"
 parent = "stage3"
 name = "{{ stage4_name }}"
@@ -201,7 +197,6 @@ stage4_packages = "{{ stage4_packages }}"
 stage4_rcadd = "{{ stage4_services }}"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z" }
 id = "livecd-stage1"
 parent = "stage3"
 name = "livecd-stage1"
@@ -210,7 +205,6 @@ releng_template = "{{ spec_directory }}installcd-stage1{{ iso_suffix }}.spec"
 when = "iso"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z" }
 id = "livecd-stage2"
 parent = "livecd-stage1"
 name = "livecd-stage2"
@@ -219,7 +213,6 @@ releng_template = "{{ spec_directory }}installcd-stage2-minimal{{ iso_suffix }}.
 when = "iso"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z" }
 id = "stage3-desktop"
 parent = "stage1"
 name = "stage3-desktop-openrc"
@@ -228,7 +221,6 @@ releng_template = "stage3d-openrc-23.spec"
 when = "livegui"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z" }
 id = "livegui-stage1"
 parent = "stage3-desktop"
 name = "livegui-stage1-openrc"
@@ -237,7 +229,6 @@ releng_template = "livegui/livegui-stage1.spec"
 when = "livegui"
 
 [[stages]]
-last_changed = { name = "2026-10-19T00:00:00Z", target = "2026-10-19T00:00:00Z", parent = "2026-10-19T00:00:00Z", releng_template = "2026-10-19T00:00:00Z", boot_kernel = "2026-10-19T00:00:00Z" }
 id = "livegui-stage2"
 parent = "livegui-stage1"
 name = "livegui-stage2-openrc"
@@ -248,7 +239,6 @@ when = "livegui"
 boot_kernel = ["@releng"]
 
 [[groups]]
-last_changed = { stage4_packages = "2026-10-19T00:00:00Z" }
 id = "kernel"
 title = "Kernel and firmware"
 description = "Distribution kernel (gentoo-kernel-bin) with initramfs, and firmware."
@@ -262,7 +252,6 @@ source = "files/kernel"
 destination = "portage"   # Portage configuration of stage.
 
 [[groups]]
-last_changed = { stage4_packages = "2026-10-19T00:00:00Z" }
 id = "bootloader"
 title = "GRUB bootloader"
 description = "Installed in system, configured when deploying."
@@ -273,7 +262,6 @@ stages = ["stage4"]
 stage4_packages = ["sys-boot/grub"]
 
 [[groups]]
-last_changed = { stage4_packages = "2026-10-19T00:00:00Z" }
 id = "sudo"
 title = "sudo"
 description = "Members of wheel group can run commands as root."
@@ -287,7 +275,6 @@ source = "files/sudo"
 destination = "root_overlay"   # Files added to root of stage.
 
 [[groups]]
-last_changed = { stage4_packages = "2026-10-19T00:00:00Z" }
 id = "editors"
 title = "vim"
 stages = ["stage4"]
@@ -296,7 +283,6 @@ when = "accept_all_licenses and 'stage4' in extra_stages"
 stage4_packages = ["app-editors/vim"]
 
 [[groups]]
-last_changed = { stage4_packages = "2026-10-19T00:00:00Z" }
 id = "tools"
 title = "Administration tools"
 description = "htop, tmux, lsof, pciutils and usbutils."
