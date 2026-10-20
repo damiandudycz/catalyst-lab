@@ -11,7 +11,7 @@ from .rootless import MachineExecutor
 # ------------------------------------------------------------------------------
 
 class VMRunnerInstallation(MultiStageProcess):
-    """Creates Alpine Linux virtual machine with Lima, prepared for building without root privileges."""
+    """Creates an Alpine Linux virtual machine for root execution inside the guest."""
 
     def __init__(self, name: str, cpus: int, memory_gib: int, workspace_gib: int,
                  swap_gib: int = VMRunner.DEFAULT_SWAP_GIB, set_as_default: bool = True):
@@ -121,15 +121,15 @@ class VMRunnerStepStart(VMRunnerStep):
 
 class VMRunnerStepVerify(VMRunnerStep):
     def __init__(self, multistage_process: MultiStageProcess):
-        super().__init__(name="Verify runner", description="Checks that toolsets can run in the runner without root", multistage_process=multistage_process)
+        super().__init__(name="Verify runner", description="Checks that toolset commands can run as root inside the guest", multistage_process=multistage_process)
     def start(self):
         super().start()
         try:
             executor = MachineExecutor(self.multistage_process.machine)
             if reason := executor.toolset_unsupported_reason(output_handler=self.log):
                 raise RuntimeError(reason)
-            if not executor.run_in_namespace("id; touch /tmp/owner-test && chown 250:250 /tmp/owner-test && echo 'Mapped ids work'", self.log, self.processes):
-                raise RuntimeError("Commands can't run in user namespace of machine")
+            if not executor.run("test \"$(id -u)\" -eq 0 && echo 'Guest root execution works'", self.log, self.processes):
+                raise RuntimeError("Commands can't run as root inside the VM runner")
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as e:
             print(f"Error during '{self.name}': {e}")

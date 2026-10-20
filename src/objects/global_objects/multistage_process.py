@@ -233,13 +233,16 @@ class MultiStageProcessStage(ABC):
                 if (progress := progress_handler(line)) is not None:
                     self._update_progress(progress)
 
-            self.server_call = self.multistage_process.toolset.run_command(
+            server_call = self.multistage_process.toolset.run_command(
                 command=command,
                 handler=on_output if progress_handler else None,
                 completion_handler=on_complete,
             )
-            self.server_call.thread.join()
-            self.server_call = None
+            self.server_call = server_call
+            if server_call.thread:
+                server_call.thread.join()
+            if self.server_call is server_call:
+                self.server_call = None
             return succeeded
         except Exception as error:
             print(f"Error running toolset command: {error}")
@@ -254,11 +257,13 @@ class MultiStageProcessStage(ABC):
         if self.state == MultiStageProcessStageState.IN_PROGRESS:
             self.complete(MultiStageProcessStageState.FAILED)
             self._cancel_event.set()
-        if self.server_call:
-            self.server_call.cancel()
-            if self.server_call.thread:
-                self.server_call.thread.join()
-            self.server_call = None
+        server_call = self.server_call
+        if server_call:
+            server_call.cancel()
+            if server_call.thread:
+                server_call.thread.join()
+            if self.server_call is server_call:
+                self.server_call = None
     def cleanup(self) -> bool:
         """Returns true if cleanup was needed and was started."""
         if self.state == MultiStageProcessStageState.SCHEDULED:

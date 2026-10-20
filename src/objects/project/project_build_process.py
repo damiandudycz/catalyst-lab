@@ -83,9 +83,8 @@ class ProjectBuild(MultiStageProcess):
         self.seed_subpaths: dict = {} # Downloaded seeds of root stages, relative to builds directory.
         self.stage_builds: dict = {} # Builds made in this run, by stage id.
         self.failed_stage_ids: set = set()
-        # Builds run without root privileges in user namespace when system supports it, otherwise in toolset spawned
-        # by root helper.
-        # Builds of toolsets linked to virtual machine run in that machine (always without root privileges).
+        # Host builds use a user namespace when supported, otherwise a toolset spawned by the root helper.
+        # VM builds run as root inside the guest and use the guest kernel for mounts.
         self.runner = runner
         # Lima-specific workspace and startup operations remain VM-only; primary
         # commands use the runner's transport-neutral executor.
@@ -93,7 +92,7 @@ class ProjectBuild(MultiStageProcess):
         self.executor = self.runner.executor if self.runner else None
         self._rosetta_amd64: bool | None = None
         self.rootless_unsupported_reason = self.executor.unsupported_reason() if self.executor and not self.machine else None
-        self.rootless = self.machine is not None or self.rootless_unsupported_reason is None
+        self.rootless = self.machine is None and self.rootless_unsupported_reason is None
         self.rootless_toolset_path: str | None = None # Read-only mounted or extracted toolset lower layer.
         self.rootless_toolset_mounted = False # Mounted SquashFS lower layer, released before machine workspace.
         self.rootless_toolset_temporary_copy = False
@@ -333,6 +332,16 @@ class ProjectBuild(MultiStageProcess):
     # stage they depend on, or canceled) are listed in builds too.
 
     def start(self, authorization_keeper=None):
+        if self.preview_root:
+            # Keep reviewed files available for stages built later, but remove the standalone preview directory from
+            # Temporary as soon as the build starts. Each stage copies its files from this build-owned workspace
+            # when that stage begins.
+            preview_workspace = os.path.join(self.work_root, "previews")
+            os.makedirs(self.work_root, exist_ok=True)
+            if os.path.exists(preview_workspace):
+                raise RuntimeError(f"Build preview destination already exists: {preview_workspace}")
+            shutil.move(self.preview_root, preview_workspace)
+            self.preview_root = preview_workspace
         for order, stage in enumerate(self._build_order):
             try:
                 StageBuild(stage_id=stage.id, stage_name=stage.name, timestamp=self.timestamp, order=order,
@@ -382,8 +391,7 @@ def start_project_build(project_directory, plan: StageBuildPlan, toolset, runner
                         update_project_snapshot: bool = False, cleanup_previous_builds: bool = False, done=None,
                         timestamp: str | None = None, defaults_snapshot=_DEFAULTS_SNAPSHOT_UNSET,
                         preview_root: str | None = None):
-    """Starts build of project (used by build view and build queue). Builds that can't run in user namespace get root
-    privileges first (user is asked). Done is called on main thread with started build, or None when it didn't start."""
+    """Starts a project build. Host builds that need the root helper get authorization first."""
     from .rootless import rootless_unsupported_reason
     from .root_helper_client import RootHelperClient
     def start(authorization_keeper):
@@ -406,7 +414,7 @@ def start_project_build(project_directory, plan: StageBuildPlan, toolset, runner
         return False
     from .runner import RunnerType
     if (runner and runner.runner_type == RunnerType.VM) or rootless_unsupported_reason() is None:
-        # Builds run in user namespace, root privileges are not needed.
+        # Host builds use user namespaces; VM builds use root inside their isolated guest.
         GLib.idle_add(start, None)
         return
     def authorized(authorization_keeper):
@@ -535,10 +543,16 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
                 self._log_toolset_bindings()
                 self.complete(MultiStageProcessStageState.COMPLETED)
                 return
-            self.log(f"Building with root privileges: {self.multistage_process.rootless_unsupported_reason}")
-            # Catalyst mounts snapshot squashfs with loop device. Loop device nodes are created by kernel in host /dev,
-            # so free ones are prepared before spawning and only they are made available in toolset.
-            self.loop_devices = prepare_loop_devices()
+            if process.machine:
+                self.log(f"Building as root inside VM runner {process.machine.name}")
+                self.workspace_user = f"Build of {process.project_directory.name}"
+                process.machine.acquire_workspace(self.log, self.namespace_processes, user=self.workspace_user)
+                self.workspace_acquired = True
+            else:
+                self.log(f"Building with root privileges: {self.multistage_process.rootless_unsupported_reason}")
+            # Bind loop devices into the toolset. Host builds borrow them from the host; VM builds use their guest's.
+            self.loop_devices = (prepare_machine_loop_devices(process.executor) if process.machine
+                                 else prepare_loop_devices())
             bindings = self.required_bindings()
             self._log_toolset_bindings(bindings)
             toolset.spawn(runner=process.runner, additional_bindings=bindings)
@@ -553,13 +567,7 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
         """Prepares toolset and snapshot lower layers used by stage builds."""
         process = self.multistage_process
         executor = process.executor
-        if process.machine:
-            self.log(f"Building in virtual machine {process.machine.name}, without root privileges")
-            self.workspace_user = f"Build of {process.project_directory.name}"
-            process.machine.acquire_workspace(self.log, self.namespace_processes, user=self.workspace_user)
-            self.workspace_acquired = True
-        else:
-            self.log("Building without root privileges, in user namespace")
+        self.log("Building without root privileges, in user namespace")
         remove_stale_sessions(self.log, self.namespace_processes, executor=executor)
         (process.rootless_toolset_path, process.rootless_toolset_mounted,
          process.rootless_toolset_temporary_copy) = prepare_toolset_squashfs(
@@ -824,7 +832,7 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
                         spec_path=process.container_path(spec_path),
                         config_path=process.container_path(os.path.join(work_directory, "catalyst.conf")),
                         caches={_catalyst_cache_options[argument] for argument in cache_paths},
-                        wrapper_path=process.container_path(wrapper_path) if wrapper_path else None,
+                        wrapper_path=process.container_path(wrapper_path) if wrapper_path and not process.machine else None,
                     ))
             if process.rootless:
                 if not self._run_rootless(spec=spec, work_directory=work_directory, build_script_path=build_script_path):
@@ -843,6 +851,9 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             iso_name = iso if iso and "/" not in iso else None
             if process.rootless:
                 # Files written by namespace root are already owned by user.
+                moved = _move_stage_build_files(source_directory=output_directory, name=output_name, destination_directory=self.build.path, iso_name=iso_name)
+            elif process.machine:
+                # Guest-root files in shared Library folders are still accessible to the host app user.
                 moved = _move_stage_build_files(source_directory=output_directory, name=output_name, destination_directory=self.build.path, iso_name=iso_name)
             else:
                 moved = move_stage_build_files(source_directory=output_directory, name=output_name, destination_directory=self.build.path, iso_name=iso_name)
@@ -898,7 +909,7 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             self.complete(MultiStageProcessStageState.FAILED)
 
     def _run_rootless(self, spec: str, work_directory: str, build_script_path: str) -> bool:
-        """Runs build script in toolset root inside user namespace, with diagnostics after failure."""
+        """Runs a HostRunner build script in toolset root inside a user namespace, with diagnostics after failure."""
         process = self.multistage_process
         diagnostics_path = self._write_diagnostics_script(spec=spec, work_directory=work_directory)
         bindings = [
@@ -1131,6 +1142,21 @@ def prepare_loop_devices() -> list[str]:
     subprocess.run(["losetup", "--find"], check=True, stdout=subprocess.DEVNULL)
     devices = sorted(glob.glob("/dev/loop[0-9]*"), key=lambda path: int(re.sub(r"\D", "", path)))
     return (["/dev/loop-control"] if os.path.exists("/dev/loop-control") else []) + devices
+
+def prepare_machine_loop_devices(executor) -> list[str]:
+    """Ensure guest loop nodes exist and return them for binding into the rootful toolset."""
+    script = r'''set -eu
+[ -c /dev/loop-control ] || mknod -m 660 /dev/loop-control c 10 237
+for number in $(seq 0 7); do
+    [ -b "/dev/loop$number" ] || mknod -m 660 "/dev/loop$number" b 7 "$number"
+done
+losetup --find >/dev/null
+printf '%s\n' /dev/loop-control /dev/loop0 /dev/loop1 /dev/loop2 /dev/loop3 /dev/loop4 /dev/loop5 /dev/loop6 /dev/loop7
+'''
+    output = executor.output(script)
+    if output is None:
+        raise RuntimeError("Could not prepare loop devices in VM runner")
+    return output.splitlines()
 
 def _is_build_file(filename: str, name: str, iso_name: str | None) -> bool:
     """Files of build: archive of stage with DIGESTS, CONTENTS..., and ISO of livecd with its files."""

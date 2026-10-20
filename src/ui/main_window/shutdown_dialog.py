@@ -122,6 +122,10 @@ class ShutdownDialog(Adw.Dialog):
 
         self.rows_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.rows_box.add_css_class("boxed-list")
+        self.rows_box.set_margin_start(8)
+        self.rows_box.set_margin_end(8)
+        self.rows_box.set_margin_top(8)
+        self.rows_box.set_margin_bottom(8)
         for label, _action in self._steps:
             row = Adw.ActionRow(title=label, subtitle="Waiting")
             icon = Gtk.Image.new_from_icon_name("content-loading-symbolic")

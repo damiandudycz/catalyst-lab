@@ -16,8 +16,8 @@ def virtual_machines_supported() -> bool:
 # GUI apps on macOS don't get PATH of shell, so Homebrew locations are checked too.
 _LIMACTL_LOCATIONS = ["/opt/homebrew/bin/limactl", "/usr/local/bin/limactl"]
 
-# Alpine image of machines. Linux kernel of Alpine supports everything needed to work without root (user namespaces,
-# overlayfs, squashfs), and its packages provide bubblewrap and newuidmap.
+# Alpine image of machines. Its kernel supports the build's Linux features (overlayfs, squashfs, loop devices), and
+# its packages provide bubblewrap and other tools used in Gentoo toolsets.
 LIMA_TEMPLATE = "template:_images/alpine-3.23"
 
 # Temporary data that needs Linux ownership lives in a dedicated ext4 workspace image. Persistent extracted toolsets
@@ -419,8 +419,7 @@ done
 """
 
 def machine_setup_script() -> str:
-    """Prepares machine (as root, idempotent): tools for working without root, subordinate ids of user, working space
-    mount point and emulators of other architectures."""
+    """Prepares machine as root: toolset utilities, subordinate ids, working space, and architecture emulators."""
     return f"""#!/bin/sh
 set -eux
 # Provisioning runs on every boot; install the machine tools only once.

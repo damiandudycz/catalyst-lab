@@ -7,16 +7,13 @@ MOUNT_SQFS_DIRECTLY = False
 from .helper_functions import path_is_within
 
 # ------------------------------------------------------------------------------
-# Working without root privileges.
-# Commands run as root of unprivileged user namespace, where ids 1..65536 are mapped to subordinate ids of user
-# (/etc/subuid, /etc/subgid), so files can have their real owners (portage, shadow...). Things that need real root
-# are replaced: on local rootless execution SquashFS files are extracted (loop mounts are not allowed), while a build
-# machine can mount them read-only with its real root; host /dev is bound instead of creating device nodes. Files of
-# namespace root are owned by user, other owners are mapped ids (100000+), so such files are created, packed and
-# removed inside namespace.
-# Commands run on this computer (LocalExecutor) or in virtual machine linked to toolset (MachineExecutor), where
-# folders of Catalyst Lab are shared at the same paths. Mapped-id files use local Cache/Temporary folders or ext4
-# filesystems mounted from those folders inside a machine.
+# Host commands run without root privileges, as root of an unprivileged user namespace, where ids 1..65536 are mapped
+# to subordinate ids of the user (/etc/subuid, /etc/subgid), so files can have their real owners (portage, shadow...).
+# HostRunner replaces operations that need real root: it extracts SquashFS files and binds host /dev. VMRunner runs
+# commands as guest root and uses the guest's kernel and devices.
+# Host commands run on this computer (LocalExecutor). VM commands run as guest root through MachineExecutor, where
+# folders of Catalyst Lab are shared at the same paths. VM working data uses ext4 filesystems mounted from shared
+# images.
 
 MAPPED_IDS_COUNT = 65536
 MIN_BWRAP_VERSION = (0, 11, 0) # Toolset bindings use --overlay-src and --overlay.
@@ -234,7 +231,7 @@ class LocalExecutor(Executor):
         return _filesystem_operations(request)
 
 class MachineExecutor(Executor):
-    """Runs commands in virtual machine (Lima instance), started when needed."""
+    """Runs commands as guest root in a Lima VM, started when needed."""
     is_machine = True
 
     def __init__(self, machine):
@@ -257,13 +254,11 @@ class MachineExecutor(Executor):
             return f"Virtual machine {self.machine.name} doesn't exist"
         lines = []
         script = r'''
-for tool in unshare newuidmap newgidmap bwrap unsquashfs mksquashfs python3 mount mountpoint sudo; do
+for tool in bwrap unsquashfs mksquashfs python3 mount mountpoint sudo; do
     command -v $tool > /dev/null || { echo "$tool is not installed in machine"; exit 1; }
 done
-grep -q "^$(id -un):" /etc/subuid || { echo "Machine user has no entries in /etc/subuid"; exit 1; }
-grep -q "^$(id -un):" /etc/subgid || { echo "Machine user has no entries in /etc/subgid"; exit 1; }
-unshare --user --map-root-user true || { echo "User namespaces are not available in machine"; exit 1; }
-echo "Machine is ready: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname -r), $(bwrap --version)"
+[ "$(id -u)" -eq 0 ] || { echo "VM commands are not running as root"; exit 1; }
+echo "Machine is ready: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname -r), root execution, $(bwrap --version)"
 '''
         success = self.run(script, lines.append)
         for line in lines:
@@ -290,6 +285,9 @@ echo "Machine is ready: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname 
             descriptor, script_path = tempfile.mkstemp(prefix=f"{token}-", suffix=".sh", dir=script_directory)
             with os.fdopen(descriptor, "w", encoding="utf-8") as file:
                 file.write(script)
+            # The command is opened by guest root through a shared folder. Keep it readable
+            # across the guest's host-user UID mapping.
+            os.chmod(script_path, 0o644)
         except Exception:
             if "script_path" in locals():
                 try:
@@ -299,10 +297,9 @@ echo "Machine is ready: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname 
             self.machine.end_use()
             raise
         q = shlex.quote
-        if namespace:
-            command = f"bash -c {q(_NAMESPACE_LAUNCHER)} launcher {q(script_path)}"
-        else:
-            command = f"bash {q(script_path)}; status=$?; rm -f {q(script_path)}; exit $status"
+        # VM commands run as real root in the guest. `namespace` remains part
+        # of the executor API for HostRunner's user-namespace execution.
+        command = f"sudo -n bash {q(script_path)}; status=$?; rm -f {q(script_path)}; exit $status"
         # Own session in machine, so canceling can stop its whole process group.
         bootstrap = f"echo $$ > {pid_file}; exec 2>&1 < /dev/null; {command}"
         try:
@@ -317,7 +314,7 @@ echo "Machine is ready: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname 
             raise
         def terminate_remote():
             subprocess.run([limactl_path(), "shell", self.machine.instance_name, "sh", "-c",
-                            f"[ -f {pid_file} ] && kill -TERM -- -$(cat {pid_file}); rm -f {pid_file}"],
+                            f"[ -f {pid_file} ] && sudo -n kill -TERM -- -$(cat {pid_file}); rm -f {pid_file}"],
                            capture_output=True, timeout=30, env=lima_environment(self.machine.lima_home))
         def cleanup_script():
             try:
