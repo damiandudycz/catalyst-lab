@@ -112,11 +112,11 @@ class VMRunner:
         from .rootless import MachineExecutor
         return MachineExecutor(self)
 
-    def prepare(self, output_handler=print, process_holder=None, user="Operation"):
+    def prepare(self, output_handler=print, process_holder=None, user="Operation", additional_shared_paths=None):
         self.begin_use(user)
         try:
             output_handler(f"Prepare Runner: {self.name}")
-            self.ensure_running(output_handler, process_holder)
+            self.ensure_running(output_handler, process_holder, additional_shared_paths=additional_shared_paths)
         except Exception:
             self.end_use(user)
             raise
@@ -269,7 +269,8 @@ class VMRunner:
 
     # Lifecycle:
 
-    def start(self, output_handler=print, process_holder: list | None = None, automatically: bool = False) -> bool:
+    def start(self, output_handler=print, process_holder: list | None = None, automatically: bool = False,
+              additional_shared_paths: list[str] | None = None) -> bool:
         """Starts machine. Machine started automatically (for operation) is stopped when it's no longer used, started
         by user keeps running."""
         with self._usage_lock:
@@ -278,13 +279,26 @@ class VMRunner:
         with self._lock:
             self.refresh_status()
             if self.is_running:
+                from .build_machine_manager import shared_paths
+                expected = shared_paths(additional_shared_paths)
+                configured = self._configured_mounts()
+                if not set(expected).issubset(configured):
+                    missing = sorted(set(expected) - set(configured))
+                    raise RuntimeError(
+                        "VM runner is already running without the selected cache folder mounted. "
+                        "Stop the VM runner and start the build again. Missing shared folder(s): "
+                        + ", ".join(missing)
+                    )
                 return True
             if self.status == self.STATUS_MISSING:
                 raise RuntimeError(f"VM runner {self.name} doesn't exist anymore")
             output_handler(f"Starting VM runner {self.name}...")
+            if additional_shared_paths:
+                output_handler("Additional folders requested by this operation: "
+                               + ", ".join(sorted(set(additional_shared_paths))))
             self._set_status(self.STATUS_STARTING)
             try:
-                self._update_mounts(output_handler, process_holder)
+                self._update_mounts(output_handler, process_holder, additional_shared_paths)
                 self._prepare_swap_disk(output_handler, process_holder)
                 success = run_limactl(["start", self.instance_name], output_handler, process_holder, home=self.lima_home)
             finally:
@@ -332,9 +346,11 @@ class VMRunner:
         instance = list_instances(self.lima_home).get(self.instance_name)
         return instance is not None and instance.get("status") == self.STATUS_STOPPED
 
-    def ensure_running(self, output_handler=print, process_holder: list | None = None):
+    def ensure_running(self, output_handler=print, process_holder: list | None = None,
+                       additional_shared_paths: list[str] | None = None):
         """Starts machine if needed, raising when it can't be started."""
-        if not self.start(output_handler, process_holder, automatically=True):
+        if not self.start(output_handler, process_holder, automatically=True,
+                          additional_shared_paths=additional_shared_paths):
             raise RuntimeError(f"Failed to start VM runner {self.name}")
 
     # Swap:
@@ -366,18 +382,28 @@ class VMRunner:
             run_limactl(["disk", "delete", "--force", self.swap_disk_name], lambda line: None, home=self.lima_home)
             remove_temporary_lima_disk_data(self.swap_disk_name, self.lima_home)
 
-    def _update_mounts(self, output_handler, process_holder: list | None = None):
+    def _configured_mounts(self) -> list[str]:
+        import re
+        try:
+            with open(os.path.join(self.machine_directory, "lima.yaml"), encoding="utf-8") as file:
+                configuration = file.read()
+        except OSError:
+            return []
+        section = re.search(r"^mounts:\n((?:[ -].*\n)*)", configuration, re.MULTILINE)
+        return [path.strip() for path in re.findall(r'location:\s*"?([^"\n]+)"?', section.group(1))] if section else []
+
+    def _update_mounts(self, output_handler, process_holder: list | None = None,
+                       additional_shared_paths: list[str] | None = None):
         """Machine shares current folders of Catalyst Lab (they change when library is moved to other place)."""
         import json, re
         from .build_machine_manager import shared_paths
-        paths = shared_paths()
+        paths = shared_paths(additional_shared_paths)
         try:
             with open(os.path.join(self.machine_directory, "lima.yaml"), encoding="utf-8") as file:
                 configuration = file.read()
         except OSError:
             return
-        section = re.search(r"^mounts:\n((?:[ -].*\n)*)", configuration, re.MULTILINE)
-        current = re.findall(r'location:\s*"?([^"\n]+)"?', section.group(1)) if section else []
+        current = self._configured_mounts()
         if sorted(path.strip() for path in current) == sorted(paths):
             return
         output_handler(f"Updating shared folders of virtual machine {self.name}")

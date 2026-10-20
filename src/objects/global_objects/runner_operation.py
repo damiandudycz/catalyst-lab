@@ -27,7 +27,9 @@ class PrepareRunnerStage(MultiStageProcessStage):
             if getattr(getattr(runner, "runner_type", None), "value", None) == "host":
                 runner.prepare(*prepare_arguments, exclusive=getattr(process, "runner_exclusive", False))
             else:
-                runner.prepare(*prepare_arguments)
+                shared_paths = getattr(process, "runner_shared_paths", None)
+                runner.prepare(*prepare_arguments,
+                               additional_shared_paths=shared_paths() if callable(shared_paths) else None)
             process.runner_prepared = True
             self.complete(MultiStageProcessStageState.COMPLETED)
         except Exception as error:

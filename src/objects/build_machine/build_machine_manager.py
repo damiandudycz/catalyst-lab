@@ -47,14 +47,15 @@ class VMRunnerManager:
         name = name.strip()
         return bool(name) and all(item.name != name for item in Repository.Runner.value if item is not machine)
 
-def shared_paths() -> list[str]:
-    """Managed data folders shared with machines, all derived from the Library root."""
+def shared_paths(additional_paths: list[str] | None = None) -> list[str]:
+    """Managed data folders and operation-specific folders shared with machines."""
     locations = [
         library_path("Toolsets"), library_path("Snapshots"), library_path("Releng"),
         library_path("Overlays"), library_path("Projects"), library_path("Builds"),
         library_path("Cache"), library_path("Temporary"), library_path("Packages"),
     ]
     paths = []
+    locations += [os.path.abspath(os.path.expanduser(path)) for path in (additional_paths or [])]
     for location in sorted({resolve_path(location) for location in locations}, key=len):
         if not any(path_is_within(location, path) for path in paths):
             paths.append(location)

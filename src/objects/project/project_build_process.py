@@ -205,6 +205,19 @@ class ProjectBuild(MultiStageProcess):
             paths = {argument: self._machine_cache_path(path) or path for argument, path in paths.items()}
         return paths
 
+    def runner_shared_paths(self) -> list[str]:
+        """Custom cache folders outside the Library directories Lima shares by default."""
+        if not self.machine:
+            return []
+        from importlib import import_module
+        machine_package = type(self.machine).__module__.rsplit(".", 1)[0]
+        shared_paths = import_module(f"{machine_package}.build_machine_manager").shared_paths
+        standard_paths = shared_paths()
+        return sorted({
+            path for stage in self._build_order for path in self.stage_cache_paths(stage).values()
+            if not any(path_is_within(path, root) for root in standard_paths)
+        })
+
     def _saved_cache_roots(self) -> list[tuple[str, str]]:
         """Folders of automatic caches on host, with their folders in cache directory of machine: builds of project
         (kernels), and binary packages folder (shared by projects using it). Ids instead of names, paths in spec can't
