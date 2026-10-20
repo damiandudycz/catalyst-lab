@@ -1,7 +1,7 @@
 import os
 import threading
 
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Gtk, Adw, GLib, Gio
 
 from .app_section import app_section
 from .library_storage import scan_library_storage, remove_library_item
@@ -35,6 +35,27 @@ class LibrarySection(Gtk.Box):
         self._observed_machines = set()
         self._observed_toolsets = set()
         self._vm_runner_rows = {}
+
+        # Keep the selected Library visible while browsing any storage category.
+        self.library_location_row = Adw.ActionRow(title="Location", subtitle=self.library_path,
+                                                   subtitle_selectable=True)
+        self.library_location_row.add_css_class("property")
+        self.library_size_label = Gtk.Label(label="Scanning…", valign=Gtk.Align.CENTER)
+        self.library_size_label.add_css_class("numeric")
+        self.library_location_row.add_suffix(self.library_size_label)
+        open_button = Gtk.Button(icon_name="folder-open-symbolic", tooltip_text="Open folder",
+                                 valign=Gtk.Align.CENTER)
+        open_button.add_css_class("flat")
+        open_button.connect("clicked", self._open_library_folder)
+        self.library_location_row.add_suffix(open_button)
+        location_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        location_list.add_css_class("boxed-list")
+        location_list.append(self.library_location_row)
+        location_list.set_margin_start(24)
+        location_list.set_margin_end(24)
+        location_list.set_margin_top(12)
+        location_list.set_margin_bottom(12)
+        self.append(location_list)
 
         self.page_names = ("overview", "cache", "binpkgs", "snapshots", "projects", "builds")
         self.page_toggle = CLToggleGroup(valign=Gtk.Align.CENTER)
@@ -111,6 +132,9 @@ class LibrarySection(Gtk.Box):
         if HOST_RUNNER.supported() and HOST_RUNNER.users:
             subtitle += " · In use by: " + ", ".join(HOST_RUNNER.users)
         self.host_runner_row.set_subtitle(subtitle)
+
+    def _open_library_folder(self, *_args):
+        Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(self.library_path).get_uri(), None)
 
     def _on_host_runner_updated(self, *_args):
         self._update_host_runner_row()
@@ -305,11 +329,13 @@ class LibrarySection(Gtk.Box):
         self._last_snapshot = snapshot
         if snapshot.get("error"):
             self.overview_status.set_text(f"Could not scan the library: {snapshot['error']}")
+            self.library_size_label.set_text("Size unavailable")
             self._refresh_safety()
             return GLib.SOURCE_REMOVE
 
+        self.library_size_label.set_text(format_size(snapshot["total_size"]))
         self.overview_status.set_text(
-            f"{self.library_path} · {format_size(snapshot['total_size'])} used"
+            "Library storage breakdown"
         )
         self._replace_children(self.overview_group)
         for section in snapshot["sections"]:
