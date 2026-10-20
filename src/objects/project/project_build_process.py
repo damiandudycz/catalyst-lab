@@ -54,7 +54,7 @@ class ProjectBuild(MultiStageProcess):
 
     def __init__(self, project_directory, plan: StageBuildPlan, toolset, runner, snapshot=None, fetch_snapshot: bool = False,
                  update_project_snapshot: bool = False, cleanup_previous_builds: bool = False, timestamp: str | None = None,
-                 defaults_snapshot=_DEFAULTS_SNAPSHOT_UNSET):
+                 defaults_snapshot=_DEFAULTS_SNAPSHOT_UNSET, preview_root: str | None = None):
         self.project_directory = project_directory
         self.plan = plan
         self._build_order = plan.build_order()
@@ -73,6 +73,7 @@ class ProjectBuild(MultiStageProcess):
         self.cleanup_previous_builds = cleanup_previous_builds
         self.toolset = toolset
         self.timestamp = timestamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") # @TIMESTAMP@ for all stages of this build.
+        self.preview_root = preview_root
         self.builds_directory = project_builds_directory(project_directory)
         self.catalyst_builds_directory = os.path.join(self.builds_directory, "Catalyst")
         self.stage_artifacts_directory = os.path.join(self.builds_directory, "stages")
@@ -363,10 +364,13 @@ class ProjectBuild(MultiStageProcess):
         # Steps of run can be shown later from builds list.
         from .project_build_record import save_build_record
         save_build_record(self)
+        if self.preview_root:
+            shutil.rmtree(self.preview_root, ignore_errors=True)
 
 def start_project_build(project_directory, plan: StageBuildPlan, toolset, runner, snapshot=None, fetch_snapshot: bool = False,
                         update_project_snapshot: bool = False, cleanup_previous_builds: bool = False, done=None,
-                        timestamp: str | None = None, defaults_snapshot=_DEFAULTS_SNAPSHOT_UNSET):
+                        timestamp: str | None = None, defaults_snapshot=_DEFAULTS_SNAPSHOT_UNSET,
+                        preview_root: str | None = None):
     """Starts build of project (used by build view and build queue). Builds that can't run in user namespace get root
     privileges first (user is asked). Done is called on main thread with started build, or None when it didn't start."""
     from .rootless import rootless_unsupported_reason
@@ -377,7 +381,7 @@ def start_project_build(project_directory, plan: StageBuildPlan, toolset, runner
             build = ProjectBuild(project_directory=project_directory, plan=plan, toolset=toolset, runner=runner, snapshot=snapshot,
                                  fetch_snapshot=fetch_snapshot, update_project_snapshot=update_project_snapshot,
                                  cleanup_previous_builds=cleanup_previous_builds, timestamp=timestamp,
-                                 defaults_snapshot=defaults_snapshot)
+                                 defaults_snapshot=defaults_snapshot, preview_root=preview_root)
             build.start(authorization_keeper=authorization_keeper)
         except Exception as e:
             print(f"Failed to start build of {project_directory.name}: {e}")
@@ -728,34 +732,57 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             if os.path.isdir(work_directory):
                 shutil.rmtree(work_directory)
             os.makedirs(work_directory)
+            preview_directory = (
+                os.path.join(process.preview_root, self.stage.id.hex) if process.preview_root else None
+            )
+            spec_path = os.path.join(work_directory, "stage.spec")
+            use_preview = bool(preview_directory and os.path.isfile(os.path.join(preview_directory, "stage.spec")))
+            if process.preview_root and not use_preview:
+                raise RuntimeError(f"Prepared preview files for {self.stage.name} are missing")
+            if use_preview:
+                shutil.copytree(
+                    preview_directory, work_directory, dirs_exist_ok=True,
+                    symlinks=True,
+                    ignore=shutil.ignore_patterns("PREVIEW-NOTES.txt", "PREVIEW-ERROR.txt"),
+                )
             portage_path = os.path.join(work_directory, "portage")
-            has_confdir = generate_portage_confdir(project, self.stage, portage_path)
+            has_confdir = os.path.isdir(portage_path) if use_preview else generate_portage_confdir(project, self.stage, portage_path)
             root_overlay_path = os.path.join(work_directory, "root_overlay")
-            has_root_overlay = generate_root_overlay(project, self.stage, root_overlay_path)
+            has_root_overlay = os.path.isdir(root_overlay_path) if use_preview else generate_root_overlay(project, self.stage, root_overlay_path)
             iso_overlay_path = os.path.join(work_directory, "iso_overlay")
-            has_iso_overlay = generate_root_overlay(project, self.stage, iso_overlay_path, StageArgumentDetails.livecd_overlay)
+            has_iso_overlay = os.path.isdir(iso_overlay_path) if use_preview else generate_root_overlay(
+                project, self.stage, iso_overlay_path, StageArgumentDetails.livecd_overlay,
+            )
             cache_paths = process.stage_cache_paths(self.stage)
             process.make_directories(list(cache_paths.values()))
             rosetta_amd64 = process.rosetta_amd64_available()
-            spec = generate_stage_spec(project, self.stage, StageSpecContext(
-                timestamp=process.timestamp,
-                source_subpath=source_subpath,
-                portage_confdir=process.container_path(portage_path) if has_confdir else None,
-                toolset=process.toolset,
-                root_overlay=process.container_path(root_overlay_path) if has_root_overlay else None,
-                iso_overlay=process.container_path(iso_overlay_path) if has_iso_overlay else None,
-                cache_paths={argument: process.container_path(path) for argument, path in cache_paths.items()},
-                snapshot=process.snapshot,
-                path_mapper=process.container_path,
-                rosetta_amd64=rosetta_amd64,
-                defaults_snapshot=process.defaults_snapshot,
-            ))
+            if use_preview:
+                with open(spec_path, encoding="utf-8") as file:
+                    spec = file.read()
+                spec = _resolve_preview_spec(spec, source_subpath, snapshot_treeish(project, process.snapshot))
+                with open(spec_path, "w", encoding="utf-8") as file:
+                    file.write(spec)
+                self.log("Using edited build preview files")
+            else:
+                spec = generate_stage_spec(project, self.stage, StageSpecContext(
+                    timestamp=process.timestamp,
+                    source_subpath=source_subpath,
+                    portage_confdir=process.container_path(portage_path) if has_confdir else None,
+                    toolset=process.toolset,
+                    root_overlay=process.container_path(root_overlay_path) if has_root_overlay else None,
+                    iso_overlay=process.container_path(iso_overlay_path) if has_iso_overlay else None,
+                    cache_paths={argument: process.container_path(path) for argument, path in cache_paths.items()},
+                    snapshot=process.snapshot,
+                    path_mapper=process.container_path,
+                    rosetta_amd64=rosetta_amd64,
+                    defaults_snapshot=process.defaults_snapshot,
+                ))
             if rosetta_amd64:
                 self.log("Rosetta is active for amd64; Catalyst interpreter is omitted")
             values = _spec_values(spec)
-            spec_path = os.path.join(work_directory, "stage.spec")
-            with open(spec_path, "w", encoding="utf-8") as file:
-                file.write(spec)
+            if not use_preview:
+                with open(spec_path, "w", encoding="utf-8") as file:
+                    file.write(spec)
             # Spec and portage configuration are kept with build (work directory is temporary).
             shutil.copyfile(spec_path, os.path.join(self.build.path, StageBuild.SPEC_FILE))
             self.build.details["inputs"]["spec"] = StageBuild.SPEC_FILE
@@ -774,16 +801,18 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             wrapper_path = None
             if process.rootless:
                 wrapper_path = os.path.join(work_directory, "catalyst-wrapper.py")
-                with open(wrapper_path, "w", encoding="utf-8") as file:
-                    file.write(CATALYST_WRAPPER)
+                if not os.path.isfile(wrapper_path):
+                    with open(wrapper_path, "w", encoding="utf-8") as file:
+                        file.write(CATALYST_WRAPPER)
             build_script_path = os.path.join(work_directory, "build.sh")
-            with open(build_script_path, "w", encoding="utf-8") as file:
-                file.write(_catalyst_build_script(
-                    spec_path=process.container_path(spec_path),
-                    config_path=process.container_path(os.path.join(work_directory, "catalyst.conf")),
-                    caches={_catalyst_cache_options[argument] for argument in cache_paths},
-                    wrapper_path=process.container_path(wrapper_path) if wrapper_path else None,
-                ))
+            if not os.path.isfile(build_script_path):
+                with open(build_script_path, "w", encoding="utf-8") as file:
+                    file.write(_catalyst_build_script(
+                        spec_path=process.container_path(spec_path),
+                        config_path=process.container_path(os.path.join(work_directory, "catalyst.conf")),
+                        caches={_catalyst_cache_options[argument] for argument in cache_paths},
+                        wrapper_path=process.container_path(wrapper_path) if wrapper_path else None,
+                    ))
             if process.rootless:
                 if not self._run_rootless(spec=spec, work_directory=work_directory, build_script_path=build_script_path):
                     raise RuntimeError("Catalyst build failed")
@@ -1081,6 +1110,17 @@ def _strip_archive_extension(path: str) -> str:
 def _spec_values(spec: str) -> dict[str, str]:
     """Single line values of generated spec."""
     return {key.strip(): value.strip() for line in spec.splitlines() if ":" in line and not line.startswith("\t") for key, value in [line.split(":", 1)]}
+
+def _resolve_preview_spec(spec: str, source_subpath: str, treeish: str | None) -> str:
+    """Resolve build-time tokens in an edited preview, preserving any values the user entered."""
+    lines = []
+    for line in spec.splitlines():
+        if line.startswith("source_subpath:") and line.partition(":")[2].strip() == "<source_subpath>":
+            line = f"source_subpath: {source_subpath}"
+        elif line.startswith("snapshot_treeish:") and line.partition(":")[2].strip() == "<snapshot_latest>":
+            line = f"snapshot_treeish: {treeish or ''}"
+        lines.append(line)
+    return "\n".join(lines) + ("\n" if spec.endswith("\n") else "")
 
 @root_function
 def prepare_loop_devices() -> list[str]:

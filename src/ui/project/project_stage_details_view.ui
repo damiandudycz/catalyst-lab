@@ -122,6 +122,12 @@
               </object>
             </child>
             <child>
+              <object class="AdwPreferencesGroup" id="build_requirements_group">
+                <property name="title">Build requirements</property>
+                <property name="visible">False</property>
+              </object>
+            </child>
+            <child>
               <object class="AdwPreferencesGroup" id="warnings_empty_group">
                 <property name="title">Warnings</property>
                 <property name="visible">False</property>

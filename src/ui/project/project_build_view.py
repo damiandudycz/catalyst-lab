@@ -50,6 +50,7 @@ class ProjectBuildView(Gtk.Box):
     snapshot_row = Gtk.Template.Child()
     cleanup_previous_builds_row = Gtk.Template.Child()
     generated_files_group = Gtk.Template.Child()
+    generated_files_info_group = Gtk.Template.Child()
     generated_files_location_row = Gtk.Template.Child()
 
     def __init__(self, project_directory: ProjectDirectory, installation_in_progress: ProjectBuild | None = None, content_navigation_view: Adw.NavigationView | None = None):
@@ -487,7 +488,7 @@ class ProjectBuildView(Gtk.Box):
                 selected = self.snapshot_selection_view.selected_item
                 return selected is not None and self.is_item_selectable(self.snapshot_selection_view, selected)
             case self.generated_files_page:
-                return (self._preview_ready
+                return (self._preview_ready and self._preview_root is not None
                         and bool(getattr(self, "plan", None) and self.plan.build_order()))
         return True
 
@@ -504,7 +505,7 @@ class ProjectBuildView(Gtk.Box):
             return False
         dialog = Adw.AlertDialog(
             heading="Return to build setup?",
-            body="If you change any build options, the generated files will be regenerated when you return to this review.",
+            body="If you change any build options, the generated files will be regenerated when you return to this review. Any custom edits made directly to these files may be lost.",
         )
         dialog.add_response("stay", "Stay")
         dialog.add_response("back", "Continue")
@@ -533,6 +534,7 @@ class ProjectBuildView(Gtk.Box):
         previous_root = self._preview_root
         self._preview_root = None
         self._clear_preview_rows()
+        self.generated_files_info_group.set_visible(False)
         self.generated_files_location_row.set_visible(False)
         self.generated_files_location_row.set_title("Preview location")
         self.generated_files_location_row.set_subtitle("Preparing preview…")
@@ -575,7 +577,9 @@ class ProjectBuildView(Gtk.Box):
                              cleanup_previous_builds, timestamp, previous_root, cancelled):
         """Write preview files and return row descriptions without accessing GTK."""
         from .project_build_process import ProjectBuild, CATALYST_WRAPPER, _catalyst_build_script, _catalyst_cache_options
-        from .project_build_spec import generate_portage_confdir, generate_root_overlay, StageSpecContext, generate_stage_spec
+        from .project_build_spec import (
+            generate_portage_confdir, generate_root_overlay, StageSpecContext, _stage_spec_lines,
+        )
         from .project_stage_arguments import StageArgumentDetails
 
         preview_root = None
@@ -635,29 +639,31 @@ class ProjectBuildView(Gtk.Box):
                 source_subpath = process.seed_subpath(stage)
                 runtime_inputs = []
                 if source_subpath is None:
-                    parent = plan.parent(stage)
-                    source_subpath = f"<resolved-at-build-time:{parent.name if parent else 'latest-stage3-seed'}>"
+                    source_subpath = "<source_subpath>"
                     runtime_inputs.append("source seed path")
                 cache_paths = process.stage_cache_paths(stage)
                 try:
-                    spec = generate_stage_spec(evaluation_project, evaluation_stages_by_id[stage.id], StageSpecContext(
-                        timestamp=timestamp,
-                        source_subpath=source_subpath,
-                        portage_confdir=process.container_path(portage_path) if has_confdir else None,
-                        toolset=process.toolset,
-                        root_overlay=process.container_path(root_overlay_path) if has_root_overlay else None,
-                        iso_overlay=process.container_path(iso_overlay_path) if has_iso_overlay else None,
-                        cache_paths={argument: process.container_path(path) for argument, path in cache_paths.items()},
-                        snapshot=snapshot,
-                        path_mapper=process.container_path,
-                        rosetta_amd64=rosetta_amd64,
-                        defaults_snapshot=defaults_snapshot,
-                    ))
+                    spec_lines, missing = _stage_spec_lines(
+                        evaluation_project, evaluation_stages_by_id[stage.id], StageSpecContext(
+                            timestamp=timestamp,
+                            source_subpath=source_subpath,
+                            portage_confdir=process.container_path(portage_path) if has_confdir else None,
+                            toolset=process.toolset,
+                            root_overlay=process.container_path(root_overlay_path) if has_root_overlay else None,
+                            iso_overlay=process.container_path(iso_overlay_path) if has_iso_overlay else None,
+                            cache_paths={argument: process.container_path(path) for argument, path in cache_paths.items()},
+                            snapshot=snapshot,
+                            path_mapper=process.container_path,
+                            rosetta_amd64=rosetta_amd64,
+                            defaults_snapshot=defaults_snapshot,
+                        ),
+                    )
+                    spec = "\n".join(spec_lines) + "\n"
                     if latest_snapshot:
                         spec_lines = spec.splitlines()
                         for index, line in enumerate(spec_lines):
                             if line.startswith("snapshot_treeish:"):
-                                spec_lines[index] = "snapshot_treeish: <resolved-at-build-time>"
+                                spec_lines[index] = "snapshot_treeish: <snapshot_latest>"
                                 runtime_inputs.append("snapshot treeish")
                         spec = "\n".join(spec_lines) + "\n"
                 except Exception as error:
@@ -693,11 +699,11 @@ class ProjectBuildView(Gtk.Box):
                     ("iso_overlay/", has_iso_overlay),
                 ) if present)
                 with open(os.path.join(work_directory, "PREVIEW-NOTES.txt"), "w", encoding="utf-8") as file:
-                    file.write("Generated build-file preview. The actual build regenerates these files.\n")
+                    file.write("These are the files used by the build. Edit them before starting the build if needed.\n")
                     if "source seed path" in runtime_inputs:
-                        file.write("Runtime-resolved input: source_subpath (seed selected or produced when the build runs).\n")
+                        file.write("<source_subpath> is filled with the seed selected or produced when the build runs, unless you replace it.\n")
                     if latest_snapshot:
-                        file.write("The build uses a newly generated latest snapshot. snapshot_treeish is resolved at build time; snapshot-dependent defaults keep the values established in this wizard.\n")
+                        file.write("The build uses a newly generated latest snapshot. <snapshot_latest> is resolved at build time; snapshot-dependent defaults keep the values established in this wizard.\n")
                     file.write("catalyst.conf is generated inside the selected toolset when build.sh runs.\n")
                     if rosetta_detection_error:
                         file.write(f"Rosetta detection failed during preview ({rosetta_detection_error}); the build checks again after preparing the runner.\n")
@@ -705,12 +711,16 @@ class ProjectBuildView(Gtk.Box):
                         file.write("Rosetta is active for amd64; Catalyst interpreter is omitted.\n")
                     elif getattr(architecture, "value", None) == "amd64":
                         file.write("Rosetta is not active for amd64; the Catalyst interpreter follows the project architecture.\n")
-                subtitle = " · ".join(files)
-                if "source seed path" in runtime_inputs:
-                    subtitle += " · seed path resolved when the build starts"
-                if "snapshot treeish" in runtime_inputs:
-                    subtitle += " · snapshot treeish resolved when the build starts"
-                rows.append({"title": stage.name, "subtitle": subtitle, "path": work_directory, "error": False})
+                if missing:
+                    subtitle = f"Missing required: {', '.join(missing)}"
+                else:
+                    subtitle = " · ".join(files)
+                    if "source seed path" in runtime_inputs:
+                        subtitle += " · seed path resolved when the build starts"
+                    if "snapshot treeish" in runtime_inputs:
+                        subtitle += " · snapshot treeish resolved when the build starts"
+                rows.append({"title": stage.name, "subtitle": subtitle, "path": work_directory,
+                             "error": False, "warning": bool(missing)})
             if cancelled.is_set():
                 shutil.rmtree(preview_root, ignore_errors=True)
                 return None, [], latest_snapshot
@@ -735,7 +745,13 @@ class ProjectBuildView(Gtk.Box):
                 title=GLib.markup_escape_text(row_data["title"]),
                 subtitle=GLib.markup_escape_text(row_data["subtitle"]),
             )
-            if row_data["error"]:
+            if row_data.get("warning"):
+                row.add_css_class("warning")
+                warning_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+                warning_icon.add_css_class("warning")
+                warning_icon.set_tooltip_text(row_data["subtitle"])
+                row.add_prefix(warning_icon)
+            elif row_data.get("error"):
                 row.add_css_class("error")
             if row_data["path"]:
                 open_button = Gtk.Button(label="Browse")
@@ -747,11 +763,15 @@ class ProjectBuildView(Gtk.Box):
         if preview_root:
             self.generated_files_location_row.set_subtitle(GLib.markup_escape_text(preview_root))
             self.generated_files_location_row.set_visible(True)
+            self.generated_files_info_group.set_visible(True)
             if latest_snapshot:
                 self.generated_files_location_row.set_title(
                     "Preview files (latest snapshot may update defaults at build time)"
                 )
-        self._preview_ready = True
+        self._preview_ready = bool(preview_root) and all(
+            row_data["path"] and os.path.isfile(os.path.join(row_data["path"], "stage.spec"))
+            for row_data in rows
+        )
         self.wizard_view._refresh_buttons_state()
         return GLib.SOURCE_REMOVE
 
@@ -779,7 +799,7 @@ class ProjectBuildView(Gtk.Box):
 
     @Gtk.Template.Callback()
     def begin_installation(self, view):
-        if not self._preview_ready:
+        if not self._preview_ready or self._preview_root is None:
             return
         if self._queue_mode():
             # Toolset can be used by running build, it's checked when queued build starts.
@@ -852,8 +872,9 @@ class ProjectBuildView(Gtk.Box):
         start_project_build(self.project_directory, self.plan, toolset=self._selected_toolset(), runner=self._selected_runner(), snapshot=None if fetch else selected, fetch_snapshot=fetch,
                             update_project_snapshot=update_project_snapshot and not fetch,
                             cleanup_previous_builds=self.cleanup_previous_builds_row.get_active(),
-                            timestamp=self._preview_timestamp if not self._queue_mode() else None,
+                            timestamp=self._preview_timestamp,
                             defaults_snapshot=self._preview_defaults_snapshot,
+                            preview_root=self._preview_root,
                             done=self._on_build_started)
 
     def _add_to_queue(self, selected, fetch: bool, update_project_snapshot: bool):
@@ -867,7 +888,8 @@ class ProjectBuildView(Gtk.Box):
             BuildQueue.shared().add(self.project_directory, list(self.selected_stage_ids), LATEST if fetch else selected.filename,
                                     cleanup_previous_builds=self.cleanup_previous_builds_row.get_active(),
                                     toolset=self._selected_toolset(), runner=self._selected_runner(),
-                                    defaults_snapshot=self._preview_defaults_snapshot)
+                                    defaults_snapshot=self._preview_defaults_snapshot,
+                                    preview_root=self._preview_root, timestamp=self._preview_timestamp)
         except RuntimeError as e:
             dialog = Adw.AlertDialog(heading="Can't add build to queue", body=str(e))
             dialog.add_response("ok", "OK")

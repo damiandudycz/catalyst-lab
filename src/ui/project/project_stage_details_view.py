@@ -1,4 +1,4 @@
-import threading, uuid, os
+import threading, uuid, os, copy
 from gi.repository import Gtk, Gdk, Adw, GLib, Gio, Pango
 from .project_directory import ProjectDirectory
 from .project_stage import (
@@ -41,6 +41,8 @@ from .project_stage_kernels import (
 
 from .project_kernel_packages import load_kernel_packages, KernelPackageKind, default_kernel_package, derived_distkernel
 from .stage_package_picker_view import StagePackagePickerView, _as_list
+from .project_build_spec import StageSpecContext, missing_required_stage_values
+from .tree_node import walk_tree
 
 HIDDEN_STAGE_ARGUMENTS = frozenset({
     StageArgumentDetails.snapshot_treeish,
@@ -89,6 +91,7 @@ class ProjectStageDetailsView(Gtk.Box):
     loading_indicator = Gtk.Template.Child()
     unsupported_options_group = Gtk.Template.Child()
     warnings_empty_group = Gtk.Template.Child()
+    build_requirements_group = Gtk.Template.Child()
 
     # Basic or advanced settings (STAGE_ARGUMENT_LEVELS), last choice is used by stages opened later while app runs.
     advanced_default = False
@@ -102,6 +105,8 @@ class ProjectStageDetailsView(Gtk.Box):
         self.stage_toolsets = []
         self.active_stage_toolset = None
         self._unsupported_option_rows = []
+        self._required_stage_values = set()
+        self._required_unrendered_rows = []
         self.template_stage_baseline = {}
         self._name_is_used = False
         self._setup_mode_toggle()
@@ -200,8 +205,12 @@ class ProjectStageDetailsView(Gtk.Box):
                 if getattr(row, "restore_default_button", None):
                     row.restore_default_button.set_visible(changed)
                 changed_kernel_toggle |= changed
+            elif getattr(row, "is_required_warning", False):
+                row.set_visible(not changed_only)
             elif getattr(row, "is_kernel_add_action", False):
-                row.set_visible(not warnings_only and not changed_only)
+                # Keep the Kernels group's normal action available alongside warnings,
+                # so the missing-kernel warning can be fixed without changing tabs.
+                row.set_visible(not changed_only)
         self.no_changed_settings_row.set_visible(
             changed_only and not name_changed and not changed_kernel_settings and not changed_configuration
         )
@@ -235,6 +244,7 @@ class ProjectStageDetailsView(Gtk.Box):
                  (not changed_only or changed_kernel_settings or changed_kernel_toggle))
         )
         self.warnings_empty_group.set_visible(warnings_only and not self._has_any_warnings(warning_rows))
+        self.build_requirements_group.set_visible(warnings_only and bool(self._required_unrendered_rows))
 
     def _name_has_warning(self) -> bool:
         return self._name_is_used
@@ -253,6 +263,8 @@ class ProjectStageDetailsView(Gtk.Box):
         return False
 
     def _row_has_warning(self, row) -> bool:
+        if getattr(row, "required_value_missing", False):
+            return True
         if getattr(row, "warning_icon", None) is not None and row.warning_icon.get_visible():
             return True
         if getattr(row, "unsupported_selection_icon", None) is not None and row.unsupported_selection_icon.get_visible():
@@ -267,6 +279,7 @@ class ProjectStageDetailsView(Gtk.Box):
             or self._name_has_warning()
             or getattr(self, "_row_load_warnings", [])
             or any(self._row_has_warning(row) for row in getattr(self, "kernel_rows", []))
+            or bool(getattr(self, "_required_unrendered_rows", []))
         )
 
     def on_realize(self, widget):
@@ -327,6 +340,7 @@ class ProjectStageDetailsView(Gtk.Box):
     def _load_stage_configuration_async(self):
         """Prepare Catalyst metadata and defaults off the GTK main thread."""
         self._stage_load_generation = getattr(self, "_stage_load_generation", 0) + 1
+        self._required_check_generation = getattr(self, "_required_check_generation", 0) + 1
         generation = self._stage_load_generation
         stage = self.stage
         toolset = self.active_stage_toolset
@@ -336,6 +350,7 @@ class ProjectStageDetailsView(Gtk.Box):
             arguments_details = {}
             error = None
             prepared_options = {}
+            required_missing = None
             try:
                 baseline = self._load_stage_baseline(stage)
             except Exception as exception:
@@ -353,6 +368,7 @@ class ProjectStageDetailsView(Gtk.Box):
                         arguments_details=arguments_details,
                     )
                     prepared_options = self._prepare_stage_option_data(stage, toolset, arguments_details)
+                    required_missing = self._find_missing_required_values(stage.id, toolset)
                 except Exception as exception:
                     error = exception
             GLib.idle_add(
@@ -362,9 +378,53 @@ class ProjectStageDetailsView(Gtk.Box):
                 error,
                 prepared_options,
                 baseline,
+                required_missing,
             )
 
         threading.Thread(target=work, name="stage-configuration-load", daemon=True).start()
+
+    def _find_missing_required_values(self, stage_id, toolset):
+        """Evaluate build requirements on a detached, parent-first project copy."""
+        snapshot = self.project_directory.get_snapshot()
+        evaluation_stages = []
+        for original in self.project_directory.stages:
+            stage = copy.copy(original)
+            stage.__dict__ = dict(original.__dict__)
+            for name in ("_default_stage_arguments", "_explicit_stage_arguments",
+                         "_explicit_none_arguments", "_explicit_user_arguments",
+                         "_explicit_user_argument_dates"):
+                value = getattr(stage, name, None)
+                if isinstance(value, dict):
+                    setattr(stage, name, dict(value))
+                elif isinstance(value, set):
+                    setattr(stage, name, set(value))
+            evaluation_stages.append(stage)
+        evaluation_project = copy.copy(self.project_directory)
+        evaluation_project.stages = evaluation_stages
+        evaluation_stage = next((item for item in evaluation_stages if item.id == stage_id), None)
+        if evaluation_stage is None:
+            return None
+        context = StageSpecContext(
+            timestamp="<timestamp>",
+            source_subpath="<stage seed>",
+            portage_confdir="<generated portage configuration>",
+            root_overlay="<generated root overlay>",
+            iso_overlay="<generated ISO overlay>",
+            snapshot=snapshot,
+            toolset=toolset,
+            cache_paths={
+                StageArgumentDetails.pkgcache_path: "<package cache>",
+                StageArgumentDetails.kerncache_path: "<kernel cache>",
+            },
+        )
+        for node, _depth in walk_tree(evaluation_project.stages_tree()):
+            current = node.value
+            refresh_default_stage_arguments(
+                evaluation_project, current, toolset=toolset, snapshot=snapshot
+            )
+            if current.id == stage_id:
+                return set(missing_required_stage_values(evaluation_project, current, context))
+        return None
 
     def _prepare_stage_option_data(self, stage, toolset, arguments_details):
         """Read option sources and resolve inheritance labels without blocking GTK."""
@@ -408,7 +468,8 @@ class ProjectStageDetailsView(Gtk.Box):
                 prepared[name] = (None, None, exception)
         return prepared
 
-    def _on_stage_configuration_loaded(self, generation, arguments_details, error, prepared_options, baseline):
+    def _on_stage_configuration_loaded(self, generation, arguments_details, error, prepared_options, baseline,
+                                       required_missing=None):
         if generation != self._stage_load_generation:
             return GLib.SOURCE_REMOVE
         self.template_stage_baseline = baseline
@@ -417,6 +478,7 @@ class ProjectStageDetailsView(Gtk.Box):
             metadata_error=error,
             metadata_prepared=True,
             prepared_options=prepared_options,
+            required_missing=required_missing,
         )
         self.loading_indicator.set_visible(False)
         return GLib.SOURCE_REMOVE
@@ -473,12 +535,16 @@ class ProjectStageDetailsView(Gtk.Box):
         self.load_configuration_rows()
 
     def load_configuration_rows(self, arguments_details=None, metadata_error=None, metadata_prepared=False,
-                                prepared_options=None):
+                                prepared_options=None, required_missing=None):
         # Reset configuration rows
         if hasattr(self, 'configuration_rows'):
             for row in self.configuration_rows:
                 row.pref_group.remove(row)
         self.configuration_rows = []
+        self._required_stage_values = set(required_missing or [])
+        for warning_row in self._required_unrendered_rows:
+            self.build_requirements_group.remove(warning_row)
+        self._required_unrendered_rows = []
         self._row_load_warnings = []
         self.boot_kernel_argument = None
         for row in self._unsupported_option_rows:
@@ -573,6 +639,13 @@ class ProjectStageDetailsView(Gtk.Box):
                     row.pref_group = group
                     row.level = stage_argument_level(arg.details)
                     row.argument = arg
+                    row.required_value_missing = arg.display_name in self._required_stage_values
+                    if row.required_value_missing:
+                        icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
+                        icon.add_css_class("warning")
+                        icon.set_tooltip_text("Required value is missing after inheritance is resolved")
+                        row.add_suffix(icon)
+                        row.required_warning_icon = icon
                     if not hasattr(row, "event_bus"):
                         row.event_bus = EventBus[ItemSelectionViewEvent]()
                     row.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self.argument_changed, self)
@@ -589,8 +662,20 @@ class ProjectStageDetailsView(Gtk.Box):
             self.load_kernel_rows()
         except Exception as error:
             self._row_load_warnings.append(f"Kernels: {self._short_error(error)}")
+        represented = {row.argument.display_name for row in self.configuration_rows}
+        if self.boot_kernel_argument is not None:
+            represented.add(self.boot_kernel_argument.display_name)
+        for missing in sorted(self._required_stage_values - represented):
+            warning_row = Adw.ActionRow(title=f"Missing required: {missing}")
+            icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
+            icon.add_css_class("warning")
+            warning_row.add_prefix(icon)
+            self.build_requirements_group.add(warning_row)
+            self._required_unrendered_rows.append(warning_row)
         self._update_row_load_warnings()
         self.apply_mode()
+        if required_missing is None and metadata_available:
+            self._refresh_required_stage_warnings_async()
 
     def _create_saved_value_row(self, name: str, value, note: str | None = None) -> Adw.ActionRow:
         """Read-only fallback that keeps saved settings visible without Catalyst metadata."""
@@ -686,6 +771,7 @@ class ProjectStageDetailsView(Gtk.Box):
         self._update_row_load_warnings()
         if args:
             self.apply_mode()
+            self._refresh_required_stage_warnings_async()
 
     def _load_kernel_rows(self, *args):
         """Build kernel rows. Wrapped so a bad kernel setting cannot abort the rest of the stage editor."""
@@ -700,6 +786,14 @@ class ProjectStageDetailsView(Gtk.Box):
         names = stage_kernel_names(self.project_directory, self.stage)
         inherits = stage_inherits_kernels(self.stage)
         releng_names = releng_kernel_names(self.project_directory, self.stage)
+        if self.boot_kernel_argument.display_name in self._required_stage_values:
+            warning_row = Adw.ActionRow(title=f"Missing required: {self.boot_kernel_argument.display_name}")
+            warning_icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
+            warning_icon.add_css_class("warning")
+            warning_icon.set_tooltip_text("This required setting is empty after inheritance is resolved")
+            warning_row.add_prefix(warning_icon)
+            warning_row.is_required_warning = True
+            self._add_kernel_row(warning_row)
         if inherits or releng_names:
             # When inherited, the Releng spec is the source of its kernels and settings.
             # Keep those names in the switch subtitle; only stage-specific additions get rows.
@@ -975,6 +1069,58 @@ class ProjectStageDetailsView(Gtk.Box):
             except Exception as error:
                 print(f"Failed to refresh kernel settings for {self.stage.name}: {error}")
         self._refresh_changed_filter()
+
+    def _refresh_required_stage_warnings_async(self):
+        """Recheck shared build requirements after an edit without blocking GTK."""
+        toolset = self.active_stage_toolset
+        if toolset is None:
+            return
+        self._required_check_generation = getattr(self, "_required_check_generation", 0) + 1
+        generation = self._required_check_generation
+        stage_id = self.stage.id
+
+        def work():
+            try:
+                missing = self._find_missing_required_values(stage_id, toolset)
+            except Exception:
+                missing = None
+            GLib.idle_add(self._on_required_stage_warnings_loaded, generation, stage_id, missing)
+
+        threading.Thread(target=work, name="stage-requirements-check", daemon=True).start()
+
+    def _on_required_stage_warnings_loaded(self, generation, stage_id, missing):
+        if generation != getattr(self, "_required_check_generation", 0) or self.stage.id != stage_id:
+            return GLib.SOURCE_REMOVE
+        if missing is None:
+            return GLib.SOURCE_REMOVE
+        self._required_stage_values = set(missing)
+        for row in self.configuration_rows:
+            row.required_value_missing = row.argument.display_name in self._required_stage_values
+            icon = getattr(row, "required_warning_icon", None)
+            if row.required_value_missing and icon is None:
+                icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
+                icon.add_css_class("warning")
+                icon.set_tooltip_text("Required value is missing after inheritance is resolved")
+                row.add_suffix(icon)
+                row.required_warning_icon = icon
+            elif icon is not None:
+                icon.set_visible(row.required_value_missing)
+        for warning_row in self._required_unrendered_rows:
+            self.build_requirements_group.remove(warning_row)
+        self._required_unrendered_rows = []
+        represented = {row.argument.display_name for row in self.configuration_rows}
+        if self.boot_kernel_argument is not None:
+            represented.add(self.boot_kernel_argument.display_name)
+        for missing_name in sorted(self._required_stage_values - represented):
+            warning_row = Adw.ActionRow(title=f"Missing required: {missing_name}")
+            icon = Gtk.Image.new_from_icon_name("danger-triangle-svgrepo-com-symbolic")
+            icon.add_css_class("warning")
+            warning_row.add_prefix(icon)
+            self.build_requirements_group.add(warning_row)
+            self._required_unrendered_rows.append(warning_row)
+        self.load_kernel_rows()
+        self.apply_mode()
+        return GLib.SOURCE_REMOVE
 
     def _refresh_changed_filter(self):
         self.apply_mode()

@@ -27,6 +27,8 @@ class QueuedBuild:
     snapshot: str | None # LATEST, filename of snapshot, or None (snapshot of project).
     cleanup_previous_builds: bool = False
     defaults_snapshot: object | None = None
+    preview_root: str | None = None
+    timestamp: str | None = None
     queued: datetime = field(default_factory=datetime.now)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
@@ -94,19 +96,24 @@ class BuildQueue:
         return None
 
     def add(self, project_directory, stage_ids: list[uuid.UUID], snapshot: str | None,
-            cleanup_previous_builds: bool = False, toolset=None, runner=None, defaults_snapshot=None):
+            cleanup_previous_builds: bool = False, toolset=None, runner=None, defaults_snapshot=None,
+            preview_root: str | None = None, timestamp: str | None = None):
         if reason := self.queue_unavailable_reason(project_directory):
             raise RuntimeError(reason)
         self.entries.append(QueuedBuild(project_id=project_directory.id, stage_ids=list(stage_ids),
                                         toolset_id=toolset.uuid if toolset else None,
                                         runner_id=str(runner.id) if runner else None, snapshot=snapshot,
                                         cleanup_previous_builds=cleanup_previous_builds,
-                                        defaults_snapshot=defaults_snapshot))
+                                        defaults_snapshot=defaults_snapshot, preview_root=preview_root,
+                                        timestamp=timestamp))
         self._changed()
 
     def remove(self, entry: QueuedBuild):
         if entry in self.entries:
             self.entries.remove(entry)
+            if entry.preview_root:
+                import shutil
+                shutil.rmtree(entry.preview_root, ignore_errors=True)
             self._changed()
 
     def move(self, entry: QueuedBuild, offset: int):
@@ -117,6 +124,10 @@ class BuildQueue:
             self._changed()
 
     def clear(self):
+        import shutil
+        for entry in self.entries:
+            if entry.preview_root:
+                shutil.rmtree(entry.preview_root, ignore_errors=True)
         self.entries = []
         self._changed()
 
@@ -202,6 +213,9 @@ class BuildQueue:
         stage_ids = {stage.id for stage in project.stages} & set(entry.stage_ids)
         if not stage_ids:
             print(f"Stages of queued build of {project.name} were removed, build is skipped")
+            if entry.preview_root:
+                import shutil
+                shutil.rmtree(entry.preview_root, ignore_errors=True)
             self._schedule_check()
             return
         plan = StageBuildPlan(project, stage_ids) # Planned now, previous builds can be reused.
@@ -210,8 +224,12 @@ class BuildQueue:
             snapshot = next((item for item in Repository.Snapshot.value if item.filename == entry.snapshot), None)
         def started(build):
             if build is None:
+                if entry.preview_root:
+                    import shutil
+                    shutil.rmtree(entry.preview_root, ignore_errors=True)
                 print(f"Queued build of {project.name} didn't start")
                 self.pause(f"Build of {project.name} didn't start")
         start_project_build(project, plan, toolset=entry.toolset, runner=entry.runner, snapshot=snapshot, fetch_snapshot=entry.snapshot == LATEST,
                             cleanup_previous_builds=entry.cleanup_previous_builds, done=started,
-                            defaults_snapshot=entry.defaults_snapshot)
+                            defaults_snapshot=entry.defaults_snapshot, preview_root=entry.preview_root,
+                            timestamp=entry.timestamp)
