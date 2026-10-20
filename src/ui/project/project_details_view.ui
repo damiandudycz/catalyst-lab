@@ -115,7 +115,7 @@
                   <object class="AdwPreferencesGroup">
                     <property name="margin-start">24</property>
                     <property name="margin-end">24</property>
-                    <!-- <property name="margin-top">24</property> -->
+                    <property name="margin-top">16</property>
                     <property name="margin-bottom">24</property>
                     <child>
                       <object class="ItemSelectionExpanderRow" id="releng_selection_view">
@@ -300,13 +300,15 @@
               </object>
             </child>
             <child>
-              <object class="GtkCenterBox" id="source_action_row">
+              <object class="GtkBox" id="source_action_row">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
                 <property name="margin-start">12</property>
                 <property name="margin-end">12</property>
                 <property name="height-request">32</property>
                 <property name="valign">center</property>
                 <style><class name="toolbar"/></style>
-                <child type="start">
+                <child>
                   <object class="GtkButton" id="source_button">
                     <property name="hexpand">False</property>
                     <property name="valign">center</property>
@@ -321,7 +323,27 @@
                     </child>
                   </object>
                 </child>
-                <child type="end">
+                <child>
+                  <object class="GtkButton" id="project_toolset_button">
+                    <property name="hexpand">False</property>
+                    <property name="valign">center</property>
+                    <signal name="clicked" handler="_on_change_project_toolset_clicked"/>
+                    <style><class name="flat"/><class name="caption"/><class name="stage-toolset-change-button"/></style>
+                    <child>
+                      <object class="GtkLabel" id="project_toolset_button_label">
+                        <property name="xalign">0</property>
+                        <property name="ellipsize">end</property>
+                        <style><class name="dim-label"/><class name="caption"/></style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="hexpand">True</property>
+                  </object>
+                </child>
+                <child>
                   <object class="GtkButton" id="delete_project_button">
                     <property name="tooltip-text">Delete project</property>
                     <property name="valign">center</property>

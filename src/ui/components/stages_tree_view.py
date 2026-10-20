@@ -14,6 +14,7 @@ SIDE_MARGIN = 32 # Space on left and right, nodes expanded while hovered are mov
 NODE_MARGIN_Y = 32 # Spacing WITHIN a branch
 ROOT_BRANCH_MARGIN_Y = 48 # Larger spacing BETWEEN root branches
 CONNECTOR_CORNER_RADIUS = 10 # Rounded corners of lines connecting parents with children
+TREE_TOP_INSET = 8 # Space above the first row for its card shadow.
 
 @dataclass(frozen=True)
 class StageNodeStatus:
@@ -34,6 +35,13 @@ def _stage_card_text(stage, status: StageNodeStatus | None, expanded: bool) -> t
     title = stage.name if expanded or broken else stage_target_short_name(target)
     return title, subtitle or ""
 
+def _stage_has_custom_changes(stage) -> bool:
+    """Whether the user has changed any stage setting from its initial state."""
+    return bool(
+        getattr(stage, "_explicit_user_arguments", set())
+        or getattr(stage, "_explicit_user_argument_dates", {})
+    )
+
 def _create_stage_card(stage, status: StageNodeStatus | None, expanded: bool):
     """Stage displayed as list entry (boxed list with single row). Compact card has icon and short name of target,
     expanded one also name, target and status. Also used for measuring nodes, so sizes match."""
@@ -43,6 +51,8 @@ def _create_stage_card(stage, status: StageNodeStatus | None, expanded: bool):
     title, subtitle = _stage_card_text(stage, status, expanded)
     row = Adw.ActionRow(title=title, subtitle=subtitle, activatable=not broken)
     row.add_css_class("stage-tree-card-row")
+    if _stage_has_custom_changes(stage):
+        row.add_css_class("customized-setting")
     row.set_use_markup(False)
     # Single line labels, ellipsized while card grows. Wrapping labels would report minimal width and get squeezed.
     row.set_title_lines(1)
@@ -92,6 +102,7 @@ class StagesListView(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.root_nodes = []
         self.statuses: dict = {}
+        self.rows_by_stage_id: dict = {}
         self.set_margin_start(24)
         self.set_margin_end(24)
         self.set_margin_top(12)
@@ -113,21 +124,22 @@ class StagesListView(Gtk.Box):
     def set_statuses(self, statuses: dict):
         if statuses == self.statuses:
             return
+        previous = self.statuses
         self.statuses = statuses
-        self._rebuild()
+        for stage_id, row in self.rows_by_stage_id.items():
+            if previous.get(stage_id) != statuses.get(stage_id):
+                self._update_row(row, row.stage, statuses.get(stage_id))
 
     def _rebuild(self):
         while row := self.list_box.get_first_child():
             self.list_box.remove(row)
+        self.rows_by_stage_id = {}
         for node, _depth in walk_tree(self.root_nodes):
             stage = node.value
-            target = getattr(stage, "target", None) or ""
+            stage_id = getattr(stage, "id", None)
             broken = getattr(stage, "is_broken", False)
-            subtitle = getattr(stage, "warning_message", None) if broken else target.replace("_", "-")
-            status = self.statuses.get(getattr(stage, "id", None))
-            if status:
-                subtitle = f"{subtitle} · {status.title}" if subtitle else status.title
-            row = Adw.ActionRow(title=stage.name, subtitle=subtitle or "")
+            target = getattr(stage, "target", None) or ""
+            row = Adw.ActionRow(title=stage.name, subtitle="")
             row.set_use_markup(False)
             row.set_title_lines(1)
             row.set_subtitle_lines(1)
@@ -149,8 +161,33 @@ class StagesListView(Gtk.Box):
             status_box.append(spinner)
             status_box.append(icon)
             row.add_suffix(status_box)
-            _update_stage_card_status(status, spinner, icon)
+            row.stage = stage
+            row.status_spinner = spinner
+            row.status_icon = icon
+            self._update_row(row, stage, self.statuses.get(stage_id))
             self.list_box.append(row)
+            if stage_id is not None:
+                self.rows_by_stage_id[stage_id] = row
+
+    def _update_row(self, row, stage, status):
+        target = getattr(stage, "target", None) or ""
+        broken = getattr(stage, "is_broken", False)
+        subtitle = getattr(stage, "warning_message", None) if broken else target.replace("_", "-")
+        if status:
+            subtitle = f"{subtitle} · {status.title}" if subtitle else status.title
+        row.set_title(stage.name)
+        row.set_subtitle(subtitle or "")
+        if _stage_has_custom_changes(stage):
+            row.add_css_class("customized-setting")
+        else:
+            row.remove_css_class("customized-setting")
+        if broken:
+            row.add_css_class("warning")
+            row.set_tooltip_text(getattr(stage, "warning_message", None) or "This stage is unavailable")
+        else:
+            row.remove_css_class("warning")
+            row.set_tooltip_text(None)
+        _update_stage_card_status(status, row.status_spinner, row.status_icon)
 
 def _lerp(start: float, end: float, progress: float) -> float:
     return start + (end - start) * progress
@@ -211,7 +248,8 @@ class StagesTreeNode(Gtk.Widget):
         """Sets status and measures compact and expanded sizes of card, returning size used for layout."""
         content_key = (self.node.value.name, getattr(self.node.value, "target", None),
                        getattr(self.node.value, "is_broken", False),
-                       getattr(self.node.value, "warning_message", None), status)
+                       getattr(self.node.value, "warning_message", None),
+                       _stage_has_custom_changes(self.node.value), status)
         if content_key == self._content_key:
             return self.layout_size
         self._content_key = content_key
@@ -259,6 +297,10 @@ class StagesTreeNode(Gtk.Widget):
         self.card_row.set_title(title)
         self.card_row.set_subtitle(subtitle)
         self.card_row.set_activatable(not getattr(self.node.value, "is_broken", False))
+        if _stage_has_custom_changes(self.node.value):
+            self.card_row.add_css_class("customized-setting")
+        else:
+            self.card_row.remove_css_class("customized-setting")
         _update_stage_card_status(self.status, self.status_spinner, self.status_icon)
         self.expanded_content = expanded
 
@@ -441,7 +483,7 @@ class StagesTreeView(Gtk.Fixed):
 
         node_margin_x = EXPANDED_NODE_MARGIN_X if self.expand_all else NODE_MARGIN_X
         all_positions = {}
-        current_y = 0
+        current_y = TREE_TOP_INSET
         total_max_x = 0
         separator_y_positions = []
 

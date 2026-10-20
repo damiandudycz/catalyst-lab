@@ -26,6 +26,7 @@ class QueuedBuild:
     runner_id: str | None
     snapshot: str | None # LATEST, filename of snapshot, or None (snapshot of project).
     cleanup_previous_builds: bool = False
+    defaults_snapshot: object | None = None
     queued: datetime = field(default_factory=datetime.now)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
@@ -93,13 +94,14 @@ class BuildQueue:
         return None
 
     def add(self, project_directory, stage_ids: list[uuid.UUID], snapshot: str | None,
-            cleanup_previous_builds: bool = False, toolset=None, runner=None):
+            cleanup_previous_builds: bool = False, toolset=None, runner=None, defaults_snapshot=None):
         if reason := self.queue_unavailable_reason(project_directory):
             raise RuntimeError(reason)
         self.entries.append(QueuedBuild(project_id=project_directory.id, stage_ids=list(stage_ids),
                                         toolset_id=toolset.uuid if toolset else None,
                                         runner_id=str(runner.id) if runner else None, snapshot=snapshot,
-                                        cleanup_previous_builds=cleanup_previous_builds))
+                                        cleanup_previous_builds=cleanup_previous_builds,
+                                        defaults_snapshot=defaults_snapshot))
         self._changed()
 
     def remove(self, entry: QueuedBuild):
@@ -211,4 +213,5 @@ class BuildQueue:
                 print(f"Queued build of {project.name} didn't start")
                 self.pause(f"Build of {project.name} didn't start")
         start_project_build(project, plan, toolset=entry.toolset, runner=entry.runner, snapshot=snapshot, fetch_snapshot=entry.snapshot == LATEST,
-                            cleanup_previous_builds=entry.cleanup_previous_builds, done=started)
+                            cleanup_previous_builds=entry.cleanup_previous_builds, done=started,
+                            defaults_snapshot=entry.defaults_snapshot)

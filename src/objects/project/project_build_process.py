@@ -38,6 +38,7 @@ CATALYST_SNAPSHOTS_PATH = "/var/tmp/catalyst/snapshots"
 # Folders mounted in toolset whose paths contain whitespace are mounted here: catalyst splits spec values on whitespace,
 # so their paths can't be used in specs (eg. project "Raspberry Pi 5").
 CATALYST_MIRRORS_PATH = "/var/tmp/catalystlab-mirrors"
+_DEFAULTS_SNAPSHOT_UNSET = object()
 # Archive extensions catalyst can produce, used to find built stage file.
 STAGE_ARCHIVE_EXTENSIONS = (".tar.xz", ".tar.bz2", ".tar.gz", ".tar.zst", ".tar", ".squashfs")
 
@@ -52,7 +53,8 @@ class ProjectBuild(MultiStageProcess):
     toolset before building. Selected snapshot can be stored in project too."""
 
     def __init__(self, project_directory, plan: StageBuildPlan, toolset, runner, snapshot=None, fetch_snapshot: bool = False,
-                 update_project_snapshot: bool = False, cleanup_previous_builds: bool = False):
+                 update_project_snapshot: bool = False, cleanup_previous_builds: bool = False, timestamp: str | None = None,
+                 defaults_snapshot=_DEFAULTS_SNAPSHOT_UNSET):
         self.project_directory = project_directory
         self.plan = plan
         self._build_order = plan.build_order()
@@ -60,11 +62,17 @@ class ProjectBuild(MultiStageProcess):
         if toolset is None or not toolset_has_applications(toolset, build_toolset_requirements(project_directory)):
             raise RuntimeError("Selected toolset does not contain all tools required for this build")
         self.snapshot = None if fetch_snapshot else (snapshot or project_directory.get_snapshot()) # Set when fetched.
+        # Defaults are established from the wizard's currently available snapshot. Keep them stable when
+        # a newly generated snapshot is installed on this process before stage specs are written.
+        self.defaults_snapshot = (
+            (project_directory.get_snapshot() if fetch_snapshot else self.snapshot)
+            if defaults_snapshot is _DEFAULTS_SNAPSHOT_UNSET else defaults_snapshot
+        )
         self.fetch_snapshot = fetch_snapshot
         self.update_project_snapshot = update_project_snapshot
         self.cleanup_previous_builds = cleanup_previous_builds
         self.toolset = toolset
-        self.timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") # @TIMESTAMP@ for all stages of this build.
+        self.timestamp = timestamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") # @TIMESTAMP@ for all stages of this build.
         self.builds_directory = project_builds_directory(project_directory)
         self.catalyst_builds_directory = os.path.join(self.builds_directory, "Catalyst")
         self.stage_artifacts_directory = os.path.join(self.builds_directory, "stages")
@@ -357,7 +365,8 @@ class ProjectBuild(MultiStageProcess):
         save_build_record(self)
 
 def start_project_build(project_directory, plan: StageBuildPlan, toolset, runner, snapshot=None, fetch_snapshot: bool = False,
-                        update_project_snapshot: bool = False, cleanup_previous_builds: bool = False, done=None):
+                        update_project_snapshot: bool = False, cleanup_previous_builds: bool = False, done=None,
+                        timestamp: str | None = None, defaults_snapshot=_DEFAULTS_SNAPSHOT_UNSET):
     """Starts build of project (used by build view and build queue). Builds that can't run in user namespace get root
     privileges first (user is asked). Done is called on main thread with started build, or None when it didn't start."""
     from .rootless import rootless_unsupported_reason
@@ -367,7 +376,8 @@ def start_project_build(project_directory, plan: StageBuildPlan, toolset, runner
         try:
             build = ProjectBuild(project_directory=project_directory, plan=plan, toolset=toolset, runner=runner, snapshot=snapshot,
                                  fetch_snapshot=fetch_snapshot, update_project_snapshot=update_project_snapshot,
-                                 cleanup_previous_builds=cleanup_previous_builds)
+                                 cleanup_previous_builds=cleanup_previous_builds, timestamp=timestamp,
+                                 defaults_snapshot=defaults_snapshot)
             build.start(authorization_keeper=authorization_keeper)
         except Exception as e:
             print(f"Failed to start build of {project_directory.name}: {e}")
@@ -738,6 +748,7 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
                 snapshot=process.snapshot,
                 path_mapper=process.container_path,
                 rosetta_amd64=rosetta_amd64,
+                defaults_snapshot=process.defaults_snapshot,
             ))
             if rosetta_amd64:
                 self.log("Rosetta is active for amd64; Catalyst interpreter is omitted")

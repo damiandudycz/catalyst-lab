@@ -9,13 +9,17 @@
   <template class="ProjectStageDetailsView" parent="GtkBox">
     <property name="orientation">vertical</property>
     <child>
-      <object class="GtkScrolledWindow">
-        <property name="hscrollbar-policy">never</property>
-        <property name="vscrollbar-policy">automatic</property>
+      <object class="GtkOverlay">
         <property name="hexpand">True</property>
         <property name="vexpand">True</property>
         <child>
-          <object class="GtkBox">
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
             <property name="margin-start">24</property>
             <property name="margin-end">24</property>
             <property name="margin-top">4</property>
@@ -132,6 +136,21 @@
                 </child>
               </object>
             </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child type="overlay">
+          <object class="GtkBox" id="loading_indicator">
+            <property name="orientation">vertical</property>
+            <property name="spacing">8</property>
+            <property name="halign">center</property>
+            <property name="valign">center</property>
+            <property name="visible">False</property>
+            <property name="can-target">False</property>
+            <style><class name="card"/><class name="toolbar"/></style>
+            <child><object class="AdwSpinner"><property name="width-request">32</property><property name="height-request">32</property></object></child>
+            <child><object class="GtkLabel"><property name="label">Loading stage settings…</property><style><class name="dim-label"/></style></object></child>
           </object>
         </child>
       </object>
@@ -154,26 +173,16 @@
               <class name="toolbar"/>
             </style>
             <child>
-              <object class="GtkButton" id="toolset_footer_button">
-                <property name="hexpand">False</property>
+              <object class="GtkLabel" id="toolset_footer_label">
+                <property name="hexpand">True</property>
                 <property name="valign">center</property>
-                <signal name="clicked" handler="_on_change_toolset_clicked"/>
+                <property name="xalign">0</property>
+                <property name="ellipsize">end</property>
+                <property name="label">Catalyst toolset</property>
                 <style>
-                  <class name="flat"/>
+                  <class name="dim-label"/>
                   <class name="caption"/>
-                  <class name="stage-toolset-change-button"/>
                 </style>
-                <child>
-                  <object class="GtkLabel" id="toolset_footer_label">
-                    <property name="xalign">0</property>
-                    <property name="ellipsize">end</property>
-                    <property name="label">Catalyst toolset</property>
-                    <style>
-                      <class name="dim-label"/>
-                      <class name="caption"/>
-                    </style>
-                  </object>
-                </child>
               </object>
             </child>
             <child>

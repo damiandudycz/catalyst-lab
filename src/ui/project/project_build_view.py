@@ -1,5 +1,11 @@
 from __future__ import annotations
-from gi.repository import Gtk, Adw, GLib
+import os
+import shutil
+import tempfile
+import copy
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from gi.repository import Gtk, Adw, GLib, Gio
 from .project_directory import ProjectDirectory
 from .project_build import StageBuildPlan, StageBuildMode, load_project_builds, project_builds_directory
 from .project_build_process import ProjectBuild, start_project_build
@@ -7,12 +13,15 @@ from .build_queue import BuildQueue, running_build, LATEST
 from .project_stage import stage_target_icon
 from .multistage_process import MultiStageProcessState, MultiStageProcessEvent
 from .wizard_view import WizardView
-from .repository import Repository
+from .repository import Repository, resolve_path
 from .item_select_view import ItemSelectionViewEvent
 from .toolset_application import ToolsetApplication
-from .toolset_selection import sorted_toolsets, toolset_has_applications, build_toolset_requirements
+from .toolset_selection import sorted_toolsets, toolset_has_applications, build_toolset_requirements, default_toolset
 from .snapshot import LATEST_SNAPSHOT
 from .tree_node import walk_tree
+from .project_build_spec import StageSpecContext, missing_required_stage_values
+from .project_stage_arguments import StageArgumentDetails
+from .stages_tree_view import StageNodeStatus
 from .runner import default_runner, RunnerType, runner_is_supported
 from .event_bus import SharedEvent
 
@@ -32,6 +41,7 @@ class ProjectBuildView(Gtk.Box):
     snapshot_page = Gtk.Template.Child()
     snapshot_selection_view = Gtk.Template.Child()
     summary_page = Gtk.Template.Child()
+    generated_files_page = Gtk.Template.Child()
     stages_group = Gtk.Template.Child()
     build_order_group = Gtk.Template.Child()
     reused_group = Gtk.Template.Child()
@@ -39,6 +49,8 @@ class ProjectBuildView(Gtk.Box):
     runs_on_row = Gtk.Template.Child()
     snapshot_row = Gtk.Template.Child()
     cleanup_previous_builds_row = Gtk.Template.Child()
+    generated_files_group = Gtk.Template.Child()
+    generated_files_location_row = Gtk.Template.Child()
 
     def __init__(self, project_directory: ProjectDirectory, installation_in_progress: ProjectBuild | None = None, content_navigation_view: Adw.NavigationView | None = None):
         super().__init__()
@@ -46,8 +58,28 @@ class ProjectBuildView(Gtk.Box):
         self.installation_in_progress = installation_in_progress
         self.content_navigation_view = content_navigation_view
         self.selected_stage_ids: set = set()
+        self._requirement_statuses = {}
+        self._requirement_generation = 0
+        self._requirement_cancel = None
+        self._requirement_future = None
+        self._requirement_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="build-stage-requirements")
         self.required_toolset_apps = build_toolset_requirements(project_directory)
-        self.toolset_selection_view.set_static_list(sorted_toolsets(applications=self.required_toolset_apps))
+        self._monitored_toolsets = []
+        toolsets = sorted_toolsets(applications=self.required_toolset_apps)
+        from .project_toolsets import get as get_project_toolset
+        preferred_id = get_project_toolset(project_directory.directory_path())
+        preferred = next((item for item in toolsets if str(item.uuid) == str(preferred_id)), None)
+        default = default_toolset(applications=self.required_toolset_apps, toolsets=toolsets)
+        ordered = []
+        for item in (preferred, default, *toolsets):
+            if item is not None and item not in ordered:
+                ordered.append(item)
+        self.toolset_selection_view.preferred_item = next(
+            (item for item in ordered if toolset_has_applications(item, self.required_toolset_apps)
+             and item.busy_reason is None),
+            None,
+        )
+        self.toolset_selection_view.set_static_list(ordered)
         self.toolset_selection_view.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self._toolset_changed)
         self.runner_selection_view.preferred_item = default_runner()
         self.runner_selection_view.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self._runner_changed)
@@ -55,8 +87,19 @@ class ProjectBuildView(Gtk.Box):
         self.rows: dict = {} # stage id -> (row, check_button)
         self.summary_rows: list = []
         self._updating = False
+        self._preview_root = None
+        self._preview_timestamp = None
+        self._preview_rows = []
+        self._preview_generation = 0
+        self._preview_ready = False
+        self._preview_cancel = None
+        self._preview_future = None
+        self._preview_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="build-file-preview")
+        self._preview_back_confirmed = False
         self.snapshot_selection_view.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self.snapshot_changed)
         self.load_snapshots()
+        self.wizard_view.back_interceptor = self._intercept_preview_back
+        self.wizard_view.carousel.connect("page-changed", self._wizard_page_changed)
         self.connect("realize", self.on_realize)
         # While other project is being built, build is added to queue (it starts when previous builds finish).
         if installation_in_progress is None and self._queue_mode():
@@ -74,6 +117,7 @@ class ProjectBuildView(Gtk.Box):
         toolset = self.toolset_selection_view.selected_item
         self._update_runs_on_row(toolset, self._selected_runner())
         self.load_stages()
+        self._refresh_stage_requirements_async()
         self.update_plan()
 
     def _update_runs_on_row(self, toolset, runner):
@@ -99,6 +143,14 @@ class ProjectBuildView(Gtk.Box):
             row.add_prefix(check_button)
             row.add_prefix(Gtk.Image.new_from_icon_name(stage_target_icon(stage.target)))
             row.set_activatable_widget(check_button)
+            warning_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+            warning_icon.add_css_class("warning")
+            warning_icon.set_visible(False)
+            warning_icon.set_tooltip_text("Stage has missing required settings")
+            row.add_suffix(warning_icon)
+            row.stage = stage
+            row.check_button = check_button
+            row.warning_icon = warning_icon
             self.stages_group.add(row)
             self.rows[stage.id] = (row, check_button)
         if not self.rows:
@@ -117,10 +169,137 @@ class ProjectBuildView(Gtk.Box):
         self._update_snapshot_row()
 
     def _toolset_changed(self, *_):
+        self._refresh_stage_requirements_async()
         self._update_runs_on_row(self._selected_toolset(), self._selected_runner())
         self.snapshot_selection_view.refresh_items_state()
         self._update_snapshot_row()
         self.wizard_view._refresh_buttons_state()
+
+    def _refresh_stage_requirements_async(self):
+        """Check required spec values off the UI thread for the currently selected toolset."""
+        if self._requirement_cancel is not None:
+            self._requirement_cancel.set()
+        if self._requirement_future is not None:
+            self._requirement_future.cancel()
+        self._requirement_generation += 1
+        generation = self._requirement_generation
+        cancelled = self._requirement_cancel = threading.Event()
+        toolset = self._selected_toolset()
+        project = self.project_directory
+        stages = list(project.stages)
+        self._requirement_statuses.clear()
+        for stage_id, (row, _check) in self.rows.items():
+            if getattr(row.stage, "is_broken", False):
+                continue
+            row.warning_icon.set_visible(False)
+            plan_entry = getattr(self, "plan", None)
+            build_entry = plan_entry.entries.get(stage_id) if plan_entry else None
+            description = self._entry_description(build_entry) if build_entry else (
+                getattr(row.stage, "target", None) or ""
+            ).replace("_", "-")
+            row.set_subtitle(GLib.markup_escape_text(f"{description} · Checking required settings…"))
+            row.set_tooltip_text("Checking required settings…")
+            if not (build_entry and build_entry.mode == StageBuildMode.REQUIRED):
+                row.remove_css_class("warning")
+        if getattr(self, "plan", None):
+            self._update_summary()
+        if toolset is None:
+            for stage in stages:
+                self._apply_stage_requirement_status(generation, stage.id, None)
+            return
+
+        def work():
+            try:
+                from .project_stage import refresh_default_stage_arguments
+                evaluation_stages = []
+                for original in stages:
+                    stage = copy.copy(original)
+                    stage.__dict__ = dict(original.__dict__)
+                    for name in ("_default_stage_arguments", "_explicit_stage_arguments",
+                                 "_explicit_none_arguments", "_explicit_user_arguments",
+                                 "_explicit_user_argument_dates"):
+                        value = getattr(stage, name, None)
+                        if isinstance(value, dict):
+                            setattr(stage, name, dict(value))
+                        elif isinstance(value, set):
+                            setattr(stage, name, set(value))
+                    evaluation_stages.append(stage)
+                evaluation_project = copy.copy(project)
+                evaluation_project.stages = evaluation_stages
+                snapshot = project.get_snapshot()
+                context = StageSpecContext(
+                    timestamp="<timestamp>", source_subpath="<stage seed>",
+                    portage_confdir="<generated portage configuration>",
+                    toolset=toolset,
+                    cache_paths={StageArgumentDetails.pkgcache_path: "<package cache>",
+                                 StageArgumentDetails.kerncache_path: "<kernel cache>"},
+                    root_overlay="<generated root overlay>", iso_overlay="<generated ISO overlay>",
+                    snapshot=snapshot,
+                )
+                for node, _depth in walk_tree(evaluation_project.stages_tree()):
+                    if cancelled.is_set():
+                        return
+                    stage = node.value
+                    try:
+                        refresh_default_stage_arguments(evaluation_project, stage, toolset=toolset, snapshot=snapshot)
+                        missing = missing_required_stage_values(evaluation_project, stage, context)
+                        status = (StageNodeStatus(
+                            title=f"Missing required: {', '.join(missing)}",
+                            icon_name="dialog-warning-symbolic", css_class="warning",
+                        ) if missing else None)
+                    except Exception:
+                        # Metadata failures are not evidence that a stage is misconfigured.
+                        status = None
+                    if cancelled.is_set():
+                        return
+                    GLib.idle_add(self._apply_stage_requirement_status, generation, stage.id, status)
+            except Exception as error:
+                print(f"Failed to check build stage requirements: {error}")
+
+        self._requirement_future = self._requirement_executor.submit(work)
+
+    def _apply_stage_requirement_status(self, generation, stage_id, status):
+        if generation != self._requirement_generation:
+            return GLib.SOURCE_REMOVE
+        entry = self.rows.get(stage_id)
+        if entry is None:
+            return GLib.SOURCE_REMOVE
+        row, _check = entry
+        if getattr(row.stage, "is_broken", False):
+            return GLib.SOURCE_REMOVE
+        self._requirement_statuses[stage_id] = status
+        plan_entry = getattr(self, "plan", None)
+        build_entry = plan_entry.entries.get(stage_id) if plan_entry else None
+        description = self._entry_description(build_entry) if build_entry else (
+            getattr(row.stage, "target", None) or ""
+        ).replace("_", "-")
+        if status is not None:
+            description += f" · {status.title}"
+        row.set_subtitle(GLib.markup_escape_text(description))
+        row.warning_icon.set_visible(status is not None)
+        row.warning_icon.set_tooltip_text(status.title if status else None)
+        row.set_tooltip_text(None)
+        if status is not None or (build_entry and build_entry.mode == StageBuildMode.REQUIRED):
+            row.add_css_class("warning")
+        else:
+            row.remove_css_class("warning")
+        self._update_summary()
+        self.wizard_view._refresh_buttons_state()
+        return GLib.SOURCE_REMOVE
+
+    def do_dispose(self):
+        if self._requirement_cancel is not None:
+            self._requirement_cancel.set()
+        if self._requirement_future is not None:
+            self._requirement_future.cancel()
+        self._requirement_executor.shutdown(wait=False, cancel_futures=True)
+        if self._preview_cancel is not None:
+            self._preview_cancel.set()
+        self._preview_generation += 1
+        if self._preview_future is not None:
+            self._preview_future.cancel()
+        self._preview_executor.shutdown(wait=False, cancel_futures=True)
+        Gtk.Widget.do_dispose(self)
 
     def _runner_changed(self, *_):
         self._update_runs_on_row(self._selected_toolset(), self._selected_runner())
@@ -138,7 +317,34 @@ class ProjectBuildView(Gtk.Box):
 
     @Gtk.Template.Callback()
     def is_toolset_usable(self, sender, item) -> bool:
-        return True
+        return item.busy_reason is None
+
+    @Gtk.Template.Callback()
+    def setup_toolset_monitoring(self, sender, items):
+        for toolset in self._monitored_toolsets:
+            toolset.event_bus.unsubscribe(SharedEvent.STATE_UPDATED, self)
+        self._monitored_toolsets = items
+        for toolset in items:
+            toolset.event_bus.subscribe(SharedEvent.STATE_UPDATED, self._toolset_state_changed, self)
+
+    def _toolset_state_changed(self, *_args):
+        self.toolset_selection_view.refresh_items_state()
+        selected = self._selected_toolset()
+        if selected is None or selected.busy_reason is None:
+            return
+        for toolset in self._toolset_preference_order():
+            if (toolset_has_applications(toolset, self.required_toolset_apps)
+                    and toolset.busy_reason is None):
+                self.toolset_selection_view.select(toolset)
+                return
+
+    def _toolset_preference_order(self):
+        from .project_toolsets import get as get_project_toolset
+        preferred_id = get_project_toolset(self.project_directory.directory_path())
+        items = self.toolset_selection_view.items()
+        preferred = next((item for item in items if str(item.uuid) == str(preferred_id)), None)
+        default = default_toolset(applications=self.required_toolset_apps, toolsets=items)
+        return list(dict.fromkeys(item for item in (preferred, default, *items) if item is not None))
 
     def snapshot_changed(self, view):
         self._update_snapshot_row()
@@ -183,8 +389,14 @@ class ProjectBuildView(Gtk.Box):
             check_button.set_active(entry.is_built)
             # Stages required by selected ones can't be unchecked, they are needed as seed.
             check_button.set_sensitive(entry.mode != StageBuildMode.REQUIRED)
-            row.set_subtitle(GLib.markup_escape_text(self._entry_description(entry)))
-            if entry.mode == StageBuildMode.REQUIRED:
+            warning_status = self._requirement_statuses.get(stage_id)
+            description = self._entry_description(entry)
+            if warning_status is not None:
+                description += f" · {warning_status.title}"
+            row.set_subtitle(GLib.markup_escape_text(description))
+            row.warning_icon.set_visible(warning_status is not None)
+            row.warning_icon.set_tooltip_text(warning_status.title if warning_status else None)
+            if entry.mode == StageBuildMode.REQUIRED or warning_status is not None:
                 row.add_css_class("warning")
             else:
                 row.remove_css_class("warning")
@@ -196,13 +408,24 @@ class ProjectBuildView(Gtk.Box):
         for group, row in self.summary_rows:
             group.remove(row)
         self.summary_rows = []
-        def add(group, title: str, subtitle: str, icon: str):
+        def add(group, title: str, subtitle: str, icon: str, warning_status=None):
             row = Adw.ActionRow(title=GLib.markup_escape_text(title), subtitle=GLib.markup_escape_text(subtitle), icon_name=icon)
+            if warning_status is not None:
+                row.add_css_class("warning")
+                warning = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+                warning.add_css_class("warning")
+                warning.set_tooltip_text(warning_status.title)
+                row.add_suffix(warning)
             group.add(row)
             self.summary_rows.append((group, row))
         for index, stage in enumerate(self.plan.build_order(), start=1):
             entry = self.plan.entries[stage.id]
-            add(self.build_order_group, f"{index}. {stage.name}", self._entry_description(entry), stage_target_icon(stage.target))
+            warning_status = self._requirement_statuses.get(stage.id)
+            description = self._entry_description(entry)
+            if warning_status is not None:
+                description += f" · {warning_status.title}"
+            add(self.build_order_group, f"{index}. {stage.name}", description,
+                stage_target_icon(stage.target), warning_status)
         reused = [entry for entry in self.plan.entries.values() if entry.mode == StageBuildMode.REUSE]
         for entry in reused:
             add(self.reused_group, entry.stage.name, f"Build from {_format_date(entry.reused_build.date)}", stage_target_icon(entry.stage.target))
@@ -256,13 +479,299 @@ class ProjectBuildView(Gtk.Box):
                 toolset = self._selected_toolset()
                 runner = self._selected_runner()
                 return (toolset is not None and self.is_toolset_selectable(self.toolset_selection_view, toolset)
+                        and self.is_toolset_usable(self.toolset_selection_view, toolset)
                         and runner is not None and self.is_runner_usable(self.runner_selection_view, runner))
             case self.stages_page | self.summary_page:
                 return bool(getattr(self, "plan", None) and self.plan.build_order())
             case self.snapshot_page:
                 selected = self.snapshot_selection_view.selected_item
                 return selected is not None and self.is_item_selectable(self.snapshot_selection_view, selected)
+            case self.generated_files_page:
+                return (self._preview_ready
+                        and bool(getattr(self, "plan", None) and self.plan.build_order()))
         return True
+
+    def _wizard_page_changed(self, carousel, _pspec):
+        page = carousel.get_nth_page(int(carousel.get_position()))
+        if page is self.generated_files_page:
+            self._generate_build_file_preview()
+
+    def _intercept_preview_back(self, wizard) -> bool:
+        if wizard.current_page >= len(wizard.pages) or wizard.pages[wizard.current_page] is not self.generated_files_page:
+            return False
+        if self._preview_back_confirmed:
+            self._preview_back_confirmed = False
+            return False
+        dialog = Adw.AlertDialog(
+            heading="Return to build setup?",
+            body="If you change any build options, the generated files will be regenerated when you return to this review.",
+        )
+        dialog.add_response("stay", "Stay")
+        dialog.add_response("back", "Continue")
+        dialog.set_default_response("stay")
+        dialog.set_close_response("stay")
+        def on_response(_dialog, response):
+            if response == "back":
+                self._preview_back_confirmed = True
+                wizard.on_back_pressed(None)
+        dialog.connect("response", on_response)
+        dialog.present(self.get_root())
+        return True
+
+    def _generate_build_file_preview(self):
+        """Build preview files in a worker and replace stale output immediately."""
+        from datetime import datetime, timezone
+
+        if self._preview_cancel is not None:
+            self._preview_cancel.set()
+        if self._preview_future is not None:
+            self._preview_future.cancel()
+        self._preview_generation += 1
+        generation = self._preview_generation
+        self._preview_ready = False
+        cancelled = self._preview_cancel = threading.Event()
+        previous_root = self._preview_root
+        self._preview_root = None
+        self._clear_preview_rows()
+        self.generated_files_location_row.set_visible(False)
+        self.generated_files_location_row.set_title("Preview location")
+        self.generated_files_location_row.set_subtitle("Preparing preview…")
+        loading_row = Adw.ActionRow(title="Generating build files", subtitle="Checking each planned stage…")
+        spinner = Adw.Spinner()
+        spinner.set_visible(True)
+        loading_row.add_suffix(spinner)
+        self.generated_files_group.add(loading_row)
+        self._preview_rows.append(loading_row)
+        self.wizard_view._refresh_buttons_state()
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        plan = self.plan
+        toolset = self._selected_toolset()
+        runner = self._selected_runner()
+        selected_snapshot = self.snapshot_selection_view.selected_item
+        defaults_snapshot = (
+            self.project_directory.get_snapshot()
+            if selected_snapshot is LATEST_SNAPSHOT or selected_snapshot is None
+            else selected_snapshot
+        )
+        self._preview_defaults_snapshot = defaults_snapshot
+        cleanup_previous_builds = self.cleanup_previous_builds_row.get_active()
+
+        def work():
+            try:
+                result = self._build_preview_files(
+                    plan, toolset, runner, selected_snapshot, defaults_snapshot, cleanup_previous_builds, timestamp,
+                    previous_root, cancelled,
+                )
+            except Exception as error:
+                result = (None, [{"title": "Couldn't generate build files", "subtitle": str(error),
+                                  "path": None, "error": True}], False)
+            if not cancelled.is_set():
+                GLib.idle_add(self._show_build_file_preview, generation, timestamp, result)
+
+        self._preview_future = self._preview_executor.submit(work)
+
+    def _build_preview_files(self, plan, toolset, runner, selected_snapshot, defaults_snapshot,
+                             cleanup_previous_builds, timestamp, previous_root, cancelled):
+        """Write preview files and return row descriptions without accessing GTK."""
+        from .project_build_process import ProjectBuild, CATALYST_WRAPPER, _catalyst_build_script, _catalyst_cache_options
+        from .project_build_spec import generate_portage_confdir, generate_root_overlay, StageSpecContext, generate_stage_spec
+        from .project_stage_arguments import StageArgumentDetails
+
+        preview_root = None
+        rows = []
+        latest_snapshot = selected_snapshot is LATEST_SNAPSHOT
+        try:
+            if previous_root:
+                shutil.rmtree(previous_root, ignore_errors=True)
+            preview_parent = resolve_path(Repository.Settings.value.temporary_location)
+            os.makedirs(preview_parent, exist_ok=True)
+            preview_root = tempfile.mkdtemp(prefix="catalyst-build-preview-", dir=preview_parent)
+            snapshot = defaults_snapshot if latest_snapshot else selected_snapshot
+            process = ProjectBuild(
+                self.project_directory, plan, toolset, runner, snapshot=snapshot, fetch_snapshot=False,
+                cleanup_previous_builds=cleanup_previous_builds, timestamp=timestamp,
+                defaults_snapshot=defaults_snapshot,
+            )
+            process.work_root = preview_root
+            rosetta_amd64 = False
+            rosetta_detection_error = None
+            architecture = self.project_directory.get_architecture()
+            if getattr(architecture, "value", None) == "amd64":
+                try:
+                    rosetta_amd64 = process.rosetta_amd64_available()
+                except Exception as error:
+                    rosetta_detection_error = str(error)
+            evaluation_stages = []
+            for original in self.project_directory.stages:
+                stage_copy = copy.copy(original)
+                stage_copy.__dict__ = dict(original.__dict__)
+                for name in ("_default_stage_arguments", "_explicit_stage_arguments",
+                             "_explicit_none_arguments", "_explicit_user_arguments",
+                             "_explicit_user_argument_dates"):
+                    value = getattr(stage_copy, name, None)
+                    if isinstance(value, dict):
+                        setattr(stage_copy, name, dict(value))
+                    elif isinstance(value, set):
+                        setattr(stage_copy, name, set(value))
+                evaluation_stages.append(stage_copy)
+            evaluation_project = copy.copy(self.project_directory)
+            evaluation_project.stages = evaluation_stages
+            evaluation_stages_by_id = {stage.id: stage for stage in evaluation_stages}
+            for stage in plan.build_order():
+                if cancelled.is_set():
+                    shutil.rmtree(preview_root, ignore_errors=True)
+                    return None, [], latest_snapshot
+                work_directory = process.stage_work_directory(stage)
+                os.makedirs(work_directory, exist_ok=True)
+                portage_path = os.path.join(work_directory, "portage")
+                has_confdir = generate_portage_confdir(self.project_directory, stage, portage_path)
+                root_overlay_path = os.path.join(work_directory, "root_overlay")
+                has_root_overlay = generate_root_overlay(self.project_directory, stage, root_overlay_path)
+                iso_overlay_path = os.path.join(work_directory, "iso_overlay")
+                has_iso_overlay = generate_root_overlay(
+                    self.project_directory, stage, iso_overlay_path, StageArgumentDetails.livecd_overlay,
+                )
+                source_subpath = process.seed_subpath(stage)
+                runtime_inputs = []
+                if source_subpath is None:
+                    parent = plan.parent(stage)
+                    source_subpath = f"<resolved-at-build-time:{parent.name if parent else 'latest-stage3-seed'}>"
+                    runtime_inputs.append("source seed path")
+                cache_paths = process.stage_cache_paths(stage)
+                try:
+                    spec = generate_stage_spec(evaluation_project, evaluation_stages_by_id[stage.id], StageSpecContext(
+                        timestamp=timestamp,
+                        source_subpath=source_subpath,
+                        portage_confdir=process.container_path(portage_path) if has_confdir else None,
+                        toolset=process.toolset,
+                        root_overlay=process.container_path(root_overlay_path) if has_root_overlay else None,
+                        iso_overlay=process.container_path(iso_overlay_path) if has_iso_overlay else None,
+                        cache_paths={argument: process.container_path(path) for argument, path in cache_paths.items()},
+                        snapshot=snapshot,
+                        path_mapper=process.container_path,
+                        rosetta_amd64=rosetta_amd64,
+                        defaults_snapshot=defaults_snapshot,
+                    ))
+                    if latest_snapshot:
+                        spec_lines = spec.splitlines()
+                        for index, line in enumerate(spec_lines):
+                            if line.startswith("snapshot_treeish:"):
+                                spec_lines[index] = "snapshot_treeish: <resolved-at-build-time>"
+                                runtime_inputs.append("snapshot treeish")
+                        spec = "\n".join(spec_lines) + "\n"
+                except Exception as error:
+                    with open(os.path.join(work_directory, "PREVIEW-ERROR.txt"), "w", encoding="utf-8") as file:
+                        file.write(f"Couldn't generate stage.spec: {error}\n")
+                    rows.append({"title": stage.name, "subtitle": f"Spec generation failed: {error}",
+                                 "path": work_directory, "error": True})
+                    continue
+                with open(os.path.join(work_directory, "stage.spec"), "w", encoding="utf-8") as file:
+                    file.write(spec)
+                wrapper_path = None
+                if process.rootless:
+                    wrapper_path = os.path.join(work_directory, "catalyst-wrapper.py")
+                    with open(wrapper_path, "w", encoding="utf-8") as file:
+                        file.write(CATALYST_WRAPPER)
+                build_script_path = os.path.join(work_directory, "build.sh")
+                with open(build_script_path, "w", encoding="utf-8") as file:
+                    file.write(_catalyst_build_script(
+                        spec_path=process.container_path(os.path.join(work_directory, "stage.spec")),
+                        config_path=process.container_path(os.path.join(work_directory, "catalyst.conf")),
+                        caches={_catalyst_cache_options[argument] for argument in cache_paths},
+                        wrapper_path=process.container_path(wrapper_path) if wrapper_path else None,
+                    ))
+                for overlay_path, present in ((portage_path, has_confdir), (root_overlay_path, has_root_overlay),
+                                              (iso_overlay_path, has_iso_overlay)):
+                    if present and not os.path.isdir(overlay_path):
+                        os.makedirs(overlay_path, exist_ok=True)
+                files = ["stage.spec", "build.sh"]
+                if wrapper_path:
+                    files.append("catalyst-wrapper.py")
+                files.extend(name for name, present in (
+                    ("portage/", has_confdir), ("root_overlay/", has_root_overlay),
+                    ("iso_overlay/", has_iso_overlay),
+                ) if present)
+                with open(os.path.join(work_directory, "PREVIEW-NOTES.txt"), "w", encoding="utf-8") as file:
+                    file.write("Generated build-file preview. The actual build regenerates these files.\n")
+                    if "source seed path" in runtime_inputs:
+                        file.write("Runtime-resolved input: source_subpath (seed selected or produced when the build runs).\n")
+                    if latest_snapshot:
+                        file.write("The build uses a newly generated latest snapshot. snapshot_treeish is resolved at build time; snapshot-dependent defaults keep the values established in this wizard.\n")
+                    file.write("catalyst.conf is generated inside the selected toolset when build.sh runs.\n")
+                    if rosetta_detection_error:
+                        file.write(f"Rosetta detection failed during preview ({rosetta_detection_error}); the build checks again after preparing the runner.\n")
+                    elif rosetta_amd64:
+                        file.write("Rosetta is active for amd64; Catalyst interpreter is omitted.\n")
+                    elif getattr(architecture, "value", None) == "amd64":
+                        file.write("Rosetta is not active for amd64; the Catalyst interpreter follows the project architecture.\n")
+                subtitle = " · ".join(files)
+                if "source seed path" in runtime_inputs:
+                    subtitle += " · seed path resolved when the build starts"
+                if "snapshot treeish" in runtime_inputs:
+                    subtitle += " · snapshot treeish resolved when the build starts"
+                rows.append({"title": stage.name, "subtitle": subtitle, "path": work_directory, "error": False})
+            if cancelled.is_set():
+                shutil.rmtree(preview_root, ignore_errors=True)
+                return None, [], latest_snapshot
+            return preview_root, rows, latest_snapshot
+        except Exception as error:
+            if cancelled.is_set() and preview_root:
+                shutil.rmtree(preview_root, ignore_errors=True)
+                return None, [], latest_snapshot
+            rows.append({"title": "Couldn't generate build files", "subtitle": str(error),
+                         "path": None, "error": True})
+            return preview_root, rows, latest_snapshot
+
+    def _show_build_file_preview(self, generation, timestamp, result):
+        if generation != self._preview_generation:
+            return GLib.SOURCE_REMOVE
+        preview_root, rows, latest_snapshot = result
+        self._clear_preview_rows()
+        self._preview_root = preview_root
+        self._preview_timestamp = timestamp
+        for row_data in rows:
+            row = Adw.ActionRow(
+                title=GLib.markup_escape_text(row_data["title"]),
+                subtitle=GLib.markup_escape_text(row_data["subtitle"]),
+            )
+            if row_data["error"]:
+                row.add_css_class("error")
+            if row_data["path"]:
+                open_button = Gtk.Button(label="Browse")
+                open_button.set_valign(Gtk.Align.CENTER)
+                open_button.connect("clicked", self._open_preview_directory, row_data["path"])
+                row.add_suffix(open_button)
+            self.generated_files_group.add(row)
+            self._preview_rows.append(row)
+        if preview_root:
+            self.generated_files_location_row.set_subtitle(GLib.markup_escape_text(preview_root))
+            self.generated_files_location_row.set_visible(True)
+            if latest_snapshot:
+                self.generated_files_location_row.set_title(
+                    "Preview files (latest snapshot may update defaults at build time)"
+                )
+        self._preview_ready = True
+        self.wizard_view._refresh_buttons_state()
+        return GLib.SOURCE_REMOVE
+
+    def _clear_preview_rows(self):
+        for row in self._preview_rows:
+            self.generated_files_group.remove(row)
+        self._preview_rows = []
+
+    def _open_preview_directory(self, _button, path):
+        try:
+            Gio.AppInfo.launch_default_for_uri(GLib.filename_to_uri(path), None)
+        except GLib.Error as error:
+            dialog = Adw.AlertDialog(heading="Couldn't open generated files", body=str(error))
+            dialog.add_response("ok", "OK")
+            dialog.present(self.get_root())
+
+    @Gtk.Template.Callback()
+    def on_browse_all_generated_files(self, _button):
+        if self._preview_root and os.path.isdir(self._preview_root):
+            self._open_preview_directory(_button, self._preview_root)
 
     @staticmethod
     def _queue_mode() -> bool:
@@ -270,6 +779,8 @@ class ProjectBuildView(Gtk.Box):
 
     @Gtk.Template.Callback()
     def begin_installation(self, view):
+        if not self._preview_ready:
+            return
         if self._queue_mode():
             # Toolset can be used by running build, it's checked when queued build starts.
             toolset = self._selected_toolset()
@@ -340,7 +851,10 @@ class ProjectBuildView(Gtk.Box):
             return
         start_project_build(self.project_directory, self.plan, toolset=self._selected_toolset(), runner=self._selected_runner(), snapshot=None if fetch else selected, fetch_snapshot=fetch,
                             update_project_snapshot=update_project_snapshot and not fetch,
-                            cleanup_previous_builds=self.cleanup_previous_builds_row.get_active(), done=self._on_build_started)
+                            cleanup_previous_builds=self.cleanup_previous_builds_row.get_active(),
+                            timestamp=self._preview_timestamp if not self._queue_mode() else None,
+                            defaults_snapshot=self._preview_defaults_snapshot,
+                            done=self._on_build_started)
 
     def _add_to_queue(self, selected, fetch: bool, update_project_snapshot: bool):
         if update_project_snapshot and not fetch:
@@ -352,7 +866,8 @@ class ProjectBuildView(Gtk.Box):
         try:
             BuildQueue.shared().add(self.project_directory, list(self.selected_stage_ids), LATEST if fetch else selected.filename,
                                     cleanup_previous_builds=self.cleanup_previous_builds_row.get_active(),
-                                    toolset=self._selected_toolset(), runner=self._selected_runner())
+                                    toolset=self._selected_toolset(), runner=self._selected_runner(),
+                                    defaults_snapshot=self._preview_defaults_snapshot)
         except RuntimeError as e:
             dialog = Adw.AlertDialog(heading="Can't add build to queue", body=str(e))
             dialog.add_response("ok", "OK")

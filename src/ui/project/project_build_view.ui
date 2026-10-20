@@ -37,7 +37,7 @@
                 <child>
                   <object class="ItemSelectionView" id="toolset_selection_view">
                     <property name="title">Toolset</property>
-                    <property name="description">Toolset for this build. Catalyst is required; QEMU is also required when the project architecture needs emulation. Incompatible toolsets remain visible but cannot be selected.</property>
+                    <property name="description">The project-selected toolset is preselected when available. Catalyst is required; QEMU is also required when the project architecture needs emulation.</property>
                     <property name="item_icon">toolbox-symbolic</property>
                     <property name="item_title_property_name">name</property>
                     <property name="item_subtitle_property_name">short_details</property>
@@ -45,6 +45,7 @@
                     <property name="autoselect_default">True</property>
                     <signal name="is-item-selectable" handler="is_toolset_selectable"/>
                     <signal name="is-item-usable" handler="is_toolset_usable"/>
+                    <signal name="setup-items-monitoring" handler="setup_toolset_monitoring"/>
                   </object>
                 </child>
                 <child>
@@ -211,6 +212,51 @@
                         <property name="subtitle-selectable">True</property>
                       </object>
                     </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Page 5: Generated files -->
+        <child>
+          <object class="GtkScrolledWindow" id="generated_files_page">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox">
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">12</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">Generated build files</property>
+                    <property name="description">Preview uses the selected toolset, build stages, and snapshot. The spec and overlays are generated on this computer; catalyst.conf is created inside the toolset when the build runs. Files are generated again when the build starts, and seed paths or defaults that depend on a newly generated latest snapshot are resolved then.</property>
+                    <child>
+                      <object class="AdwActionRow" id="generated_files_location_row">
+                        <property name="title">Preview location</property>
+                        <property name="subtitle-selectable">True</property>
+                        <property name="visible">False</property>
+                        <child type="suffix">
+                          <object class="GtkButton">
+                            <property name="label">Browse all</property>
+                            <property name="valign">center</property>
+                            <signal name="clicked" handler="on_browse_all_generated_files"/>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup" id="generated_files_group">
+                    <property name="title">Stages</property>
                   </object>
                 </child>
               </object>

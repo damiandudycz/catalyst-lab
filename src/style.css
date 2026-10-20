@@ -141,7 +141,7 @@ splitbutton.project-footer-save-changes.source-updates-available {
 }
 splitbutton.project-footer-save-changes separator {
   margin-block: 0;
-  padding-block: 0;
+  padding: 0;
   min-height: 0;
 }
 splitbutton.project-footer-save-changes.source-updates-available button:hover,
@@ -199,7 +199,7 @@ button.project-action-button.suggested-action:disabled {
   background-color: rgba(53, 132, 228, 0.3);
   color: rgba(255, 255, 255, 0.65);
 }
-row.customized-setting > box > box > label.title {
+row.customized-setting label.title {
   font-weight: 700;
 }
 .toolset-chooser.boxed-list > row.default-toolset-row {

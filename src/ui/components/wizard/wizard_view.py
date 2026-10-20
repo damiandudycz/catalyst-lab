@@ -48,6 +48,9 @@ class WizardView(Adw.Bin, Gtk.Buildable):
         self.current_page = 0
         self.pages: list[Gtk.Widget] = []
         self._all_pages: list[Gtk.Widget] = [] # Also hidden pages, in order of adding (keeps them alive while hidden).
+        # Optional callback for views that need to confirm leaving a page (eg. a generated-file review page).
+        # Return True when the callback handled the request asynchronously.
+        self.back_interceptor = None
         # Signals:
         self.carousel.connect('page-changed', self.on_page_changed)
         self.connect("notify::parent", lambda *args: self._update_can_go_back())
@@ -197,6 +200,8 @@ class WizardView(Adw.Bin, Gtk.Buildable):
     def on_back_pressed(self, _):
         is_first_page = self.current_page == 0
         if not is_first_page:
+            if self.back_interceptor and self.back_interceptor(self):
+                return
             self.carousel.scroll_to(self.carousel.get_nth_page(self.current_page - 1), True)
 
     def on_next_pressed(self, _):

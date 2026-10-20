@@ -26,6 +26,7 @@ from .project_stage_portage_confdir import (
 from .tree_node import walk_tree
 
 _CATALYSTLAB_METADATA_KEY = "_catalystlab"
+_NO_DEFAULT_SNAPSHOT = object()
 # These describe the stage itself and must never be populated or removed as
 # calculated Catalyst defaults.
 _STAGE_IDENTITY_ARGUMENTS = frozenset({"id", "parent", "target", "name", "releng_template"})
@@ -540,6 +541,8 @@ def _default_profile(stage: ProjectStage, project_directory, toolset, snapshot=N
         if value is not UNRESOLVED and value not in (None, "", []):
             return StageAutomaticOption.INHERIT_FROM_PARENT
 
+    if snapshot is _NO_DEFAULT_SNAPSHOT:
+        return None
     snapshot = snapshot or project_directory.get_snapshot()
     architecture = project_directory.get_architecture()
     if snapshot is None or architecture is None:
@@ -717,7 +720,8 @@ def default_stage_argument_value(project_directory, stage: ProjectStage, argumen
     return None if value is _NO_DEFAULT else value
 
 
-def refresh_default_stage_arguments(project_directory, stage: ProjectStage, toolset=None, snapshot=None) -> dict[str, Any]:
+def refresh_default_stage_arguments(project_directory, stage: ProjectStage, toolset=None, snapshot=None,
+                                   arguments_details=None) -> dict[str, Any]:
     """Recompute in-memory defaults without making them explicit project edits."""
     has_parent = getattr(stage, StageArgumentDetails.parent.name, None) is not None
     defaults = getattr(stage, "_default_stage_arguments", {})
@@ -738,7 +742,9 @@ def refresh_default_stage_arguments(project_directory, stage: ProjectStage, tool
         toolset = default_toolset()
     if toolset is None:
         return {}
-    arguments = load_catalyst_stage_arguments_details(toolset=toolset, target_name=stage.target)
+    arguments = arguments_details or load_catalyst_stage_arguments_details(
+        toolset=toolset, target_name=stage.target
+    )
     applied = {}
     calculated = {}
     for name, argument in arguments.items():

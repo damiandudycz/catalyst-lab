@@ -86,7 +86,7 @@ class ProjectStageDetailsView(Gtk.Box):
     row_warnings_group = Gtk.Template.Child()
     row_warnings_row = Gtk.Template.Child()
     toolset_footer_label = Gtk.Template.Child()
-    toolset_footer_button = Gtk.Template.Child()
+    loading_indicator = Gtk.Template.Child()
     unsupported_options_group = Gtk.Template.Child()
     warnings_empty_group = Gtk.Template.Child()
 
@@ -142,12 +142,10 @@ class ProjectStageDetailsView(Gtk.Box):
         self.advanced = mode != 0
         if mode in (0, 1):
             ProjectStageDetailsView.advanced_default = self.advanced
-        self._refresh_stage_baseline()
         self.apply_mode()
 
     def _on_map(self, _widget):
         self.advanced = self.mode_toggle.get_active() != 0
-        self._refresh_stage_baseline()
         self.apply_mode()
 
     def apply_mode(self):
@@ -275,8 +273,9 @@ class ProjectStageDetailsView(Gtk.Box):
         self.get_root().set_focus(None)
         self._window_active_handler = self.get_root().connect("notify::is-active", self._on_window_active_changed)
         self.connect("unrealize", self._on_unrealize)
+        self.loading_indicator.set_visible(True)
         self.load_stage_details()
-        self.load_configuration_rows()
+        self._load_stage_configuration_async()
         self.monitor_information_changes()
 
     # Loading stage data
@@ -285,15 +284,14 @@ class ProjectStageDetailsView(Gtk.Box):
     def load_stage_details(self, reload_toolset: bool = True):
         self.stage_name_row.set_text(self.stage.name)
         set_row_description(self.stage_name_row, stage_argument_description(StageArgumentDetails.name.value))
-        self._refresh_stage_baseline()
         if reload_toolset:
             self._load_stage_toolset()
 
-    def _refresh_stage_baseline(self):
-        """Reload the persisted origin so a view opened during stage creation cannot keep a stale baseline."""
+    def _load_stage_baseline(self, stage):
+        """Read the persisted origin in a worker because resolving it invokes several Git commands."""
         from .project_template_update import project_stage_baseline
         project_path = self.project_directory.directory_path()
-        self.template_stage_baseline = project_stage_baseline(project_path, self.stage.id)
+        return project_stage_baseline(project_path, stage.id)
 
     def _on_project_contents_reloaded(self, _project):
         """Replace cached stage state and editors after discard or a successful Git update."""
@@ -304,39 +302,124 @@ class ProjectStageDetailsView(Gtk.Box):
             return
         self.stage = stage
         self.load_stage_details(reload_toolset=False)
-        self.load_configuration_rows()
+        self._load_stage_configuration_async()
         if hasattr(self, "_page"):
             self._page.set_title(self.stage.name)
 
     def _load_stage_toolset(self):
         from .toolset_selection import sorted_toolsets, toolset_has_applications, default_toolset
         from .toolset_application import ToolsetApplication
-        from catalystlab import project_stage_toolsets
+        from .project_toolsets import get as get_project_toolset
         available = sorted_toolsets()
         self.stage_toolsets = [toolset for toolset in available
                                if toolset_has_applications(toolset, [ToolsetApplication.CATALYST])
                                and os.path.isfile(toolset.file_path())]
         project_path = self.project_directory.directory_path()
-        saved_toolset_id = project_stage_toolsets.get(project_path, self.stage.id)
+        saved_toolset_id = get_project_toolset(project_path)
         remembered = next((item for item in self.stage_toolsets if str(item.uuid) == str(saved_toolset_id)), None)
         fallback = default_toolset(applications=[ToolsetApplication.CATALYST], toolsets=self.stage_toolsets)
         self.active_stage_toolset = remembered or fallback or (self.stage_toolsets[0] if self.stage_toolsets else None)
         name = self.active_stage_toolset.name if self.active_stage_toolset else "No Catalyst toolset available"
         self.toolset_footer_label.set_label(f"Catalyst toolset · {name}")
-        self.toolset_footer_button.set_sensitive(bool(self.stage_toolsets))
-        if self.active_stage_toolset:
-            project_stage_toolsets.set(project_path, self.stage.id, str(self.active_stage_toolset.uuid))
-        if self.active_stage_toolset:
-            try:
-                refresh_default_stage_arguments(
-                    project_directory=self.project_directory,
-                    stage=self.stage,
-                    toolset=self.active_stage_toolset,
-                )
-            except Exception as error:
-                print(f"Failed to set missing defaults for {self.stage.name}: {error}")
         # Defaults are only an in-memory starting point while viewing the stage.
         # A toolset preference alone must never dirty tracked project data.
+
+    def _load_stage_configuration_async(self):
+        """Prepare Catalyst metadata and defaults off the GTK main thread."""
+        self._stage_load_generation = getattr(self, "_stage_load_generation", 0) + 1
+        generation = self._stage_load_generation
+        stage = self.stage
+        toolset = self.active_stage_toolset
+        self.loading_indicator.set_visible(True)
+
+        def work():
+            arguments_details = {}
+            error = None
+            prepared_options = {}
+            try:
+                baseline = self._load_stage_baseline(stage)
+            except Exception as exception:
+                baseline = {}
+                print(f"Failed to load the stage baseline for {stage.name}: {exception}")
+            if toolset is not None:
+                try:
+                    arguments_details = load_catalyst_stage_arguments_details(
+                        toolset=toolset, target_name=stage.target
+                    )
+                    refresh_default_stage_arguments(
+                        project_directory=self.project_directory,
+                        stage=stage,
+                        toolset=toolset,
+                        arguments_details=arguments_details,
+                    )
+                    prepared_options = self._prepare_stage_option_data(stage, toolset, arguments_details)
+                except Exception as exception:
+                    error = exception
+            GLib.idle_add(
+                self._on_stage_configuration_loaded,
+                generation,
+                arguments_details,
+                error,
+                prepared_options,
+                baseline,
+            )
+
+        threading.Thread(target=work, name="stage-configuration-load", daemon=True).start()
+
+    def _prepare_stage_option_data(self, stage, toolset, arguments_details):
+        """Read option sources and resolve inheritance labels without blocking GTK."""
+        from .project_stage import (
+            load_catalyst_stage_arguments_options,
+            load_catalyst_stage_arguments_options_for_boolean,
+            load_catalyst_stage_automatic_arguments_options,
+        )
+        from .project_stage_value_resolver import resolved_stage_argument_display
+
+        prepared = {}
+        for name, argument in arguments_details.items():
+            if argument.details in HIDDEN_STAGE_ARGUMENTS or argument.type not in (
+                StageArgumentType.select, StageArgumentType.multiselect, StageArgumentType.boolean
+            ):
+                continue
+            try:
+                automatic = load_catalyst_stage_automatic_arguments_options(
+                    stage=stage, arg_details=argument, project_directory=self.project_directory
+                )
+                available = (
+                    load_catalyst_stage_arguments_options_for_boolean(argument)
+                    if argument.type == StageArgumentType.boolean else
+                    load_catalyst_stage_arguments_options(
+                        project_directory=self.project_directory,
+                        stage=stage,
+                        arg_details=argument,
+                        toolset=toolset,
+                    ) or []
+                )
+                options = automatic + available
+                resolved = {}
+                for option in options:
+                    if isinstance(option.value, StageAutomaticOption) and not option.unsupported:
+                        if value := resolved_stage_argument_display(
+                            self.project_directory, stage, argument.name, option.value
+                        ):
+                            resolved[option.value] = value
+                prepared[name] = (options, resolved, None)
+            except Exception as exception:
+                prepared[name] = (None, None, exception)
+        return prepared
+
+    def _on_stage_configuration_loaded(self, generation, arguments_details, error, prepared_options, baseline):
+        if generation != self._stage_load_generation:
+            return GLib.SOURCE_REMOVE
+        self.template_stage_baseline = baseline
+        self.load_configuration_rows(
+            arguments_details=arguments_details,
+            metadata_error=error,
+            metadata_prepared=True,
+            prepared_options=prepared_options,
+        )
+        self.loading_indicator.set_visible(False)
+        return GLib.SOURCE_REMOVE
 
     def _is_stage_argument_changed(self, name: str) -> bool:
         """Whether this value differs from template/default, or was explicitly chosen by the user."""
@@ -389,74 +472,8 @@ class ProjectStageDetailsView(Gtk.Box):
                     print(f"Failed to restore default for {name}: {error}")
         self.load_configuration_rows()
 
-    @Gtk.Template.Callback()
-    def _on_change_toolset_clicked(self, button):
-        dialog = Adw.Dialog(
-            title="Change Catalyst toolset",
-            content_width=420,
-            presentation_mode=Adw.DialogPresentationMode.FLOATING,
-        )
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                          margin_top=18, margin_bottom=12, margin_start=18, margin_end=18)
-        dialog.set_child(content)
-        content.append(Gtk.Label(
-            label="Choose a toolset to reload the available stage settings.",
-            wrap=True,
-            xalign=0,
-            css_classes=["dim-label"],
-        ))
-
-        scroller = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
-                                      hscrollbar_policy=Gtk.PolicyType.NEVER,
-                                      max_content_height=320, propagate_natural_height=True)
-        list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE,
-                               css_classes=["boxed-list", "toolset-chooser"],
-                               margin_top=4, margin_bottom=4, margin_start=4, margin_end=4)
-        scroller.set_child(list_box)
-        content.append(scroller)
-
-        def choose_toolset(_list, row):
-            toolset = row.toolset
-            self.active_stage_toolset = toolset
-            from catalystlab import project_stage_toolsets
-            project_stage_toolsets.set(
-                self.project_directory.directory_path(), self.stage.id, str(toolset.uuid)
-            )
-            try:
-                refresh_default_stage_arguments(
-                    project_directory=self.project_directory,
-                    stage=self.stage,
-                    toolset=toolset,
-                )
-            except Exception as error:
-                print(f"Failed to set missing defaults for {self.stage.name}: {error}")
-            # Persist the toolset preference only. Any stage values are saved when
-            # the user explicitly changes a setting.
-            self.toolset_footer_label.set_label(f"Catalyst toolset · {toolset.name}")
-            self.load_configuration_rows()
-            dialog.close()
-
-        list_box.connect("row-activated", choose_toolset)
-        from .toolset_selection import default_toolset
-        default = default_toolset(toolsets=self.stage_toolsets)
-        for toolset in self.stage_toolsets:
-            versions = toolset.short_details
-            row = Adw.ActionRow(title=toolset.name, subtitle=versions or "Catalyst version unavailable",
-                                activatable=True)
-            row.add_prefix(Gtk.Image.new_from_icon_name("toolbox-symbolic"))
-            if toolset is default:
-                row.add_css_class("default-toolset-row")
-            row.toolset = toolset
-            list_box.append(row)
-
-        actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        cancel = Gtk.Button(label="Cancel", hexpand=True)
-        cancel.connect("clicked", lambda *_: dialog.close())
-        actions.append(cancel)
-        content.append(actions)
-        dialog.present(self.get_root())
-
-    def load_configuration_rows(self):
+    def load_configuration_rows(self, arguments_details=None, metadata_error=None, metadata_prepared=False,
+                                prepared_options=None):
         # Reset configuration rows
         if hasattr(self, 'configuration_rows'):
             for row in self.configuration_rows:
@@ -469,20 +486,28 @@ class ProjectStageDetailsView(Gtk.Box):
         self._unsupported_option_rows = []
         # Load arguments rows
         toolset = self.active_stage_toolset
-        arguments_details = {}
+        self._prepared_option_data = prepared_options or {}
+        arguments_details = arguments_details or {}
         metadata_available = False
-        try:
-            if toolset is None:
-                from .toolset_selection import default_toolset
-                toolset = default_toolset()
-            if toolset is not None:
-                arguments_details = load_catalyst_stage_arguments_details(
-                    toolset=toolset,
-                    target_name=self.stage.target
+        if metadata_prepared:
+            metadata_available = toolset is not None and metadata_error is None
+            if metadata_error is not None:
+                self._row_load_warnings.append(
+                    f"Could not read Catalyst settings: {self._short_error(metadata_error)}"
                 )
-                metadata_available = True
-        except Exception as error:
-            self._row_load_warnings.append(f"Could not read Catalyst settings: {self._short_error(error)}")
+        else:
+            try:
+                if toolset is None:
+                    from .toolset_selection import default_toolset
+                    toolset = default_toolset()
+                if toolset is not None:
+                    arguments_details = load_catalyst_stage_arguments_details(
+                        toolset=toolset,
+                        target_name=self.stage.target
+                    )
+                    metadata_available = True
+            except Exception as error:
+                self._row_load_warnings.append(f"Could not read Catalyst settings: {self._short_error(error)}")
         supported_names = {argument.attribute_name for argument in arguments_details.values()}
         explicit_none = getattr(self.stage, "_explicit_none_arguments", set())
         structural = {
@@ -762,7 +787,8 @@ class ProjectStageDetailsView(Gtk.Box):
                     stage=self.stage,
                     argument=argument,
                     is_item_selectable_handler=self.is_config_option_selectable,
-                    toolset=toolset
+                    toolset=toolset,
+                    prepared_option_data=getattr(self, "_prepared_option_data", {}).get(argument.attribute_name),
                 )
             case StageArgumentType.string_list | StageArgumentType.raw:
                 return StageTextListRow(project_directory=self.project_directory, stage=self.stage, argument=argument,
@@ -1067,7 +1093,7 @@ def include_unsupported_options(options: list[StageArgumentOption], values: list
 
 class StageOptionExpanderRow(ItemSelectionExpanderRow):
 
-    def __init__(self, project_directory: ProjectDirectory, stage: ProjectStage, argument: StageArgumentTargetDetails, is_item_selectable_handler, toolset=None):
+    def __init__(self, project_directory: ProjectDirectory, stage: ProjectStage, argument: StageArgumentTargetDetails, is_item_selectable_handler, toolset=None, prepared_option_data=None):
         super().__init__()
         self.title = argument.display_name
         self.item_title_property_name = 'display'
@@ -1077,6 +1103,7 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
         self.project_directory = project_directory
         self.stage = stage
         self.toolset = toolset
+        self.prepared_option_data = prepared_option_data
         self.display_none = not argument.required
         self.allow_multiselect = argument.details.type == StageArgumentType.multiselect if argument.details else False
         self.connect("is-item-selectable", is_item_selectable_handler)
@@ -1126,6 +1153,11 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
         self.set_static_list(options)
 
     def _options(self, boolean: bool = False) -> list[StageArgumentOption]:
+        if self.prepared_option_data is not None:
+            options, _resolved, error = self.prepared_option_data
+            if error is not None:
+                raise error
+            return options or []
         automatic = load_catalyst_stage_automatic_arguments_options(
             stage=self.stage, arg_details=self.argument, project_directory=self.project_directory
         )
@@ -1138,12 +1170,19 @@ class StageOptionExpanderRow(ItemSelectionExpanderRow):
 
     def set_static_list(self, items: list):
         # Show values automatic options resolve to (inherit from parent, releng template...) when they can be determined.
-        self.resolved_values: dict[StageAutomaticOption, str] = {}
-        for option in items:
-            if isinstance(option.value, StageAutomaticOption) and not option.unsupported:
-                if resolved := resolved_stage_argument_display(self.project_directory, self.stage, self.argument.name, option.value):
-                    self.resolved_values[option.value] = resolved
-                    option.subtitle = GLib.markup_escape_text(resolved)
+        if self.prepared_option_data is not None:
+            _options, resolved_values, _error = self.prepared_option_data
+            self.resolved_values = resolved_values or {}
+            for option in items:
+                if option.value in self.resolved_values:
+                    option.subtitle = GLib.markup_escape_text(self.resolved_values[option.value])
+        else:
+            self.resolved_values: dict[StageAutomaticOption, str] = {}
+            for option in items:
+                if isinstance(option.value, StageAutomaticOption) and not option.unsupported:
+                    if resolved := resolved_stage_argument_display(self.project_directory, self.stage, self.argument.name, option.value):
+                        self.resolved_values[option.value] = GLib.markup_escape_text(resolved)
+                        option.subtitle = GLib.markup_escape_text(resolved)
         super().set_static_list(items)
         # A radio button already selected does not emit ``toggled`` when clicked
         # again. Treat activation as a deliberate choice too, so reselecting the
@@ -1491,7 +1530,6 @@ class StageTextSourceRow(Adw.ExpanderRow):
                 if len(sorted_additions) > 3:
                     own_summary += f" (+{len(sorted_additions) - 3} more)"
                 self.package_action_row.set_subtitle(own_summary)
-            self.project_directory.event_bus.emit(GitDirectoryEvent.CONTENT_CHANGED, self.project_directory)
             return
         if own:
             if own_additions:

@@ -289,8 +289,8 @@ class ProjectDirectory(GitDirectory):
             raise RuntimeError(f"Stage with name {stage.name} already exists in this project.")
         ProjectManager.shared().save_stage(project=self, stage=stage)
         if toolset_id:
-            from . import project_stage_toolsets
-            project_stage_toolsets.set(self.directory_path(), stage.id, toolset_id)
+            from . import project_toolsets
+            project_toolsets.set(self.directory_path(), toolset_id)
 
 @dataclass
 class ProjectConfiguration(Serializable):

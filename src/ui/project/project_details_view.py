@@ -1,4 +1,8 @@
 from gi.repository import Gtk, Adw, GLib
+import os
+import copy
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from .git_directory import GitDirectoryEvent, GitDirectoryStatus
 from .git_update import GitUpdate
 from .project_manager import ProjectManager
@@ -14,6 +18,9 @@ from .project_build_view import ProjectBuildView
 from .build_queue_view import build_button_state, present_queued_build
 from .build_queue import BuildQueue, BuildQueueEvent
 from .project_build_process import ProjectBuild, ProjectBuildStepBuildStage, running_project_build
+from .project_build_spec import StageSpecContext, missing_required_stage_values
+from .project_stage_arguments import StageArgumentDetails
+from .toolset_application import ToolsetApplication
 from .project_builds_view import ProjectBuildsView
 from .multistage_process import MultiStageProcess, MultiStageProcessState, MultiStageProcessEvent, MultiStageProcessStageEvent, MultiStageProcessStageState
 from .architecture import Architecture
@@ -23,6 +30,7 @@ from .project_template_update import (
     TemplateState, repository_origin, has_unsaved_changes, template_update_available, project_overlays
 )
 from .project_update_view import ProjectUpdateView
+from .tree_node import walk_tree
 import threading
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/project/project_details_view.ui')
@@ -47,6 +55,8 @@ class ProjectDetailsView(Gtk.Box):
     stage_actions = Gtk.Template.Child()
     source_action_row = Gtk.Template.Child()
     add_stage_row = Gtk.Template.Child()
+    project_toolset_button = Gtk.Template.Child()
+    project_toolset_button_label = Gtk.Template.Child()
     source_button = Gtk.Template.Child()
     source_button_label = Gtk.Template.Child()
     delete_project_button = Gtk.Template.Child()
@@ -55,6 +65,9 @@ class ProjectDetailsView(Gtk.Box):
         super().__init__()
         self.project_directory = project_directory
         self.content_navigation_view = content_navigation_view
+        self._stages_refresh_pending = False
+        if self.content_navigation_view is not None:
+            self.content_navigation_view.connect("notify::visible-page", self._on_navigation_visible_page_changed)
         self._setup_action_button_styles()
         self._source = None
         self._build_action_available = False
@@ -69,6 +82,7 @@ class ProjectDetailsView(Gtk.Box):
             "clicked", self.directory_details_view.action_button_delete_clicked
         )
         self._setup_save_changes_button()
+        self._update_project_toolset_button()
         self.get_configuration()
         self.monitor_stages_changes()
         self.monitor_information_changes()
@@ -77,6 +91,13 @@ class ProjectDetailsView(Gtk.Box):
         self.stages_compact_view.set_root_nodes(stages)
         self.stages_full_view.set_root_nodes(stages)
         self.stages_list_view.set_root_nodes(stages)
+        self._update_project_toolset_button()
+        self._stage_requirement_statuses = {}
+        self._stage_requirement_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="stage-requirements"
+        )
+        self._stage_requirement_cancel = None
+        self._stage_requirement_future = None
         self._setup_stages_view_mode()
         self._setup_source_banner()
         # Result of last build is seen, project is not marked anymore in projects list.
@@ -89,6 +110,7 @@ class ProjectDetailsView(Gtk.Box):
             MultiStageProcessEvent.STARTED_PROCESSES_CHANGED, self._update_action_rows_visibility
         )
         self._refresh_build_state()
+        self._refresh_stage_requirement_statuses_async()
 
     def _setup_save_changes_button(self):
         """Add a compact save/discard split button to the shared project footer."""
@@ -104,8 +126,8 @@ class ProjectDetailsView(Gtk.Box):
         # The Information tab's menu uses the same action names. Install its action group at the project page too,
         # so the footer menu invokes the exact same save/discard callbacks.
         self.insert_action_group("changes", self.directory_details_view._changes_action_group)
-        self.save_changes_button.set_halign(Gtk.Align.CENTER)
-        self.source_action_row.set_center_widget(self.save_changes_button)
+        self.save_changes_button.set_halign(Gtk.Align.START)
+        self.source_action_row.insert_child_after(self.save_changes_button, self.project_toolset_button)
 
     def _setup_action_button_styles(self):
         """Apply action styles after template construction so every button gets the intended classes and sizing."""
@@ -116,10 +138,86 @@ class ProjectDetailsView(Gtk.Box):
         self.build_row.add_css_class("suggested-action")
 
         self.source_button.set_has_frame(False)
-        for css_class in ("flat", "caption", "stage-toolset-change-button"):
-            self.source_button.add_css_class(css_class)
+        for button in (self.project_toolset_button, self.source_button):
+            for css_class in ("flat", "caption", "stage-toolset-change-button"):
+                button.add_css_class(css_class)
+        self.project_toolset_button_label.add_css_class("dim-label")
+        self.project_toolset_button_label.add_css_class("caption")
         self.source_button_label.add_css_class("dim-label")
         self.source_button_label.add_css_class("caption")
+
+    def _project_catalyst_toolsets(self):
+        from .toolset_selection import sorted_toolsets, toolset_has_applications
+        return [item for item in sorted_toolsets()
+                if toolset_has_applications(item, [ToolsetApplication.CATALYST])
+                and os.path.isfile(item.file_path())]
+
+    def _update_project_toolset_button(self):
+        from .project_toolsets import get
+        from .toolset_selection import default_toolset
+        toolsets = self._project_catalyst_toolsets()
+        selected_id = get(self.project_directory.directory_path())
+        selected = next((item for item in toolsets if str(item.uuid) == str(selected_id)), None)
+        selected = selected or default_toolset([ToolsetApplication.CATALYST], toolsets) or (toolsets[0] if toolsets else None)
+        label = f"Catalyst toolset · {selected.name}" if selected else "No Catalyst toolset available"
+        self.project_toolset_button_label.set_label(label)
+        self.project_toolset_button.set_tooltip_text("Catalyst toolset used for this project")
+        self.project_toolset_button.set_sensitive(bool(toolsets))
+
+    @Gtk.Template.Callback()
+    def _on_change_project_toolset_clicked(self, _button):
+        from .project_toolsets import get, set as set_project_toolset
+        from .toolset_selection import default_toolset
+        toolsets = self._project_catalyst_toolsets()
+        if not toolsets:
+            return
+        current_id = get(self.project_directory.directory_path())
+        default = default_toolset([ToolsetApplication.CATALYST], toolsets)
+        dialog = Adw.Dialog(
+            title="Catalyst toolset for project",
+            content_width=420,
+            presentation_mode=Adw.DialogPresentationMode.FLOATING,
+        )
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                          margin_top=18, margin_bottom=12, margin_start=18, margin_end=18)
+        dialog.set_child(content)
+        content.append(Gtk.Label(
+            label="All stages in this project use the selected Catalyst toolset.",
+            wrap=True,
+            xalign=0,
+            css_classes=["dim-label"],
+        ))
+        scroller = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                                      hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                      max_content_height=320, propagate_natural_height=True)
+        list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE,
+                               css_classes=["boxed-list", "toolset-chooser"],
+                               margin_top=4, margin_bottom=4, margin_start=4, margin_end=4)
+        scroller.set_child(list_box)
+        content.append(scroller)
+
+        def choose_toolset(_list, row):
+            set_project_toolset(self.project_directory.directory_path(), str(row.toolset.uuid))
+            self._update_project_toolset_button()
+            self._refresh_stage_requirement_statuses_async()
+            dialog.close()
+
+        list_box.connect("row-activated", choose_toolset)
+        for toolset in toolsets:
+            row = Adw.ActionRow(title=toolset.name,
+                                subtitle=toolset.short_details or toolset.busy_reason or "Catalyst available",
+                                activatable=True)
+            row.add_prefix(Gtk.Image.new_from_icon_name("toolbox-symbolic"))
+            if toolset is default:
+                row.add_css_class("default-toolset-row")
+            row.toolset = toolset
+            list_box.append(row)
+        actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        cancel = Gtk.Button(label="Cancel", hexpand=True)
+        cancel.connect("clicked", lambda *_: dialog.close())
+        actions.append(cancel)
+        content.append(actions)
+        dialog.present(self.get_root())
 
     def get_configuration(self):
         self.releng_selection_view.select(self.project_directory.get_releng_directory())
@@ -210,14 +308,34 @@ class ProjectDetailsView(Gtk.Box):
         self._page.set_title(name)
 
     def _update_stages(self, data):
+        if not self._is_project_page_visible():
+            self._stages_refresh_pending = True
+            self._update_packages_warning()
+            return
+        self._stages_refresh_pending = False
         stages = self.project_directory.stages_tree()
         self.stages_compact_view.set_root_nodes(stages)
         self.stages_full_view.set_root_nodes(stages)
         self.stages_list_view.set_root_nodes(stages)
+        self._refresh_stage_requirement_statuses_async()
         # Template/repository updates replace stage.json files and invalidate the
         # cached stages before emitting CONTENT_CHANGED. Recompute package-folder
         # compatibility against those refreshed stage flags as well.
         self._update_packages_warning()
+
+    def _is_project_page_visible(self):
+        navigation_view = self.content_navigation_view
+        if navigation_view is None:
+            return True
+        page = navigation_view.get_visible_page()
+        if page is None:
+            return False
+        child = page.get_child()
+        return child is self or child.get_content() is self
+
+    def _on_navigation_visible_page_changed(self, *_args):
+        if self._stages_refresh_pending and self._is_project_page_visible():
+            self._update_stages(self.project_directory)
 
     def _on_project_contents_reloaded(self, _project):
         self._update_stages(self.project_directory)
@@ -253,9 +371,164 @@ class ProjectDetailsView(Gtk.Box):
             for step in running_build.stages:
                 if isinstance(step, ProjectBuildStepBuildStage):
                     statuses[step.stage.id] = _build_step_status(step)
+        for stage_id, requirement_status in self._stage_requirement_statuses.items():
+            running_status = statuses.get(stage_id)
+            if running_status:
+                requirement_status = StageNodeStatus(
+                    title=f"{requirement_status.title} · {running_status.title}",
+                    icon_name=requirement_status.icon_name,
+                    css_class=requirement_status.css_class,
+                    in_progress=running_status.in_progress,
+                )
+            statuses[stage_id] = requirement_status
         self.stages_compact_view.set_statuses(statuses)
         self.stages_full_view.set_statuses(statuses)
         self.stages_list_view.set_statuses(statuses)
+
+    def _load_stage_requirement_statuses(self, on_stage_checked=None, cancelled=None):
+        """Use the same Catalyst required-value resolution as spec generation for stage warnings."""
+        from .toolset_selection import default_toolset
+        from .project_toolsets import get as get_project_toolset
+
+        toolsets = self._project_catalyst_toolsets()
+        if cancelled and cancelled.is_set():
+            return {}
+        fallback = default_toolset(applications=[ToolsetApplication.CATALYST], toolsets=toolsets)
+        fallback = fallback or (toolsets[0] if toolsets else None)
+        if not fallback:
+            if on_stage_checked:
+                for stage in self.project_directory.stages:
+                    on_stage_checked(stage.id, None)
+            return {}
+        preferred_id = get_project_toolset(self.project_directory.directory_path())
+        toolset = next((item for item in toolsets if str(item.uuid) == str(preferred_id)), fallback)
+        snapshot = self.project_directory.get_snapshot()
+        context_values = dict(
+            timestamp="<timestamp>",
+            source_subpath="<stage seed>",
+            portage_confdir="<generated portage configuration>",
+            root_overlay="<generated root overlay>",
+            iso_overlay="<generated ISO overlay>",
+            snapshot=snapshot,
+            cache_paths={
+                StageArgumentDetails.pkgcache_path: "<package cache>",
+                StageArgumentDetails.kerncache_path: "<kernel cache>",
+            },
+        )
+        # Resolve defaults for a detached copy of the full project in parent-first
+        # order. A child can inherit a required value from a parent's toolset
+        # defaults even when that parent has never been opened in the editor.
+        evaluation_stages = []
+        for original in self.project_directory.stages:
+            stage = copy.copy(original)
+            stage.__dict__ = dict(original.__dict__)
+            for name in ("_default_stage_arguments", "_explicit_stage_arguments",
+                         "_explicit_none_arguments", "_explicit_user_arguments",
+                         "_explicit_user_argument_dates"):
+                value = getattr(stage, name, None)
+                if isinstance(value, dict):
+                    setattr(stage, name, dict(value))
+                elif isinstance(value, set):
+                    setattr(stage, name, set(value))
+            evaluation_stages.append(stage)
+        evaluation_project = copy.copy(self.project_directory)
+        evaluation_project.stages = evaluation_stages
+        from .project_stage import refresh_default_stage_arguments
+
+        statuses = {}
+        for node, _depth in walk_tree(evaluation_project.stages_tree()):
+            if cancelled and cancelled.is_set():
+                return statuses
+            stage = node.value
+            try:
+                refresh_default_stage_arguments(
+                    evaluation_project, stage, toolset=toolset, snapshot=snapshot
+                )
+                missing = missing_required_stage_values(
+                    evaluation_project, stage,
+                    StageSpecContext(toolset=toolset, **context_values),
+                )
+            except Exception:
+                # If Catalyst metadata cannot be read, leave the stage unmarked rather than guessing.
+                if on_stage_checked:
+                    on_stage_checked(stage.id, None)
+                continue
+            if cancelled and cancelled.is_set():
+                return statuses
+            status = None
+            if missing:
+                status = StageNodeStatus(
+                    title=f"Missing required: {', '.join(missing)}",
+                    icon_name="dialog-warning-symbolic",
+                    css_class="warning",
+                )
+                statuses[stage.id] = status
+            if on_stage_checked:
+                on_stage_checked(stage.id, status)
+        return statuses
+
+    def _refresh_stage_requirement_statuses_async(self):
+        """Run one cancellable requirement check at a time, keeping only the newest request."""
+        if self._stage_requirement_cancel is not None:
+            self._stage_requirement_cancel.set()
+        if self._stage_requirement_future is not None:
+            self._stage_requirement_future.cancel()
+        self._stage_requirement_generation = getattr(self, "_stage_requirement_generation", 0) + 1
+        generation = self._stage_requirement_generation
+        cancelled = self._stage_requirement_cancel = threading.Event()
+        stages = self.project_directory.stages
+        self._stage_requirement_statuses = {
+            stage.id: StageNodeStatus("Checking required settings…", in_progress=True)
+            for stage in stages
+        }
+        self._refresh_build_state()
+
+        def work():
+            try:
+                self._load_stage_requirement_statuses(
+                    lambda stage_id, status: GLib.idle_add(
+                        self._on_stage_requirement_checked, generation, stage_id, status
+                    ),
+                    cancelled=cancelled,
+                )
+            except Exception as exception:
+                if cancelled.is_set():
+                    return
+                GLib.idle_add(
+                    self._on_stage_requirement_check_failed,
+                    generation,
+                    [stage.id for stage in stages],
+                    exception,
+                )
+
+        self._stage_requirement_future = self._stage_requirement_executor.submit(work)
+
+    def _on_stage_requirement_checked(self, generation, stage_id, status):
+        if generation != self._stage_requirement_generation:
+            return GLib.SOURCE_REMOVE
+        if status is None:
+            self._stage_requirement_statuses.pop(stage_id, None)
+        else:
+            self._stage_requirement_statuses[stage_id] = status
+        self._refresh_build_state()
+        return GLib.SOURCE_REMOVE
+
+    def _on_stage_requirement_check_failed(self, generation, stage_ids, error):
+        if generation != self._stage_requirement_generation:
+            return GLib.SOURCE_REMOVE
+        print(f"Failed to check stage requirements: {error}")
+        for stage_id in stage_ids:
+            self._stage_requirement_statuses.pop(stage_id, None)
+        self._refresh_build_state()
+        return GLib.SOURCE_REMOVE
+
+    def do_dispose(self):
+        if self._stage_requirement_cancel is not None:
+            self._stage_requirement_cancel.set()
+        if self._stage_requirement_future is not None:
+            self._stage_requirement_future.cancel()
+        self._stage_requirement_executor.shutdown(wait=False, cancel_futures=True)
+        Gtk.Widget.do_dispose(self)
 
     def _on_build_changed(self, *args):
         # Several changes can come at once, refresh once.
@@ -410,6 +683,7 @@ class ProjectDetailsView(Gtk.Box):
         self.builds_row.set_visible(is_stages_page)
         self.build_row.set_visible(is_stages_page and self._build_action_available)
         self.build_progress_row.set_visible(is_stages_page and self._build_running)
+        self.project_toolset_button.set_visible(is_stages_page)
         self.source_button.set_visible(is_stages_page and has_source)
         self.save_changes_button.set_visible(is_stages_page and has_changes)
         self.save_changes_button.set_sensitive(has_changes and not active_update)

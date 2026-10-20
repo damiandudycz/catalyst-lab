@@ -5,7 +5,7 @@ from typing import Callable
 from .repository import Repository
 from .architecture import Architecture
 from .snapshot import PortageProfile
-from .project_stage import load_catalyst_stage_arguments_details
+from .project_stage import load_catalyst_stage_arguments_details, _NO_DEFAULT_SNAPSHOT
 from .project_stage_arguments import StageArgumentDetails
 from .project_stage_automatic_option import StageAutomaticOption
 from .project_stage_compression_mode import StageCompressionMode
@@ -16,6 +16,8 @@ from .project_stage_portage_confdir import (
     StagePortageConfdirSource, portage_confdir_sources, releng_portage_variant, parent_overlay_stages,
     stage_overlay_path, is_emulated_build, root_overlay_values, root_overlay_folders
 )
+
+_DEFAULT_SNAPSHOT = object()
 
 # ------------------------------------------------------------------------------
 # Generating catalyst spec files for stages.
@@ -36,6 +38,7 @@ class StageSpecContext:
     snapshot: object | None = None # Snapshot selected for build, project snapshot when not set.
     path_mapper: Callable[[str], str] | None = None # Path of host folder as seen by catalyst (project, releng, overlays).
     rosetta_amd64: bool = False # Rosetta binfmt handler is active in the build machine.
+    defaults_snapshot: object = _DEFAULT_SNAPSHOT # Snapshot used to establish defaults before a newly fetched snapshot.
 
 def snapshot_treeish(project_directory, snapshot=None) -> str | None:
     """Catalyst finds snapshot as snapshots/gentoo-<treeish>.sqfs. Snapshot of project, unless other is given."""
@@ -47,11 +50,24 @@ def snapshot_treeish(project_directory, snapshot=None) -> str | None:
 
 def generate_stage_spec(project_directory, stage, context: StageSpecContext) -> str:
     """Spec file contents, with automatic options resolved and placeholders replaced. Raises if required value is missing."""
-    # Defaults are normally refreshed when the stage details are opened. Build
-    # generation must also work for projects/stages that have never been opened
-    # in that view (or whose defaults depend on a newly selected build snapshot).
+    lines, missing = _stage_spec_lines(project_directory, stage, context)
+    if missing:
+        raise RuntimeError(f"Missing required values: {', '.join(missing)}")
+    return "\n".join(lines) + "\n"
+
+def missing_required_stage_values(project_directory, stage, context: StageSpecContext) -> list[str]:
+    """Required Catalyst values that resolve to empty for the given stage and build context."""
+    _lines, missing = _stage_spec_lines(project_directory, stage, context)
+    return missing
+
+def _stage_spec_lines(project_directory, stage, context: StageSpecContext) -> tuple[list[str], list[str]]:
+    # Recompute defaults from the established defaults snapshot. The generated
+    # build snapshot can be different when the wizard selected "Get latest".
     from .project_stage import refresh_default_stage_arguments
-    refresh_default_stage_arguments(project_directory, stage, toolset=context.toolset, snapshot=context.snapshot)
+    defaults_snapshot = context.snapshot if context.defaults_snapshot is _DEFAULT_SNAPSHOT else context.defaults_snapshot
+    if defaults_snapshot is None and context.defaults_snapshot is not _DEFAULT_SNAPSHOT:
+        defaults_snapshot = _NO_DEFAULT_SNAPSHOT
+    refresh_default_stage_arguments(project_directory, stage, toolset=context.toolset, snapshot=defaults_snapshot)
     arguments = load_catalyst_stage_arguments_details(toolset=context.toolset, target_name=stage.target)
     releng_directory = project_directory.get_releng_directory()
     mapped = context.path_mapper or (lambda path: path)
@@ -80,9 +96,7 @@ def generate_stage_spec(project_directory, stage, context: StageSpecContext) -> 
         for name, value in kernel_spec_values(project_directory, stage):
             if line := _format_spec_line(name, value, mapped, placeholders):
                 lines.append(line)
-    if missing:
-        raise RuntimeError(f"Missing required values: {', '.join(missing)}")
-    return "\n".join(lines) + "\n"
+    return lines, missing
 
 def _format_spec_line(name: str, value, path_mapper, placeholders: dict[str, str]) -> str | None:
     if (text := _format_value(value, path_mapper)) is None:

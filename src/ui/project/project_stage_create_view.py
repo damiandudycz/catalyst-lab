@@ -10,7 +10,7 @@ from .project_stage_installation import ProjectStageInstallation
 from .project_manager import ProjectManager
 from .name_suggestion import unique_name
 from .toolset_application import ToolsetApplication
-from .toolset_selection import sorted_toolsets, toolset_has_applications
+from .toolset_selection import sorted_toolsets, toolset_has_applications, default_toolset
 import os, uuid
 
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/project/project_stage_create_view.ui')
@@ -37,7 +37,14 @@ class ProjectStageCreateView(Gtk.Box):
         self.installation_in_progress = installation_in_progress
         self.content_navigation_view = content_navigation_view
         self.filename_is_free = False
-        self.toolset_selection_view.set_static_list(sorted_toolsets(applications=[ToolsetApplication.CATALYST]))
+        toolsets = sorted_toolsets(applications=[ToolsetApplication.CATALYST])
+        from .project_toolsets import get as get_project_toolset
+        preferred_id = get_project_toolset(project_directory.directory_path())
+        preferred = next((item for item in toolsets if str(item.uuid) == str(preferred_id)), None)
+        default = default_toolset(applications=[ToolsetApplication.CATALYST], toolsets=toolsets)
+        ordered = list(dict.fromkeys(item for item in (preferred, default, *toolsets) if item is not None))
+        self.toolset_selection_view.preferred_item = preferred or default
+        self.toolset_selection_view.set_static_list(ordered)
         self.toolset_selection_view.event_bus.subscribe(ItemSelectionViewEvent.ITEM_CHANGED, self._toolset_changed)
         self.connect("realize", self.on_realize)
 
