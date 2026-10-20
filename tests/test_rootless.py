@@ -302,19 +302,6 @@ class ExecutorTests(unittest.TestCase):
         self.assertLess(overlay_mount, chroot)
         self.assertNotIn('cp -L /etc/resolv.conf', script)
 
-    def test_build_session_patches_read_only_toolset_file_in_overlay_upper(self):
-        executor = FakeExecutor()
-        with patch.object(project_build_rootless, 'sessions_directory', return_value='/workspace/Temporary/Sessions'):
-            script = project_build_rootless.stage_build_session_script(
-                executor, '/workspace/Toolsets/mount', [], 'true',
-                patch_catalyst_stage1=True)
-
-        patch_file = script.index('PATCH_TOOLSET_FILE')
-        overlay_mount = script.index('mount -t overlay overlay -o lowerdir=/workspace/Toolsets/mount')
-        self.assertLess(patch_file, overlay_mount)
-        self.assertIn('os.path.join(upper, relative.lstrip("/"))', script)
-        self.assertIn('contents.replace(old, new)', script)
-
     def test_machine_executor_passes_scripts_by_shared_temporary_file(self):
         class Machine:
             instance_name = 'catalystlab-test'

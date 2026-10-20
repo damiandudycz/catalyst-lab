@@ -64,6 +64,28 @@ class ToolsetApplicationVersion:
     name: str
     id: uuid.UUID
     config: PortageConfig = field(default_factory=PortageConfig)
+    setup_commands: Tuple[str, ...] = field(default_factory=tuple)
+
+ToolsetApplication.SQUASHFUSE = ToolsetApplication(
+    name="Squashfuse", description="Needed for rootless Catalyst snapshot mounts",
+    package="sys-fs/squashfuse",
+    auto_select=True,
+    versions=(
+        ToolsetApplicationVersion(
+            name="Gentoo tree",
+            id=uuid.UUID("b97d390f-d2db-4816-9f3c-1e9f28c7e025"),
+            config=(
+                # Gentoo does not keyword squashfuse on every architecture (including arm64).
+                PortageConfig(directory="package.accept_keywords", entries=("sys-fs/squashfuse **",)),
+            ),
+            setup_commands=(
+                "mkdir -p /etc && touch /etc/fuse.conf && "
+                "if ! grep -qxF user_allow_other /etc/fuse.conf; then "
+                "printf '%s\\n' user_allow_other >> /etc/fuse.conf; fi",
+            ),
+        ),
+    ),
+)
 
 ToolsetApplication.CATALYST = ToolsetApplication(
     name="Catalyst", description="Required to build Gentoo stages",
@@ -100,7 +122,8 @@ ToolsetApplication.CATALYST = ToolsetApplication(
                 ),
             )
         ),
-    )
+    ),
+    dependencies=(ToolsetApplication.SQUASHFUSE,),
 )
 ToolsetApplication.LINUX_HEADERS = ToolsetApplication(
     name="Linux headers", description="Needed for qemu/cmake",

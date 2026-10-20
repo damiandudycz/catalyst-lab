@@ -16,7 +16,7 @@ from .toolset_env_builder import get_stage3_urls
 from .project_stage_arguments import StageArgumentDetails
 from .project_stage_cache import CACHE_ARGUMENTS, stage_cache_path
 from .rootless import (
-    prepare_toolset_squashfs, prepare_snapshot_squashfs, unmount_read_only_mount,
+    prepare_toolset_squashfs, unmount_read_only_mount,
     remove_stale_sessions, remove_in_namespace, distfiles_directory, path_is_within
 )
 from .project_build_rootless import (
@@ -97,8 +97,6 @@ class ProjectBuild(MultiStageProcess):
         self.rootless_toolset_path: str | None = None # Read-only mounted or extracted toolset lower layer.
         self.rootless_toolset_mounted = False # Mounted SquashFS lower layer, released before machine workspace.
         self.rootless_toolset_temporary_copy = False
-        self.rootless_snapshot_path: str | None = None
-        self.rootless_snapshot_mounted = False
         super().__init__(title=f"Building {project_directory.name}")
         # Project rows show running builds in their status indicators, so project state changes with build state.
         self.event_bus.subscribe(MultiStageProcessEvent.STATE_CHANGED, self._on_state_changed)
@@ -449,10 +447,6 @@ class ProjectBuildStepFetchSnapshot(ProjectBuildStep):
             snapshot = existing_latest_snapshot(self.log) or self._generate_snapshot()
             process.snapshot = snapshot
             self.log(f"Using snapshot {snapshot.filename} ({snapshot.name})")
-            if process.rootless:
-                (process.rootless_snapshot_path,
-                 process.rootless_snapshot_mounted) = prepare_snapshot_squashfs(
-                    snapshot.file_path(), self.log, self.namespace_processes, executor=process.executor)
             if process.update_project_snapshot:
                 GLib.idle_add(process.store_project_snapshot)
             self.complete(MultiStageProcessStageState.COMPLETED)
@@ -525,15 +519,16 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
                 os.makedirs(directory, exist_ok=True)
             if self.multistage_process.rootless:
                 self._prepare_rootless()
+                self._log_toolset_bindings()
                 self.complete(MultiStageProcessStageState.COMPLETED)
                 return
             self.log(f"Building with root privileges: {self.multistage_process.rootless_unsupported_reason}")
             # Catalyst mounts snapshot squashfs with loop device. Loop device nodes are created by kernel in host /dev,
             # so free ones are prepared before spawning and only they are made available in toolset.
             self.loop_devices = prepare_loop_devices()
-            for binding in self.required_bindings():
-                self.log(f"Binding {binding.host_path} -> {binding.mount_path}")
-            toolset.spawn(runner=process.runner, additional_bindings=self.required_bindings())
+            bindings = self.required_bindings()
+            self._log_toolset_bindings(bindings)
+            toolset.spawn(runner=process.runner, additional_bindings=bindings)
             if not toolset.spawned:
                 raise RuntimeError("Failed to spawn toolset")
             self.spawned = True
@@ -556,15 +551,21 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
         (process.rootless_toolset_path, process.rootless_toolset_mounted,
          process.rootless_toolset_temporary_copy) = prepare_toolset_squashfs(
             process.toolset.file_path(), self.log, self.namespace_processes, executor=executor)
-        # Latest snapshot is extracted after it's generated.
-        if not process.fetch_snapshot:
-            snapshot = process.snapshot
-            if snapshot is None:
-                raise RuntimeError("Build has no snapshot")
-            (process.rootless_snapshot_path,
-             process.rootless_snapshot_mounted) = prepare_snapshot_squashfs(
-                snapshot.file_path(), self.log, self.namespace_processes, executor=executor)
+        self.log(f"Toolset image: {process.toolset.file_path()} -> {process.rootless_toolset_path} "
+                 f"({'mounted read-only' if process.rootless_toolset_mounted else 'prepared extracted root'})")
+        if not process.fetch_snapshot and process.snapshot is None:
+            raise RuntimeError("Build has no snapshot")
         process.make_directories([distfiles_directory(executor), process.seed_cache_directory, process.work_root] + process.mirrored_paths())
+    def _log_toolset_bindings(self, bindings: list[BindMount] | None = None):
+        process = self.multistage_process
+        bindings = bindings if bindings is not None else self.required_bindings()
+        self.log("Toolset data bindings (source -> path inside toolset):")
+        for binding in bindings:
+            self.log(f"  {binding.host_path or '<empty directory>'} -> {binding.mount_path}")
+        if process.snapshot is not None:
+            snapshot_path = process.snapshot.file_path()
+            self.log(f"  Snapshot file available through snapshots binding: {snapshot_path} -> "
+                     f"{CATALYST_SNAPSHOTS_PATH}/{os.path.basename(snapshot_path)}")
     def required_bindings(self) -> list[BindMount]:
         process = self.multistage_process
         bindings = [
@@ -601,7 +602,6 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
                 self.log(f"Failed to save caches: {e}")
             for path_attribute, mounted_attribute, description in (
                 ("rootless_toolset_path", "rootless_toolset_mounted", "toolset image"),
-                ("rootless_snapshot_path", "rootless_snapshot_mounted", "Gentoo snapshot"),
             ):
                 if getattr(process, mounted_attribute):
                     try:
@@ -887,14 +887,15 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
     def _run_rootless(self, spec: str, work_directory: str, build_script_path: str) -> bool:
         """Runs build script in toolset root inside user namespace, with diagnostics after failure."""
         process = self.multistage_process
-        diagnostics_path = self._write_diagnostics_script(spec=spec, work_directory=work_directory, rootless=True)
+        diagnostics_path = self._write_diagnostics_script(spec=spec, work_directory=work_directory)
         bindings = [
             (process.catalyst_builds_directory, CATALYST_BUILDS_PATH),
             (process.stage_artifacts_directory, CATALYST_STAGE_ARTIFACTS_PATH),
             (process.seed_cache_directory, CATALYST_SEEDS_PATH),
             (process.kernel_cache_directory, CATALYST_KERNEL_CACHE_PATH),
             (process.work_root, CATALYST_WORK_PATH),
-            (process.rootless_snapshot_path, f"{CATALYST_SNAPSHOTS_PATH}/gentoo-{snapshot_treeish(process.project_directory, process.snapshot)}.sqfs"),
+            # Give Catalyst the actual SquashFS file so it detects and mounts a SquashFS snapshot itself.
+            (os.path.dirname(process.snapshot.file_path()), CATALYST_SNAPSHOTS_PATH),
             (distfiles_directory(process.executor), "/var/cache/distfiles"),
         ] + [(path, process.mirror_path(path)) for path in process.mirrored_paths()]
         script = stage_build_session_script(
@@ -904,7 +905,6 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
             command=f'bash "{process.container_path(build_script_path)}"',
             diagnostics_command=f'bash "{process.container_path(diagnostics_path)}"' if diagnostics_path else None,
             synced_caches=process.synced_caches(self.stage),
-            patch_catalyst_stage1=True,
         )
         self.log(f"$ bash {process.container_path(build_script_path)}")
         return process.executor.run_in_namespace(script, self.log, self.namespace_processes)
@@ -912,17 +912,15 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
     def _run_diagnostics(self, spec: str, work_directory: str):
         """Collects details about chroot left by failed catalyst build. Catalyst hides errors of some scripts
         (eg. stage1 build.py), this runs the same checks with errors visible."""
-        if script_path := self._write_diagnostics_script(spec=spec, work_directory=work_directory, rootless=False):
+        if script_path := self._write_diagnostics_script(spec=spec, work_directory=work_directory):
             self.run_command_in_toolset(f'bash "{self.multistage_process.container_path(script_path)}"')
 
-    def _write_diagnostics_script(self, spec: str, work_directory: str, rootless: bool) -> str | None:
-        """Writes diagnostics script, returns its path. Rootless builds use extracted snapshot folder instead of
-        squashfs file, which is bound instead of loop mounted."""
+    def _write_diagnostics_script(self, spec: str, work_directory: str) -> str | None:
+        """Writes a script to inspect the failed stage chroot and collect Catalyst failure logs."""
         try:
             process = self.multistage_process
             values = _spec_values(spec)
             chroot = f"/var/tmp/catalyst/tmp/{values['rel_type']}/{values['target']}-{values['subarch']}-{values['version_stamp']}"
-            snapshot = f"{CATALYST_SNAPSHOTS_PATH}/gentoo-{values['snapshot_treeish']}.sqfs"
             profile = values.get("profile", "")
             # Logs for bug reports are saved in build directory (available in toolset at path of builds directory).
             failure_logs = failure_logs_script(chroot, process.container_path(os.path.join(self.build.path, StageBuild.FAILURE_DIRECTORY))) if self.build and self.build.path else ""
@@ -936,8 +934,6 @@ echo "--- make.conf:"; cat "$CHROOT/etc/portage/make.conf"
 echo "--- /etc/portage:"; find "$CHROOT/etc/portage" -maxdepth 3 | head -60
 echo "--- repos.conf:"; cat "$CHROOT"/etc/portage/repos.conf/* 2>&1 | head -20
 echo "--- mounts in chroot:"; grep "$CHROOT" /proc/mounts
-mkdir -p "$REPO"
-echo "--- mounting snapshot {snapshot}:"; mount {"--bind" if rootless else "-o ro,loop"} "{snapshot}" "$REPO" && echo "mounted"
 mount --bind /proc "$CHROOT/proc"
 {failure_logs}
 echo "--- repo profiles:"; ls "$REPO/profiles" | head -20
@@ -945,7 +941,6 @@ echo "--- profile {profile}:"; ls "$REPO/profiles/{profile}"
 echo "--- portage in chroot:"
 chroot "$CHROOT" /bin/bash -c 'for module in /usr/lib/python3*/site-packages/portage/__init__.py; do interpreter=$(echo $module | cut -d/ -f4); echo "using $interpreter"; $interpreter -c "import portage; print(portage.settings.profiles)"; $interpreter /tmp/build.py; echo "build.py exit code: $?"; done'
 umount "$CHROOT/proc"
-umount "$REPO"
 echo "===== End of diagnostics ====="
 """
             script_path = os.path.join(work_directory, "diagnostics.sh")
@@ -1032,13 +1027,6 @@ def _catalyst_build_script(
 # build process environment: binfmt_misc cannot reliably use a shell script as
 # its interpreter, and this does not alter the generated stage or Portage config.
 export QEMU_CPU=max
-# Fix of older catalyst: stage1 build.py concatenates portage Atom with str (TypeError with current portage). Fixed
-# upstream, applied to toolset copy of this build session only (changes are not stored in toolset).
-for build_py in /usr/share/catalyst/targets/stage1/build.py; do
-    [ -f "$build_py" ] && grep -q 'sys.stdout.write(b + " ")' "$build_py" \
-        && sed -i 's/sys.stdout.write(b + " ")/sys.stdout.write(str(b) + " ")/' "$build_py" \
-        && echo "Applied stage1 build.py fix to catalyst"
-done
 # Catalyst configuration with cache options matching stage settings. Configuration of older catalyst (not TOML) is
 # used unchanged.
 CONFIG_ARGS=()

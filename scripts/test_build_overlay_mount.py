@@ -5,8 +5,8 @@ Run with the project's Python environment:
     PYTHONPATH=src .build-macos/venv/bin/python scripts/test_build_overlay_mount.py
 
 The script reads the active Library's Build machine, toolset and Snapshots directory. It starts the machine when
-needed, creates a temporary workspace, verifies Catalyst's stage1 compatibility patch in the writable overlay (or
-optionally builds the snapshot), then unmounts and removes the workspace.
+needed, creates a temporary workspace, verifies that the workspace and snapshot mount are available (or optionally
+builds the snapshot), then unmounts and removes the workspace.
 """
 from __future__ import annotations
 
@@ -112,9 +112,7 @@ def main() -> int:
             if args.snapshot else (
                 'test -d /var/tmp/catalyst/snapshots && '
                 'test -d /var/tmp && '
-                'grep -Fq \'sys.stdout.write(str(b) + " ")\' '
-                '/usr/share/catalyst/targets/stage1/build.py && '
-                'echo "Overlay mount and stage1 compatibility patch smoke test passed"'
+                'echo "Overlay mount smoke test passed"'
             )
         )
         script = stage_build_session_script(
@@ -122,11 +120,6 @@ def main() -> int:
             toolset_path=toolset_root,
             bindings=[(snapshots, "/var/tmp/catalyst/snapshots")],
             command=command,
-            overlay_file_replacements=[(
-                "/usr/share/catalyst/targets/stage1/build.py",
-                'sys.stdout.write(b + " ")',
-                'sys.stdout.write(str(b) + " ")',
-            )],
         )
         success = executor.run_in_namespace(script, output)
         if args.snapshot and success:

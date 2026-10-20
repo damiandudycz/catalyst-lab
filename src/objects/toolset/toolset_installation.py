@@ -269,6 +269,11 @@ class ToolsetInstallationStepInstallApp(ToolsetInstallationStep):
                 self.multistage_process.toolset.write_portage_files(files)
             flags = "--getbinpkg --deep --update --changed-use" if self.multistage_process.allow_binpkgs else "--deep --update --changed-use"
             result = self.run_command_in_toolset(command=f"emerge {flags} {self.app_selection.app.package}", progress_handler=_emerge_progress)
+            if result:
+                for command in self.app_selection.version.setup_commands:
+                    self.log(f"Configuring {self.app_selection.app.name}: {command}")
+                    if not self.run_command_in_toolset(command=command):
+                        raise RuntimeError(f"Setup command failed for {self.app_selection.app.name}")
             self.complete(MultiStageProcessStageState.COMPLETED if result else MultiStageProcessStageState.FAILED)
         except Exception as e:
             print(f"Error during app installation: {e}")

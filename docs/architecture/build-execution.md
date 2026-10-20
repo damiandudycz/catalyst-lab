@@ -10,7 +10,7 @@ When an operation needs the VM, Catalyst Lab starts it, creates a sparse ext4 wo
 
 For a stage build, a per-command OverlayFS session uses the toolset as its lower layer and puts its writable upper and work directories under the workspace in `Library/Temporary`. The command runs in a merged view. Changes to the base toolset are discarded when that command ends.
 
-The Gentoo repository snapshot is also mounted read-only and bound into the toolset at Catalyst's snapshot path. Stage inputs, generated specs, and build outputs are bound from Library folders. Package and distfile caches are shared with the host; writes are saved back after the operation. Canceled operations save completed cache changes before the workspace is released.
+The original Gentoo repository SquashFS file is bound into the toolset at Catalyst's snapshot path, so Catalyst recognizes it as a SquashFS file and mounts it through its normal repository flow. Selecting Catalyst for a toolset automatically selects the hidden `sys-fs/squashfuse` dependency, which the rootless wrapper uses for Catalyst's SquashFS mount request. Stage inputs, generated specs, and build outputs are bound from Library folders. Package and distfile caches are shared with the host; writes are saved back after the operation. Canceled operations save completed cache changes before the workspace is released.
 
 Each command has its own OverlayFS session. The VM and its read-only mounts can serve successive commands during one operation, but the writable merged view is not reused between commands. When the operation releases its workspace, mounts are removed and the temporary ext4 image is deleted. If the app exits unexpectedly, the next workspace setup unmounts and replaces the old image.
 
@@ -21,6 +21,12 @@ Direct SquashFS use is **experimental**. It avoids extracting and copying the fu
 ## Linux Host build path
 
 On Linux, builds can run on the Host or in a selected Lima VM runner. Host execution uses unprivileged user namespaces and the required tools when available; otherwise the application uses a privileged helper. Host execution extracts SquashFS images into `Library/Cache/Extracted` and runs tools in isolated namespaces. In the current `MOUNT_SQFS_DIRECTLY = False` mode, toolset execution copies the reusable extraction into `Library/Temporary` for each operation; the source SquashFS and extracted cache remain unchanged. The code flag also selects the direct-mount path when set to `True` where the executor supports it.
+
+## Applying Catalyst source patches
+
+Toolset creation and updates can install user patches for Catalyst under `/etc/portage/patches/dev-util/catalyst`, where Gentoo's Catalyst ebuild applies them while building the package. This keeps a compatibility change in the reusable toolset instead of editing Catalyst files each time a stage build runs.
+
+The Library patch `Toolsets/Patches/dev-util-catalyst/stage1-portage-atom-string.patch` fixes Catalyst 4.1.1-r1's stage1 build script, which concatenates a Portage Atom with a string. Select it as a Catalyst patch when creating or updating a toolset that uses this version. Newer Catalyst source already converts the Atom to a string, so this patch is only for versions whose `targets/stage1/build.py` contains `sys.stdout.write(b + " ")`; don't select it when that line is already fixed. The patch is applied when Catalyst is emerged into the toolset, and the resulting toolset records its patch filename.
 
 ## Other virtual machines
 

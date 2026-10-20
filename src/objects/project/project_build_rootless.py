@@ -25,7 +25,7 @@ class _SquashfuseMount:
     def __init__(self, source, target):
         self.source, self.target = source, target
     def mount(self):
-        subprocess.run(["squashfuse", "-o", "ro", self.source, self.target], check=True)
+        subprocess.run(["squashfuse", "-o", "ro,allow_other", self.source, self.target], check=True)
 
 class _DevptsMount:
     """Own devpts instance instead of bind of host /dev/pts. Ptys of host devpts have tty group of host, which isn't
@@ -55,25 +55,6 @@ def Context(*args, **kwargs):
 
 libmount.Context = Context
 
-# Catalyst passes Path of folder repository to portage RepoConfig, which expects str.
-import catalyst.support as support
-_get_repo_name_from_dir = support.get_repo_name_from_dir
-support.get_repo_name_from_dir = lambda repo_path: _get_repo_name_from_dir(str(repo_path))
-
-# Device nodes can't be created in user namespace, tar would fail on /dev/console and /dev/null of seed. Catalyst binds
-# /dev into chroot anyway.
-from DeComp.compress import CompressMap
-_create_infodict = CompressMap.create_infodict
-_DEVICE_EXCLUDES = ["--exclude=./dev/console", "--exclude=./dev/null"]
-def create_infodict(self, *args, **kwargs):
-    options = kwargs.get("other_options")
-    if isinstance(options, str):
-        kwargs["other_options"] = " ".join([options] + _DEVICE_EXCLUDES)
-    elif isinstance(options, (list, tuple)):
-        kwargs["other_options"] = type(options)(list(options) + _DEVICE_EXCLUDES)
-    return _create_infodict(self, *args, **kwargs)
-CompressMap.create_infodict = create_infodict
-
 from catalyst.main import main
 main(sys.argv[1:])
 '''
@@ -83,8 +64,8 @@ def catalyst_snapshot_command() -> str:
     return "catalyst -s stable"
 
 def stage_build_session_script(executor, toolset_path: str, bindings: list[tuple[str, str]], command: str,
-                               diagnostics_command: str | None = None, synced_caches: list[tuple[str, str]] | None = None,
-                               patch_catalyst_stage1: bool = False) -> str:
+                               diagnostics_command: str | None = None,
+                               synced_caches: list[tuple[str, str]] | None = None) -> str:
     """Script running command in toolset root (overlay over extracted toolset, changes are discarded), with host
     folders bound at given paths (host path, path in toolset). Diagnostics command runs after failure.
     Synced caches (saved path, path used by build) are mounted at used path as overlay over saved path, and changes
@@ -103,23 +84,6 @@ def stage_build_session_script(executor, toolset_path: str, bindings: list[tuple
     # /var/tmp/catalyst/snapshots). Copy directory modes from existing lower-layer ancestors so this does not change
     # permissions such as /var/tmp's sticky bit.
     prepare_bind_targets = "\n".join(f"prepare_bind_target {q(target)} || exit 1" for _host, target in bindings)
-    stage1_patch = """python3 - "$TOOLSET" "$UPPER" <<'PATCH_TOOLSET_FILE'
-import os, shutil, sys
-toolset, upper = sys.argv[1:]
-relative = "/usr/share/catalyst/targets/stage1/build.py"
-old, new = 'sys.stdout.write(b + " ")', 'sys.stdout.write(str(b) + " ")'
-source = os.path.join(toolset, relative.lstrip("/"))
-target = os.path.join(upper, relative.lstrip("/"))
-if os.path.isfile(source):
-    with open(source, encoding="utf-8") as file:
-        contents = file.read()
-    if old in contents:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w", encoding="utf-8") as file:
-            file.write(contents.replace(old, new))
-        shutil.copystat(source, target)
-        print(f"Patched toolset file in writable overlay: {relative}")
-PATCH_TOOLSET_FILE""" if patch_catalyst_stage1 else ""
     # Saved caches are lower layer of overlay (read from shared folder without copying), changes go to upper layer in
     # session and are copied back after build: new and changed files, and deletions (whiteouts, character devices).
     sync_in = "\n".join(
@@ -215,7 +179,6 @@ prepare_bind_target() {{
     done
 }}
 {prepare_bind_targets}
-{stage1_patch}
 {portage_setup}
 mkdir -p "$UPPER/etc" || exit 1
 if [ -d "$TOOLSET/etc" ]; then
