@@ -14,6 +14,7 @@ from .emerge_progress import EmergeProgress
 from .toolset import BindMount
 from .toolset_env_builder import get_stage3_urls
 from .project_stage_arguments import StageArgumentDetails
+from .project_stage import refresh_project_stage_defaults
 from .project_stage_cache import CACHE_ARGUMENTS, stage_cache_path
 from .rootless import (
     prepare_toolset_squashfs, unmount_read_only_mount,
@@ -765,6 +766,14 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
                     preview_directory, work_directory, dirs_exist_ok=True,
                     symlinks=True,
                     ignore=shutil.ignore_patterns("PREVIEW-NOTES.txt", "PREVIEW-ERROR.txt"),
+                )
+            else:
+                # Resolve stage defaults before generating the files that the spec
+                # points to. generate_stage_spec() also refreshes defaults, but it
+                # runs after these directories are assembled. On a fresh app start
+                # the actual stage may not have been opened in the editor yet.
+                refresh_project_stage_defaults(
+                    project, toolset=process.toolset, snapshot=process.defaults_snapshot
                 )
             portage_path = os.path.join(work_directory, "portage")
             has_confdir = os.path.isdir(portage_path) if use_preview else generate_portage_confdir(project, self.stage, portage_path)

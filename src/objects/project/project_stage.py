@@ -770,6 +770,18 @@ def refresh_default_stage_arguments(project_directory, stage: ProjectStage, tool
     return applied
 
 
+def refresh_project_stage_defaults(project_directory, toolset=None, snapshot=None) -> None:
+    """Resolve calculated arguments for every stage in parent-first order.
+
+    Build preparation needs defaults from stages outside the selected build plan
+    too, because a selected child may inherit configuration overlays from them.
+    """
+    for node, _depth in walk_tree(project_directory.stages_tree()):
+        stage = node.value
+        if isinstance(stage, ProjectStage):
+            refresh_default_stage_arguments(project_directory, stage, toolset=toolset, snapshot=snapshot)
+
+
 def stage_argument_is_customized(stage: ProjectStage, name: str, explicit_arguments: set[str],
                                  template_baseline: dict) -> bool:
     """Compare an argument to its active default before falling back to its creation baseline."""

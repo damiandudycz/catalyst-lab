@@ -580,6 +580,7 @@ class ProjectBuildView(Gtk.Box):
         from .project_build_spec import (
             generate_portage_confdir, generate_root_overlay, StageSpecContext, _stage_spec_lines,
         )
+        from .project_stage import refresh_project_stage_defaults
         from .project_stage_arguments import StageArgumentDetails
 
         preview_root = None
@@ -622,19 +623,23 @@ class ProjectBuildView(Gtk.Box):
             evaluation_project = copy.copy(self.project_directory)
             evaluation_project.stages = evaluation_stages
             evaluation_stages_by_id = {stage.id: stage for stage in evaluation_stages}
+            refresh_project_stage_defaults(
+                evaluation_project, toolset=process.toolset, snapshot=defaults_snapshot
+            )
             for stage in plan.build_order():
                 if cancelled.is_set():
                     shutil.rmtree(preview_root, ignore_errors=True)
                     return None, [], latest_snapshot
                 work_directory = process.stage_work_directory(stage)
                 os.makedirs(work_directory, exist_ok=True)
+                evaluation_stage = evaluation_stages_by_id[stage.id]
                 portage_path = os.path.join(work_directory, "portage")
-                has_confdir = generate_portage_confdir(self.project_directory, stage, portage_path)
+                has_confdir = generate_portage_confdir(evaluation_project, evaluation_stage, portage_path)
                 root_overlay_path = os.path.join(work_directory, "root_overlay")
-                has_root_overlay = generate_root_overlay(self.project_directory, stage, root_overlay_path)
+                has_root_overlay = generate_root_overlay(evaluation_project, evaluation_stage, root_overlay_path)
                 iso_overlay_path = os.path.join(work_directory, "iso_overlay")
                 has_iso_overlay = generate_root_overlay(
-                    self.project_directory, stage, iso_overlay_path, StageArgumentDetails.livecd_overlay,
+                    evaluation_project, evaluation_stage, iso_overlay_path, StageArgumentDetails.livecd_overlay,
                 )
                 source_subpath = process.seed_subpath(stage)
                 runtime_inputs = []
@@ -644,7 +649,7 @@ class ProjectBuildView(Gtk.Box):
                 cache_paths = process.stage_cache_paths(stage)
                 try:
                     spec_lines, missing = _stage_spec_lines(
-                        evaluation_project, evaluation_stages_by_id[stage.id], StageSpecContext(
+                        evaluation_project, evaluation_stage, StageSpecContext(
                             timestamp=timestamp,
                             source_subpath=source_subpath,
                             portage_confdir=process.container_path(portage_path) if has_confdir else None,
