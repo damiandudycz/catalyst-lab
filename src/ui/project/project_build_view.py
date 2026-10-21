@@ -646,7 +646,9 @@ class ProjectBuildView(Gtk.Box):
                 if source_subpath is None:
                     source_subpath = "<source_subpath>"
                     runtime_inputs.append("source seed path")
-                cache_paths = process.stage_cache_paths(stage)
+                cache_paths = process.stage_cache_paths(
+                    evaluation_stage, project_directory=evaluation_project
+                )
                 try:
                     spec_lines, missing = _stage_spec_lines(
                         evaluation_project, evaluation_stage, StageSpecContext(

@@ -97,6 +97,11 @@ class ProjectBuild(MultiStageProcess):
         self.rootless_toolset_path: str | None = None # Read-only mounted or extracted toolset lower layer.
         self.rootless_toolset_mounted = False # Mounted SquashFS lower layer, released before machine workspace.
         self.rootless_toolset_temporary_copy = False
+        # Resolve values before runner preparation: shared paths and toolset bindings
+        # are calculated before any per-stage build step starts.
+        refresh_project_stage_defaults(
+            project_directory, toolset=toolset, snapshot=self.defaults_snapshot
+        )
         super().__init__(title=f"Building {project_directory.name}")
         # Project rows show running builds in their status indicators, so project state changes with build state.
         self.event_bus.subscribe(MultiStageProcessEvent.STATE_CHANGED, self._on_state_changed)
@@ -194,12 +199,13 @@ class ProjectBuild(MultiStageProcess):
         })
         return paths
 
-    def stage_cache_paths(self, stage) -> dict:
+    def stage_cache_paths(self, stage, project_directory=None) -> dict:
         """Folders of enabled caches of stage, by argument. Automatic caches of machine builds are on disk of machine
         (shared folders can't store owners of files that portage sets), in its cache directory."""
+        project_directory = project_directory or self.project_directory
         paths = {
             argument: path for argument in CACHE_ARGUMENTS
-            if (path := stage_cache_path(self.project_directory, stage, argument))
+            if (path := stage_cache_path(project_directory, stage, argument))
         }
         if self.machine:
             paths = {argument: self._machine_cache_path(path) or path for argument, path in paths.items()}
@@ -766,14 +772,6 @@ class ProjectBuildStepBuildStage(ProjectBuildStep):
                     preview_directory, work_directory, dirs_exist_ok=True,
                     symlinks=True,
                     ignore=shutil.ignore_patterns("PREVIEW-NOTES.txt", "PREVIEW-ERROR.txt"),
-                )
-            else:
-                # Resolve stage defaults before generating the files that the spec
-                # points to. generate_stage_spec() also refreshes defaults, but it
-                # runs after these directories are assembled. On a fresh app start
-                # the actual stage may not have been opened in the editor yet.
-                refresh_project_stage_defaults(
-                    project, toolset=process.toolset, snapshot=process.defaults_snapshot
                 )
             portage_path = os.path.join(work_directory, "portage")
             has_confdir = os.path.isdir(portage_path) if use_preview else generate_portage_confdir(project, self.stage, portage_path)
