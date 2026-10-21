@@ -36,8 +36,8 @@ CATALYST_SEEDS_PATH = "/var/tmp/catalystlab-seeds"
 CATALYST_KERNEL_CACHE_PATH = "/var/tmp/catalystlab-kerncache"
 CATALYST_WORK_PATH = "/var/tmp/catalystlab-work"
 CATALYST_SNAPSHOTS_PATH = "/var/tmp/catalyst/snapshots"
-# Folders mounted in toolset whose paths contain whitespace are mounted here: catalyst splits spec values on whitespace,
-# so their paths can't be used in specs (eg. project "Raspberry Pi 5").
+# Host directories referenced by Catalyst are mounted here under stable aliases. Besides avoiding whitespace in spec
+# values (eg. project "Raspberry Pi 5"), aliases keep host paths out of Catalyst's toolset namespace.
 CATALYST_MIRRORS_PATH = "/var/tmp/catalystlab-mirrors"
 _DEFAULTS_SNAPSHOT_UNSET = object()
 # Archive extensions catalyst can produce, used to find built stage file.
@@ -161,8 +161,7 @@ class ProjectBuild(MultiStageProcess):
         return os.path.join(self.work_root, stage.id.hex)
 
     def container_path(self, host_path: str) -> str:
-        """Path inside toolset of file in project builds directory, or in mirrored folder (mounted at the same location,
-        or under CATALYST_MIRRORS_PATH when its path contains whitespace). Other paths are the same."""
+        """Path inside toolset of generated build data or a host directory mounted under its stable alias."""
         for root, target in ((self.work_root, CATALYST_WORK_PATH),
                              (self.catalyst_builds_directory, CATALYST_BUILDS_PATH),
                              (self.stage_artifacts_directory, CATALYST_STAGE_ARTIFACTS_PATH),
@@ -177,31 +176,35 @@ class ProjectBuild(MultiStageProcess):
 
     @staticmethod
     def mirror_path(host_path: str) -> str:
-        """Location of mirrored folder in toolset: the same path, or path without whitespace."""
-        if not any(character.isspace() for character in host_path):
-            return host_path
+        """Stable toolset path for a host directory referenced by Catalyst."""
         import hashlib
         return f"{CATALYST_MIRRORS_PATH}/{hashlib.sha1(host_path.encode()).hexdigest()[:16]}"
 
     def mirrored_paths(self) -> list[str]:
         """Host directories referenced by spec values (@REPO_DIR@, root_overlay, repos, selected cache folders),
-        available in toolset at the same paths."""
+        mounted in toolset under stable aliases."""
         project = self.project_directory
         paths = [project.directory_path()]
         if releng_directory := project.get_releng_directory():
             paths.append(releng_directory.directory_path())
         paths += [overlay.directory_path() for overlay in Repository.OverlayDirectory.value]
-        paths = [path for path in paths if os.path.isdir(path)]
-        # Caches in folders selected by user (automatic ones are in builds directory).
+        # Cache paths not already covered by one of the dedicated build/workspace mounts.
+        # Manual cache paths can also be inside the Builds folder, so checking the whole folder would
+        # leave such paths referenced by the spec but unavailable inside the toolset.
+        fixed_roots = (self.work_root, self.catalyst_builds_directory, self.stage_artifacts_directory,
+                       self.kernel_cache_directory)
+        paths = [path for path in paths if os.path.isdir(path)
+                 and not any(path_is_within(path, root) for root in fixed_roots)]
         paths += sorted({
             path for stage in self._build_order for path in self.stage_cache_paths(stage).values()
-            if not path_is_within(path, self.builds_directory)
+            if not any(path_is_within(path, root) for root in fixed_roots)
         })
-        return paths
+        return list(dict.fromkeys(paths))
 
     def stage_cache_paths(self, stage, project_directory=None) -> dict:
-        """Folders of enabled caches of stage, by argument. Automatic caches of machine builds are on disk of machine
-        (shared folders can't store owners of files that portage sets), in its cache directory."""
+        """Folders of enabled caches of stage, by argument. VM kernel caches use the machine cache directory because
+        shared folders can't store ownership of files Portage sets; package archives stay in the project's Packages
+        directory, which is shared with the VM."""
         project_directory = project_directory or self.project_directory
         paths = {
             argument: path for argument in CACHE_ARGUMENTS
@@ -225,13 +228,12 @@ class ProjectBuild(MultiStageProcess):
         })
 
     def _saved_cache_roots(self) -> list[tuple[str, str]]:
-        """Folders of automatic caches on host, with their folders in cache directory of machine: builds of project
-        (kernels), and binary packages folder (shared by projects using it). Ids instead of names, paths in spec can't
-        contain spaces."""
-        roots = [(self.builds_directory, os.path.join("Projects", self.project_directory.id.hex))]
-        if packages_directory := self.project_directory.get_packages_directory():
-            roots.append((packages_directory.directory_path(), os.path.join("Packages", packages_directory.id.hex)))
-        return roots
+        """Automatic kernel cache on host and its location in the machine cache directory.
+
+        Binary package caches stay in their Packages directory, which is shared with the VM and is also the
+        directory exposed by the app for browsing and reuse.
+        """
+        return [(self.builds_directory, os.path.join("Projects", self.project_directory.id.hex))]
 
     def _machine_cache_path(self, path: str) -> str | None:
         """Folder in machine used for automatic cache saved in path, None for caches selected by user."""
@@ -603,15 +605,24 @@ class ProjectBuildStepPrepareToolset(ProjectBuildStep):
             # values use ../ so arbitrary rel_type names cannot collide with these input mounts.
             BindMount(mount_path=CATALYST_STAGE_ARTIFACTS_PATH, host_path=process.stage_artifacts_directory, store_changes=True, create_if_missing=True),
             BindMount(mount_path=CATALYST_SEEDS_PATH, host_path=process.seed_cache_directory, store_changes=True, create_if_missing=True),
-            BindMount(mount_path=CATALYST_KERNEL_CACHE_PATH, host_path=process.kernel_cache_directory, store_changes=True, create_if_missing=True),
             # Generated specs and scripts for this build run only.
             BindMount(mount_path=CATALYST_WORK_PATH, host_path=process.work_root, store_changes=True, create_if_missing=True),
             BindMount(mount_path=CATALYST_SNAPSHOTS_PATH,
                       host_path=resolve_path(Repository.Settings.value.snapshots_location), store_changes=True),
         ]
+        # Host builds use this dedicated path for their automatic kernel cache. VM builds map that cache
+        # into the machine cache directory and mount it through mirrored_paths() under its spec alias.
+        if not process.machine:
+            bindings.append(BindMount(mount_path=CATALYST_KERNEL_CACHE_PATH, host_path=process.kernel_cache_directory,
+                                      store_changes=True, create_if_missing=True))
         # Directories referenced by spec values with host paths (@REPO_DIR@, root_overlay, repos, cache folders) are
-        # available at the same paths.
-        bindings += [BindMount(mount_path=process.mirror_path(path), host_path=path, store_changes=True, create_if_missing=True) for path in process.mirrored_paths()]
+        # mounted under the same stable aliases used to generate those spec values.
+        for path in process.mirrored_paths():
+            mount_path = process.container_path(path)
+            if mount_path != process.mirror_path(path):
+                raise RuntimeError(f"Toolset path mapping is inconsistent for {path}: {mount_path}")
+            bindings.append(BindMount(mount_path=mount_path, host_path=path,
+                                      store_changes=True, create_if_missing=True))
         # Loop devices for mounting snapshot (store_changes gives read-write device access).
         bindings += [BindMount(mount_path=path, host_path=path, store_changes=True) for path in getattr(self, "loop_devices", [])]
         return bindings
