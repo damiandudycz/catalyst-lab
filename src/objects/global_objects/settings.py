@@ -45,6 +45,8 @@ class Settings(Serializable):
         git_user_name: str = "",
         git_user_email: str = "",
         project_stages_view_mode: str = "compact",
+        ollama_url: str = "http://localhost:11434",
+        ollama_model: str = "",
     ):
         self._initial_setup_done = initial_setup_done
         self._keep_root_unlocked = keep_root_unlocked
@@ -60,6 +62,8 @@ class Settings(Serializable):
         self._git_user_email = git_user_email
         self._project_stages_view_mode = (project_stages_view_mode
                                          if project_stages_view_mode in ("compact", "full", "list") else "compact")
+        self._ollama_url = str(ollama_url).strip().rstrip("/") or "http://localhost:11434"
+        self._ollama_model = str(ollama_model).strip()
         # None lets older preferences files fall back to the default Library path.
         self._library_location = library_location
         self.event_bus = EventBus[SettingsEvents]()
@@ -81,6 +85,8 @@ class Settings(Serializable):
             git_user_name=data.get("git_user_name", ""),
             git_user_email=data.get("git_user_email", ""),
             project_stages_view_mode=data.get("project_stages_view_mode", "compact"),
+            ollama_url=data.get("ollama_url", "http://localhost:11434"),
+            ollama_model=data.get("ollama_model", ""),
         )
 
     def serialize(self) -> dict:
@@ -98,6 +104,8 @@ class Settings(Serializable):
             "git_user_name": self.git_user_name,
             "git_user_email": self.git_user_email,
             "project_stages_view_mode": self.project_stages_view_mode,
+            "ollama_url": self.ollama_url,
+            "ollama_model": self.ollama_model,
             "library_location": collapse_home(self.library_location),
         }
 
@@ -268,6 +276,23 @@ class Settings(Serializable):
     def project_stages_view_mode(self, value: str):
         mode = value if value in ("compact", "full", "list") else "compact"
         self._set("project_stages_view_mode", mode, SettingsEvents.PROJECT_STAGES_VIEW_MODE_CHANGED)
+
+    @property
+    def ollama_url(self) -> str:
+        return self._ollama_url
+
+    @ollama_url.setter
+    def ollama_url(self, value: str):
+        url = str(value).strip().rstrip("/") or "http://localhost:11434"
+        self._set("ollama_url", url)
+
+    @property
+    def ollama_model(self) -> str:
+        return self._ollama_model
+
+    @ollama_model.setter
+    def ollama_model(self, value: str):
+        self._set("ollama_model", str(value).strip())
 
 
 def _navigation_style(value) -> NavigationStyle:

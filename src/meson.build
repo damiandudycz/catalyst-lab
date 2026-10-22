@@ -84,6 +84,9 @@ catalystlab_sources = [
   'objects/global_objects/runtime_env.py',
   'objects/global_objects/settings.py',
   'objects/global_objects/status.py',
+  'objects/ollama/ollama_client.py',
+  'objects/ollama/ai_flows.py',
+  'objects/ollama/ai_tool_bridge.py',
   'objects/global_objects/tree_node.py',
   'objects/git_directory/git_directory_default_content_builder.py',
   'objects/git_directory/git_directory.py',
@@ -144,6 +147,9 @@ catalystlab_sources = [
   'objects/toolset/toolset_selection.py',
   'objects/toolset/toolset_update.py',
   'ui/app_sections/bugs/bugs_section.py',
+  'ui/app_sections/ai_assistance/ai_assistance_section.py',
+  'ui/app_sections/ai_assistance/ai_conversation_log.py',
+  'ui/app_sections/ai_assistance/ollama_chat_view.py',
   'ui/app_sections/builds/builds_section.py',
   'ui/app_sections/deploy/deploy_section.py',
   'ui/app_sections/environments/environments_section.py',
@@ -216,3 +222,27 @@ catalystlab_sources = [
 ]
 
 install_data(catalystlab_sources, install_dir: moduledir)
+
+install_data(
+  files(
+    'objects/ollama/prompts/mcp_core.md',
+    'objects/ollama/prompts/mcp_quick_guide.md',
+    'objects/ollama/prompts/mcp_actions.md',
+    'objects/ollama/prompts/mcp_git_directories.md',
+    'objects/ollama/prompts/mcp_project_setup.md',
+    'objects/ollama/prompts/mcp_project_stages.md',
+    'objects/ollama/prompts/mcp_project_updates.md',
+    'objects/ollama/prompts/mcp_bugs.md',
+    'objects/ollama/prompts/root_access.md',
+    'objects/ollama/prompts/mcp_ui_map.md',
+    'objects/ollama/prompts/mcp_builds.md',
+    'objects/ollama/prompts/mcp_snapshots.md',
+    'objects/ollama/prompts/build_queue.md',
+    'objects/ollama/prompts/build_snapshot_default.md',
+    'objects/ollama/prompts/app_settings.md',
+    'objects/ollama/prompts/stage_relationships.md',
+    'objects/ollama/prompts/stage_scripts.md',
+    'objects/ollama/prompts/mcp_deployment.md',
+  ),
+  install_dir: moduledir / 'prompts',
+)

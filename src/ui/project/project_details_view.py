@@ -716,6 +716,10 @@ class ProjectDetailsView(Gtk.Box):
 
     def monitor_configuration_changes(self):
         """Reacts to changes in configuration lists, saves new metadata"""
+        self.project_directory.event_bus.subscribe(
+            GitDirectoryEvent.CONFIGURATION_CHANGED,
+            self._on_project_configuration_changed,
+        )
         for view in [
             self.releng_selection_view,
             self.snapshot_selection_view,
@@ -726,6 +730,10 @@ class ProjectDetailsView(Gtk.Box):
                 ItemSelectionViewEvent.ITEM_CHANGED,
                 self.configuration_item_changed
             )
+
+    def _on_project_configuration_changed(self, *_args):
+        self.get_configuration()
+        self._refresh_build_state()
 
     @Gtk.Template.Callback()
     def is_item_selectable(self, sender, item) -> bool:

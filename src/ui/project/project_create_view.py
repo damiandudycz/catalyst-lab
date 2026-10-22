@@ -1,5 +1,5 @@
 from __future__ import annotations
-from gi.repository import Gtk, Adw
+from gi.repository import Gtk, Adw, GLib
 from .project_installation import ProjectInstallation
 from .git_directory_create_config_view import GitDirectoryCreateConfigViewEvent
 from .git_directory_default_content_builder import DefaultDirContentBuilder
@@ -38,10 +38,12 @@ class ProjectCreateView(Gtk.Box):
     packages_page = Gtk.Template.Child()
     packages_selection_view = Gtk.Template.Child()
 
-    def __init__(self, installation_in_progress: ProjectInstallation | None = None, content_navigation_view: Adw.NavigationView | None = None):
+    def __init__(self, installation_in_progress: ProjectInstallation | None = None,
+                 content_navigation_view: Adw.NavigationView | None = None, initial_name: str | None = None):
         super().__init__()
         self.installation_in_progress = installation_in_progress
         self.content_navigation_view = content_navigation_view
+        self.initial_name = initial_name
         self.arch_selection_view.set_static_list(sorted(Architecture, key=lambda arch: arch.name))
         # Latest snapshot is selected here; a toolset is chosen for each build.
         self.snapshot_selection_view.set_leading_items([LATEST_SNAPSHOT])
@@ -113,7 +115,14 @@ class ProjectCreateView(Gtk.Box):
         self.wizard_view.content_navigation_view = self.content_navigation_view
         self.wizard_view._window = self._window
         self.wizard_view.set_installation(self.installation_in_progress)
+        if self.initial_name:
+            GLib.idle_add(self._set_initial_name)
         self._update_pages()
+
+    def _set_initial_name(self):
+        self.source_view.directory_name_row.set_text(self.initial_name)
+        self.source_view.check_if_configuration_ready()
+        return GLib.SOURCE_REMOVE
 
     @Gtk.Template.Callback()
     def is_item_selectable(self, sender, item) -> bool:

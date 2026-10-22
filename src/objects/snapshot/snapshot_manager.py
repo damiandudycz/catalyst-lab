@@ -31,12 +31,15 @@ class SnapshotManager:
         from .settings import SettingsEvents
         from .repository import RepositoryEvent
         from .multistage_process import MultiStageProcess, MultiStageProcessEvent
+        # Meson installs these modules flat inside the catalystlab package.
+        from .qemu_run import QemuRun, QemuRunEvent
         self._auto_clean_scheduled = False
         # Event buses keep weak references, bound method of shared manager stays alive (lambda wouldn't).
         Repository.Settings.value.event_bus.subscribe(SettingsEvents.AUTO_CLEAN_SNAPSHOTS_CHANGED, self.schedule_auto_clean)
         Repository.Snapshot.event_bus.subscribe(RepositoryEvent.VALUE_CHANGED, self.schedule_auto_clean)
         Repository.ProjectDirectory.event_bus.subscribe(RepositoryEvent.VALUE_CHANGED, self.schedule_auto_clean)
         MultiStageProcess.event_bus.subscribe(MultiStageProcessEvent.STARTED_PROCESSES_CHANGED, self.schedule_auto_clean)
+        QemuRun.running_runs_event_bus.subscribe(QemuRunEvent.RUNNING_RUNS_CHANGED, self.schedule_auto_clean)
         self.schedule_auto_clean()
 
     def schedule_auto_clean(self, *args):
@@ -63,6 +66,14 @@ class SnapshotManager:
         for process in MultiStageProcess.started_processes:
             snapshot = getattr(process, "snapshot", None)
             if process.status == MultiStageProcessState.IN_PROGRESS and isinstance(snapshot, Snapshot):
+                used.add(snapshot.filename)
+        # A QEMU run can compile a custom kernel from a repository snapshot.
+        # Keep it out of the unused set so guarded deletion and auto-cleanup
+        # protect it while the VM build is active.
+        from .qemu_run import QemuRun
+        for run in QemuRun.running_runs:
+            snapshot = getattr(getattr(run, "support", None), "kernel_snapshot", None)
+            if run.is_running and isinstance(snapshot, Snapshot):
                 used.add(snapshot.filename)
         return [snapshot for snapshot in snapshots
                 if snapshot.filename not in used]

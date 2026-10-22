@@ -1,0 +1,1 @@
+Only set `update_project_snapshot` when the user explicitly asks to change the project's default snapshot. Otherwise leave it false so a build can use another snapshot without changing the project preference.

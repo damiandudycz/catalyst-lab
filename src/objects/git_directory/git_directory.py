@@ -17,6 +17,7 @@ class GitDirectoryEvent(Enum):
     NAME_CHANGED = auto()
     CONTENT_CHANGED = auto()
     CONTENT_RELOADED = auto()
+    CONFIGURATION_CHANGED = auto()
 
 class GitDirectoryStatus(Enum):
     # Git status

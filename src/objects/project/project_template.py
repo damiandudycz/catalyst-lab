@@ -1160,6 +1160,10 @@ def apply_project_template(project_directory, template: ProjectTemplate, names: 
                 # Groups can set arguments of different targets (eg. stage4_packages and livecd_packages).
                 continue
             setattr(stage, key, _replace_overlay_references(value, overlay_ids))
+            # Template values are saved stage settings, not calculated defaults.
+            # Without this marker refresh_default_stage_arguments() can clear
+            # them while resolving requirements, and serialize() can omit them.
+            stage._explicit_stage_arguments.add(argument_name)
         if generated_stage.releng_template and releng_directory and architecture:
             base_arch = architecture.releng_base_arch()
             if base_arch is None:

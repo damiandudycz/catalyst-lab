@@ -95,7 +95,7 @@
                 <child>
                   <object class="AdwPreferencesGroup" id="default_toolset_group">
                     <property name="title">Toolsets</property>
-                    <property name="description">Choose the preferred toolset for actions that need a toolset. An action uses it when it contains the required tools; otherwise it chooses the newest compatible toolset.</property>
+                    <property name="description">Choose a preferred toolset. An action uses it when it has the required tools and is available; otherwise it chooses the newest available compatible toolset.</property>
                     <child>
                       <object class="GtkListBox" id="default_toolset_list">
                         <property name="selection-mode">none</property>
@@ -107,7 +107,7 @@
                 <child>
                   <object class="AdwPreferencesGroup">
                     <property name="title">Runners</property>
-                    <property name="description">Choose the preferred runner for actions that need one. Unsupported runner types are shown for reference and become selectable when the current platform supports them.</property>
+                    <property name="description">Choose a preferred runner for actions that need one. If it is unavailable or unsupported on this platform, the app uses Host on Linux or a supported VM runner when available.</property>
                     <child>
                       <object class="GtkListBox" id="default_runner_list">
                         <property name="selection-mode">none</property>

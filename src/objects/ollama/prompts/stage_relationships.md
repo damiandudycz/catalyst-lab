@@ -1,0 +1,1 @@
+`list_objects(type="project")` includes each stage's ID and parent. Use `set_stage_parent` with the exact project, stage, and parent name or ID; use its clear action to remove a parent. Parent changes affect inherited settings and do not start a build. Use `get_stage_settings` to inspect saved versus effective values afterward.

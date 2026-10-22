@@ -45,9 +45,15 @@ class PackageFailure:
 
     def set_fixed(self, fixed: bool):
         """Marks failure as fixed (or not), saved in build."""
+        self.set_resolution_status("solved" if fixed else "open")
+
+    def set_resolution_status(self, status: str):
+        """Sets one of the Bugs section's resolution states, saved in the build record."""
+        if status not in _RESOLUTION_STATES:
+            raise ValueError(f"Unknown failure resolution status: {status}")
         item = self._item()
-        item["fixed"] = fixed
-        item["resolution"] = "solved" if fixed else "open"
+        item["fixed"] = status == "solved"
+        item["resolution"] = status
         self.build.save(self.project_directory)
 
     def remove(self):

@@ -71,6 +71,8 @@ esac
 
 # Keep the development launcher isolated from an installed Catalyst Lab instance.
 export CATALYSTLAB_APPLICATION_ID="com.damiandudycz.CatalystLab.Development"
+# Enable private plain-text chat capture for this development launcher only.
+export CATALYSTLAB_DEBUG_CONVERSATION_LOGS=1
 # Use this checkout's branch for official template checks and downloads.
 TEMPLATE_BRANCH=$(git -C "$ROOT" branch --show-current)
 if [ -n "$TEMPLATE_BRANCH" ]; then
@@ -81,6 +83,10 @@ BUILD="$WORK/build"
 PREFIX="$WORK/prefix"
 if [ ! -f "$BUILD/build.ninja" ]; then
     meson setup "$BUILD" "$ROOT" --prefix="$PREFIX"
+else
+    # Source and install lists change as the application grows; refreshing the
+    # build graph prevents an old Ninja file from silently skipping new modules.
+    meson setup --reconfigure "$BUILD" "$ROOT" --prefix="$PREFIX"
 fi
 meson compile -C "$BUILD"
 # Meson installs changed files but leaves removed Python modules behind, and the

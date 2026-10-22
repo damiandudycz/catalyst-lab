@@ -8,6 +8,7 @@ from .library import LibraryChange, library_target, change_problem, change_libra
 from .status_indicator import StatusIndicatorState
 from .runner import HOST_RUNNER, runner_is_supported
 from .git_identity_editor import GitIdentityEditor
+from .toolset_selection import default_toolset
 
 @app_section(title="Settings", icon="settings-svgrepo-com-symbolic", order=9_000)
 @Gtk.Template(resource_path='/com/damiandudycz/CatalystLab/ui/app_sections/settings/settings_section.ui')
@@ -56,14 +57,18 @@ class SettingsSection(Gtk.Box):
         self._default_toolset_rows.clear()
         settings = Repository.Settings.value
         group = Gtk.CheckButton()
-        choices = [(None, "Automatic (newest compatible)", "Uses the newest toolset that has the tools an action needs")]
-        choices.extend((str(toolset.uuid), toolset.name, toolset.short_details)
-                       for toolset in sorted(Repository.Toolset.value, key=lambda item: item.name.lower()))
+        toolsets = Repository.Toolset.value
+        choices = [(str(toolset.uuid), toolset.name, toolset.short_details)
+                   for toolset in sorted(toolsets, key=lambda item: item.name.lower())]
+        selected_id = settings.default_toolset_id
+        if selected_id is None:
+            selected = default_toolset(applications=(), toolsets=toolsets)
+            selected_id = str(selected.uuid) if selected else None
         for identifier, title, subtitle in choices:
             row = Adw.ActionRow(title=title, subtitle=subtitle)
             button = Gtk.CheckButton(valign=Gtk.Align.CENTER)
             button.set_group(group)
-            button.set_active(identifier == settings.default_toolset_id)
+            button.set_active(identifier == selected_id)
             button.connect("toggled", self._on_default_toolset_toggled, identifier)
             row.add_prefix(button)
             row.set_activatable_widget(button)
@@ -85,12 +90,14 @@ class SettingsSection(Gtk.Box):
             self.default_runner_list.remove(row)
         self._default_runner_rows.clear()
         settings = Repository.Settings.value
-        choices = [(None, "Automatic (platform default)", "Uses Host on Linux; uses a VM runner when available", None)]
-        choices.append(("host", "Host", "Runs primary tools directly on this computer", HOST_RUNNER))
+        choices = [("host", "Host", "Runs primary tools directly on this computer", HOST_RUNNER)]
         choices.extend((str(runner.id), runner.name, runner.short_details, runner)
                        for runner in sorted(Repository.Runner.value, key=lambda item: item.name.lower()))
         choice_ids = {identifier for identifier, *_ in choices}
-        selected_id = settings.default_runner_id if settings.default_runner_id in choice_ids else None
+        selected_id = settings.default_runner_id
+        if selected_id not in choice_ids:
+            selected = default_runner()
+            selected_id = str(selected.id) if selected else None
         group = Gtk.CheckButton()
         for identifier, title, subtitle, runner in choices:
             row = Adw.ActionRow(title=title, subtitle=subtitle or "")

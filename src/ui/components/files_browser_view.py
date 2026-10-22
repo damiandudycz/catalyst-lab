@@ -9,7 +9,7 @@ from .scrolled_window import scrolled_window
 # pushed as pages. Nothing can be changed.
 
 _HIDDEN_NAMES = {".git"} # Internal data of Git repository.
-_MAX_TEXT_SIZE = 1024 * 1024 # Larger files are shown truncated.
+_MAX_TEXT_SIZE = 5 * 1024 * 1024 # Larger files show their ending.
 
 class FilesBrowserView(Gtk.Box):
     """Folders and files of folder inside root (folders first), read when view is loaded."""
@@ -97,6 +97,8 @@ class FileContentView(Gtk.Box):
         try:
             size = os.path.getsize(path)
             with open(path, "rb") as file:
+                if size > _MAX_TEXT_SIZE:
+                    file.seek(size - _MAX_TEXT_SIZE)
                 data = file.read(_MAX_TEXT_SIZE)
         except OSError as e:
             self.append(Adw.StatusPage(icon_name="dialog-error-symbolic", title="File can't be read",
@@ -108,7 +110,7 @@ class FileContentView(Gtk.Box):
                                        vexpand=True))
             return
         info = Gtk.Label(xalign=0, label=format_size(size, max_unit="GB") + (
-            f" · showing first {format_size(_MAX_TEXT_SIZE, max_unit='GB')}" if size > _MAX_TEXT_SIZE else ""))
+            f" · showing last {format_size(_MAX_TEXT_SIZE, max_unit='GB')}" if size > _MAX_TEXT_SIZE else ""))
         info.add_css_class("dimmed")
         info.add_css_class("caption")
         self.append(info)

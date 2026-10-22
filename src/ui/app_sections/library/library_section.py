@@ -15,6 +15,9 @@ from .formatters import format_size
 from .cl_toggle_group import CLToggle, CLToggleGroup
 from .runner import HOST_RUNNER
 from .status_indicator import StatusIndicator
+from .repository import collapse_home
+from .library import LibraryChange, library_target, change_problem
+from .settings_section import LibraryChangeDialog, items_using_library
 
 
 @app_section(title="Library", icon="drive-harddisk-symbolic", order=8_500)
@@ -36,7 +39,7 @@ class LibrarySection(Gtk.Box):
         self._observed_toolsets = set()
         self._vm_runner_rows = {}
 
-        # Keep the selected Library visible while browsing any storage category.
+        # Show the selected Library location on the Overview page.
         self.library_location_row = Adw.ActionRow(title="Location", subtitle=self.library_path,
                                                    subtitle_selectable=True)
         self.library_location_row.add_css_class("property")
@@ -48,15 +51,14 @@ class LibrarySection(Gtk.Box):
         open_button.add_css_class("flat")
         open_button.connect("clicked", self._open_library_folder)
         self.library_location_row.add_suffix(open_button)
+        change_button = Gtk.Button(label="Change…", valign=Gtk.Align.CENTER)
+        change_button.connect("clicked", self._change_library_location)
+        self.library_location_row.add_suffix(change_button)
         location_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         location_list.add_css_class("boxed-list")
         location_list.append(self.library_location_row)
-        location_list.set_margin_start(24)
-        location_list.set_margin_end(24)
         location_list.set_margin_top(12)
         location_list.set_margin_bottom(12)
-        self.append(location_list)
-
         self.page_names = ("overview", "cache", "binpkgs", "snapshots", "projects", "builds")
         self.page_toggle = CLToggleGroup(valign=Gtk.Align.CENTER)
         self.page_toggle.add_css_class("round")
@@ -72,6 +74,7 @@ class LibrarySection(Gtk.Box):
         self.overview_group = Adw.PreferencesGroup(title="Library storage")
         self._group_rows = {self.overview_group: []}
         _overview_header, overview_box = self._page_box("Overview")
+        overview_box.prepend(location_list)
         self.overview_status = Gtk.Label(xalign=0, wrap=True)
         self.overview_status.add_css_class("dimmed")
         self.overview_status.set_margin_top(8)
@@ -135,6 +138,69 @@ class LibrarySection(Gtk.Box):
 
     def _open_library_folder(self, *_args):
         Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(self.library_path).get_uri(), None)
+
+    def _change_library_location(self, *_args):
+        if items := items_using_library():
+            self._show_library_message("Library Is in Use", "Stop these and try again:\n\n" +
+                                       "\n".join(f"• {item}" for item in items))
+            return
+        dialog = Gtk.FileDialog(title="Choose Library Folder", modal=True)
+        dialog.set_initial_folder(Gio.File.new_for_path(os.path.dirname(library_directory())))
+        dialog.select_folder(self.get_root(), None, self._on_library_folder_selected)
+
+    def _on_library_folder_selected(self, dialog, result):
+        try:
+            folder = dialog.select_folder_finish(result)
+        except GLib.Error:
+            return # Canceled.
+        if folder is None or folder.get_path() is None:
+            return
+        try:
+            target = library_target(folder.get_path())
+        except ValueError as error:
+            self._show_library_message("Can't Use This Folder", str(error))
+            return
+
+        location = collapse_home(target.path)
+        if target.existing:
+            dialog = Adw.AlertDialog(heading="Switch Library?", body=(
+                f"{location} contains a library. Catalyst Lab will restart and use it.\n\nCurrent library stays in "
+                f"{collapse_home(library_directory())}."))
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response(LibraryChange.SWITCH.value, "Switch and Restart")
+            dialog.set_response_appearance(LibraryChange.SWITCH.value, Adw.ResponseAppearance.SUGGESTED)
+        else:
+            dialog = Adw.AlertDialog(heading="Change Library Location?", body=(
+                f"Library will be kept in {location}. Move or copy the current library there, or create a new empty "
+                "library. Catalyst Lab restarts after the change."))
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response(LibraryChange.NEW.value, "Create New")
+            dialog.add_response(LibraryChange.COPY.value, "Copy")
+            dialog.add_response(LibraryChange.MOVE.value, "Move")
+            dialog.set_response_appearance(LibraryChange.MOVE.value, Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_prefer_wide_layout(True)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", lambda dialog, response: self._confirm_library_change(target, response))
+        dialog.present(self)
+
+    def _confirm_library_change(self, target, response: str):
+        if response == "cancel":
+            return
+        change = LibraryChange(response)
+        if items := items_using_library():
+            self._show_library_message("Library Is in Use", "Stop these and try again:\n\n" +
+                                       "\n".join(f"• {item}" for item in items))
+            return
+        if problem := change_problem(target, change):
+            self._show_library_message("Can't Change Library", problem)
+            return
+        LibraryChangeDialog(target, change).present(self)
+
+    def _show_library_message(self, heading: str, body: str):
+        dialog = Adw.AlertDialog(heading=heading, body=body)
+        dialog.add_response("ok", "OK")
+        dialog.present(self)
 
     def _on_host_runner_updated(self, *_args):
         self._update_host_runner_row()
@@ -483,7 +549,8 @@ class LibrarySection(Gtk.Box):
         except (OSError, ValueError):
             return False
 
-    def _item_use_reason(self, section: str, item: dict) -> str | None:
+    @staticmethod
+    def _item_use_reason(library_path: str, section: str, item: dict) -> str | None:
         """Return a blocker only when active app state points at this exact library object."""
         target = os.path.realpath(item.get("path", ""))
         category = item.get("category")
@@ -510,9 +577,9 @@ class LibrarySection(Gtk.Box):
             if section == "Projects" and item.get("project_id") == project_id:
                 return f"project {item['name']} is being used by {process.title}"
             if section == "Builds" and item.get("project_key") == project_key:
-                if self._same_or_inside(getattr(getattr(process, "build", None), "path", None), target):
+                if LibrarySection._same_or_inside(getattr(getattr(process, "build", None), "path", None), target):
                     return f"this build is active in {process.title}"
-                if any(self._same_or_inside(getattr(getattr(stage, "build", None), "path", None), target)
+                if any(LibrarySection._same_or_inside(getattr(getattr(stage, "build", None), "path", None), target)
                        for stage in getattr(process, "stages", [])):
                     return f"this build is active in {process.title}"
                 if item.get("timestamp") == getattr(process, "timestamp", None):
@@ -541,7 +608,7 @@ class LibrarySection(Gtk.Box):
                     filename = getattr(snapshot, "filename", None)
                     if filename:
                         extracted_snapshot = os.path.join(
-                            self.library_path, "Cache", "Extracted", "Snapshots", filename + ".d"
+                            library_path, "Cache", "Extracted", "Snapshots", filename + ".d"
                         )
                         if os.path.realpath(extracted_snapshot) == target:
                             return f"extracted snapshot is being used by {process.title}"
@@ -550,7 +617,7 @@ class LibrarySection(Gtk.Box):
                 if toolset is not None:
                     try:
                         squashfs = toolset.file_path()
-                        candidates = [os.path.join(self.library_path, "Cache", "Extracted", "Toolsets",
+                        candidates = [os.path.join(library_path, "Cache", "Extracted", "Toolsets",
                                                    os.path.basename(squashfs) + ".d")]
                         if toolset.machine:
                             from .rootless import machine_toolset_cache_image
@@ -625,13 +692,13 @@ class LibrarySection(Gtk.Box):
                 run_project_id = str(getattr(run_project, "id", ""))
                 if section == "Projects" and item.get("project_id") == run_project_id:
                     return "this project is used by a running virtual machine"
-                if section == "Builds" and self._same_or_inside(
+                if section == "Builds" and LibrarySection._same_or_inside(
                         getattr(getattr(run, "build", None), "path", None), target):
                     return "this build is used by a running virtual machine"
-                if section == "Cache" and category == "TestVMImages" and self._same_or_inside(
+                if section == "Cache" and category == "TestVMImages" and LibrarySection._same_or_inside(
                         getattr(support, "base_image_path", None), target):
                     return "this VM base image is used by a running virtual machine"
-                if section == "Cache" and category == "TestVMKernels" and self._same_or_inside(
+                if section == "Cache" and category == "TestVMKernels" and LibrarySection._same_or_inside(
                         getattr(support, "base_kernel_path", None), target):
                     return "this kernel cache is used by a running virtual machine"
         except Exception as error:
@@ -646,7 +713,7 @@ class LibrarySection(Gtk.Box):
                     if not (toolset.spawned or toolset.in_use or toolset.is_reserved):
                         continue
                     squashfs = toolset.file_path()
-                    candidates = [os.path.join(self.library_path, "Cache", "Extracted", "Toolsets",
+                    candidates = [os.path.join(library_path, "Cache", "Extracted", "Toolsets",
                                                os.path.basename(squashfs) + ".d")]
                     if toolset.machine:
                         from .rootless import machine_toolset_cache_image
@@ -664,7 +731,7 @@ class LibrarySection(Gtk.Box):
                   "Builds": self.builds_safety}
         protected_sections = set()
         for button, section, item in self._delete_buttons:
-            reason = self._item_use_reason(section, item)
+            reason = self._item_use_reason(self.library_path, section, item)
             button.set_sensitive(not self._scanning and reason is None)
             button.set_tooltip_text(reason or f"Delete {section}/{item['name']}")
             if reason:
@@ -675,7 +742,7 @@ class LibrarySection(Gtk.Box):
             label.set_visible(section in protected_sections)
 
     def _confirm_delete(self, _button, section: str, item: dict):
-        reason = self._item_use_reason(section, item)
+        reason = self._item_use_reason(self.library_path, section, item)
         self._refresh_safety()
         if reason:
             return
@@ -752,7 +819,7 @@ class LibrarySection(Gtk.Box):
         def on_response(_dialog, response):
             if response != "delete":
                 return
-            reason = self._item_use_reason("Projects", item)
+            reason = self._item_use_reason(self.library_path, "Projects", item)
             self._refresh_safety()
             if reason:
                 return
@@ -776,7 +843,7 @@ class LibrarySection(Gtk.Box):
     def _on_delete_response(self, _dialog, response: str, section: str, item: dict):
         if response != "delete":
             return
-        reason = self._item_use_reason(section, item)
+        reason = self._item_use_reason(self.library_path, section, item)
         self._refresh_safety()
         if reason:
             return
