@@ -172,7 +172,7 @@ class OllamaClient:
                 # server metadata must not make regular answer text appear in
                 # the Thinking block; explicit in-band think markers are still
                 # parsed by the chat view.
-                lambda event: track_event(event, thinking_supported is True))
+                lambda event: track_event(event, thinking_supported))
         except OllamaError as error:
             if received_event or not self._retry_without_thinking(payload, error):
                 raise

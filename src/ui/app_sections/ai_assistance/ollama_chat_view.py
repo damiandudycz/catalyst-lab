@@ -557,6 +557,8 @@ class OllamaChatView(Gtk.Box):
                     # that incomplete response has been executed or added to model
                     # history; preserve its visible segment and retry in a new one.
                     self._call_on_ui_thread(
+                        self._flush_incomplete_stream_text, current_response)
+                    self._call_on_ui_thread(
                         self._set_thinking_status, current_response,
                         "Generation interrupted · retrying…")
                     self._call_on_ui_thread(self._collapse_turn_thinking, current_response)
@@ -2407,39 +2409,105 @@ class OllamaChatView(Gtk.Box):
         content = message.get("content", "")
         thinking = message.get("thinking") or event.get("thinking", "")
         has_logprobs = isinstance(logprobs, list) and bool(logprobs)
+        logprob_tokens = [item["token"] for item in logprobs
+                          if isinstance(item, dict) and isinstance(item.get("token"), str)]
         if has_logprobs:
-            for item in logprobs:
-                if isinstance(item, dict) and isinstance(item.get("token"), str):
-                    response_label._raw_streamed_text = True
-                    update_ui(chat_view._append_raw_output if chat_view is not None else
-                              OllamaChatView._noop, item["token"])
+            response_label._raw_streamed_text = True
+            update_ui(chat_view._append_raw_output if chat_view is not None else
+                      OllamaChatView._noop, "".join(logprob_tokens))
         elif thinking or content:
             response_label._raw_streamed_text = True
             if chat_view is not None:
                 update_ui(chat_view._append_raw_output,
                           str(thinking or "") + str(content or ""))
 
-        # Ollama reports channels on message.thinking and message.content.
-        # Logprobs are metadata about generated tokens; they do not identify
-        # which channel those tokens belong to and must never drive display.
-        if thinking:
+        # Ollama may stream sampled tokens before it fills either channel field,
+        # and some model templates put all generated text (including channel
+        # markers) in this token stream. Use it as the live source regardless
+        # of the model's advertised thinking support; parse markers to place
+        # text, then use the channel fields only when they contain text that
+        # was not already represented by sampled tokens.
+        sampled_text = "".join(logprob_tokens)
+        if sampled_text:
+            response_label._used_logprob_preview = True
+            response_label._logprob_preview_text = (
+                getattr(response_label, "_logprob_preview_text", "") + sampled_text)
+            if chat_view is not None:
+                chat_view._record_debug_event("ASSISTANT TOKENS", sampled_text,
+                                              channel="sampled tokens", merge=True)
+            thinking_text = re.sub(
+                r"</?think>|<\|channel>thought|<\|channel>|<channel\|>", "",
+                str(thinking or ""))
+            sampled_plain = re.sub(
+                r"</?think>|<\|channel>thought|<\|channel>|<channel\|>", "",
+                sampled_text)
+            explicit_thinking_delta = bool(
+                thinking_text and "<think>" not in sampled_text
+                and "<|channel>" not in sampled_text
+                and sampled_plain.strip()
+                and thinking_text.strip().startswith(sampled_plain.strip()))
+            if explicit_thinking_delta:
+                thinking_piece = update_ui(OllamaChatView._route_model_tool_content,
+                                           response_label, sampled_text)
+                if thinking_piece:
+                    update_ui(OllamaChatView._set_thinking_status,
+                              response_label, "Thinking…")
+                    update_ui(OllamaChatView._append_thinking_text,
+                              response_label, thinking_piece)
+            else:
+                update_ui(OllamaChatView._append_logprob_answer,
+                          response_label, sampled_text, suppress_content)
+
+        def already_sampled(text):
+            if not sampled_text or not text:
+                return False
+            # Ollama can report the same generated text both as token logprobs
+            # and in a separated channel field. Ignore the duplicate field
+            # delta, while retaining channel fields that are absent from the
+            # sampled-token stream.
+            preview = getattr(response_label, "_logprob_preview_text", "")
+            preview = re.sub(r"</?think>|<\|channel>thought|<\|channel>|<channel\|>",
+                             "", preview)
+            normalized = re.sub(r"</?think>|<\|channel>thought|<\|channel>|<channel\|>",
+                                "", str(text))
+            return bool(normalized and normalized in preview)
+
+        # Separate channel fields are authoritative when sampled tokens did not
+        # already carry the same text. This handles servers/models that expose
+        # channel text without token logprobs.
+        if thinking and not already_sampled(str(thinking)):
             if chat_view is not None:
                 chat_view._record_debug_event("ASSISTANT CHANNEL", str(thinking),
                                               channel="thinking", merge=True)
             update_ui(OllamaChatView._set_thinking_status, response_label, "Thinking…")
-            update_ui(OllamaChatView._begin_generated_token_stream, response_label)
             thinking = update_ui(OllamaChatView._route_model_tool_content,
                                  response_label, str(thinking))
             if thinking:
-                update_ui(OllamaChatView._append_generated_token, response_label,
-                          thinking, False, False, True)
+                update_ui(OllamaChatView._append_thinking_text, response_label, thinking)
 
-        if content:
+        if content and not already_sampled(str(content)):
             if chat_view is not None:
                 chat_view._record_debug_event("ASSISTANT CHANNEL", str(content),
                                               channel="content", merge=True)
             content = update_ui(OllamaChatView._route_model_tool_content,
                                 response_label, str(content))
+            if content and getattr(response_label, "_used_logprob_preview", False):
+                preview = (getattr(response_label, "_visible_streamed_answer", "")
+                           or getattr(response_label, "_logprob_preview_text", ""))
+                if preview:
+                    # The final event can repeat text that was already shown
+                    # from token metadata. Trim the shared prefix/tail so the
+                    # canonical channel does not appear twice.
+                    if content.startswith(preview):
+                        content = content[len(preview):]
+                    elif preview.startswith(content) or content in preview:
+                        content = ""
+                    else:
+                        overlap = min(len(preview), len(content))
+                        while overlap and not preview.endswith(content[:overlap]):
+                            overlap -= 1
+                        if overlap:
+                            content = content[overlap:]
             if content:
                 if tool_call_text is not None and calls:
                     tool_call_text[0] += content
@@ -2447,9 +2515,17 @@ class OllamaChatView(Gtk.Box):
                                           ("<think>", "</think>", "<|channel>"))
                 if has_inline_thinking:
                     update_ui(OllamaChatView._begin_generated_token_stream, response_label)
-                update_ui(OllamaChatView._append_generated_token, response_label,
-                          content, False, suppress_content,
-                          bool(suppress_content or has_inline_thinking))
+                if has_inline_thinking or suppress_content:
+                    # Inline channel markers need the marker-aware parser;
+                    # suppressed provisional text must stay out of the answer.
+                    update_ui(OllamaChatView._append_generated_token, response_label,
+                              content, False, suppress_content, True)
+                else:
+                    # Ollama's `message.content` is already the user-visible
+                    # channel. Render ordinary chunks directly so model
+                    # thinking capability cannot delay them until turn end.
+                    update_ui(OllamaChatView._append_response_text,
+                              response_label, content)
                 if not calls and not suppress_content:
                     clean_content = content.replace("</think>", "").replace("<think>", "")
                     if clean_content:
@@ -2937,12 +3013,7 @@ class OllamaChatView(Gtk.Box):
 
     @staticmethod
     def _begin_generated_token_stream(response_view: Gtk.Label):
-        first_chunk = not getattr(response_view, "_has_generated_token_stream", False)
         response_view._has_generated_token_stream = True
-        if first_chunk:
-            response_view._thinking_tokens = ""
-            response_view._tool_call_text = ""
-            response_view._tool_call_token_text = ""
         expander = getattr(response_view, "_thinking_expander", None)
         if expander is not None and not getattr(response_view, "_generation_response_started", False):
             expander.set_label("Thinking…")
@@ -2985,10 +3056,12 @@ class OllamaChatView(Gtk.Box):
         while current:
             if current.startswith("<think>"):
                 response_view._generation_has_think_marker = True
+                response_view._generation_response_started = False
                 current = current[len("<think>"):]
                 continue
             if current.startswith(gemma_thinking_open):
                 response_view._generation_has_think_marker = True
+                response_view._generation_response_started = False
                 expander = getattr(response_view, "_thinking_expander", None)
                 if expander is not None:
                     expander.set_label("Thinking…")
@@ -3036,10 +3109,46 @@ class OllamaChatView(Gtk.Box):
                 response_view._generated_token_text = getattr(response_view, "_generated_token_text", "") + current[0]
             current = current[1:]
         if answer_piece:
-            OllamaChatView._append_response_text(response_view, "".join(answer_piece))
+            answer_text = "".join(answer_piece)
+            response_view._visible_streamed_answer = (
+                getattr(response_view, "_visible_streamed_answer", "") + answer_text)
+            OllamaChatView._append_response_text(response_view, answer_text)
         if tool_piece:
             OllamaChatView._append_tool_call_text(response_view, "".join(tool_piece))
         OllamaChatView._render_thinking_text(response_view)
+        return GLib.SOURCE_REMOVE
+
+    @staticmethod
+    def _append_logprob_answer(response_view: Gtk.Label, token: str,
+                               suppress_content: bool = False):
+        token = OllamaChatView._route_model_tool_content(response_view, token)
+        if not token:
+            return GLib.SOURCE_REMOVE
+        markers = ("<think>", "</think>", "<|channel>thought", "<|channel>", "<channel|>")
+        current = getattr(response_view, "_logprob_marker_buffer", "") + token
+        response_view._logprob_marker_buffer = ""
+        if any(marker in current for marker in markers):
+            OllamaChatView._append_logprob_channel_tokens(response_view, current)
+            return GLib.SOURCE_REMOVE
+        pending = next((current[-size:] for size in range(1, min(len(current), max(map(len, markers))) + 1)
+                        if any(marker.startswith(current[-size:]) for marker in markers)), "")
+        answer = current[:-len(pending)] if pending else current
+        response_view._logprob_marker_buffer = pending
+        if answer and not suppress_content:
+            response_view._visible_streamed_answer = (
+                getattr(response_view, "_visible_streamed_answer", "") + answer)
+            OllamaChatView._append_response_text(response_view, answer)
+        return GLib.SOURCE_REMOVE
+
+    @staticmethod
+    def _append_logprob_channel_tokens(response_view: Gtk.Label, token: str,
+                                       suppress_content: bool = False):
+        OllamaChatView._begin_generated_token_stream(response_view)
+        # Before an explicit marker appears, sampled text belongs to the
+        # answer channel. The marker parser switches into/out of thinking.
+        response_view._generation_response_started = True
+        OllamaChatView._append_generated_token(
+            response_view, token, False, suppress_content, True)
         return GLib.SOURCE_REMOVE
 
     @staticmethod
@@ -3132,6 +3241,11 @@ class OllamaChatView(Gtk.Box):
         """For models without a think channel, leave the streamed answer in its normal bubble only."""
         response_view._generated_token_text = ""
         response_view._has_generated_token_stream = False
+        response_view._logprob_marker_buffer = ""
+        response_view._logprob_preview_text = ""
+        response_view._used_logprob_preview = False
+        response_view._response_edge_buffer = ""
+        response_view._response_has_visible_text = False
         response_view._visible_streamed_answer = ""
         OllamaChatView._render_thinking_text(response_view)
         return GLib.SOURCE_REMOVE
@@ -3144,8 +3258,8 @@ class OllamaChatView(Gtk.Box):
         thinking = getattr(response_view, "_thinking_tokens", "")
         tool_text = getattr(response_view, "_tool_call_text", "")
         generated = getattr(response_view, "_generated_token_text", "")
-        sections = [generated] if getattr(response_view, "_has_generated_token_stream", False) else [
-            part for part in (thinking, tool_text) if part]
+        sections = [OllamaChatView._strip_empty_edge_lines(part)
+                    for part in (thinking, tool_text, generated) if part]
         sections = [part for part in sections if part]
         label.set_text("\n".join(sections))
         expander = getattr(response_view, "_thinking_expander", None)
@@ -3174,11 +3288,38 @@ class OllamaChatView(Gtk.Box):
         response_view._tool_markup_active = False
         response_view._tool_markup_last_arguments = None
         response_view._has_generated_token_stream = False
+        response_view._logprob_marker_buffer = ""
+        response_view._logprob_preview_text = ""
+        response_view._used_logprob_preview = False
+        response_view._response_edge_buffer = ""
+        response_view._response_has_visible_text = False
         if label is not None:
             label.set_text("")
         if expander is not None:
             expander.set_label("Thinking…")
             expander.set_visible(False)
+        return GLib.SOURCE_REMOVE
+
+    @staticmethod
+    def _flush_incomplete_stream_text(response_view: Gtk.Label):
+        """Expose delimiter fragments held back when a stream ends early."""
+        generated_marker = getattr(response_view, "_generation_marker_buffer", "")
+        response_view._generation_marker_buffer = ""
+        if generated_marker:
+            OllamaChatView._append_response_text(response_view, generated_marker)
+
+        tool_marker = getattr(response_view, "_tool_markup_buffer", "")
+        response_view._tool_markup_buffer = ""
+        if tool_marker:
+            if getattr(response_view, "_tool_markup_active", False):
+                OllamaChatView._append_tool_call_text(response_view, tool_marker)
+            else:
+                OllamaChatView._append_response_text(response_view, tool_marker)
+
+        logprob_marker = getattr(response_view, "_logprob_marker_buffer", "")
+        response_view._logprob_marker_buffer = ""
+        if logprob_marker:
+            OllamaChatView._append_response_text(response_view, logprob_marker)
         return GLib.SOURCE_REMOVE
 
     @staticmethod
@@ -3198,11 +3339,42 @@ class OllamaChatView(Gtk.Box):
         if parser is None:
             parser = MarkdownStreamRenderer(response_view)
             response_view._markdown_parser = parser
-        parser.append(content)
+        # Hold trailing blank lines until the next chunk confirms whether they
+        # are internal paragraph spacing or just generation padding. Leading
+        # blank lines are discarded as soon as visible text begins.
+        incoming = getattr(response_view, "_response_edge_buffer", "") + str(content)
+        response_view._response_edge_buffer = ""
+        lines = incoming.splitlines(keepends=True)
+        if not getattr(response_view, "_response_has_visible_text", False):
+            while lines and not lines[0].strip():
+                lines.pop(0)
+        if not lines:
+            return GLib.SOURCE_REMOVE
+        while lines and not lines[-1].strip():
+            response_view._response_edge_buffer = lines.pop() + response_view._response_edge_buffer
+        visible = "".join(lines)
+        trailing_breaks = re.search(r"(?:\r\n|\n|\r)+$", visible)
+        if trailing_breaks:
+            response_view._response_edge_buffer = (
+                trailing_breaks.group() + response_view._response_edge_buffer)
+            visible = visible[:trailing_breaks.start()]
+        if visible:
+            parser.append(visible)
+            if visible.strip():
+                response_view._response_has_visible_text = True
         chat_view = getattr(response_view, "_chat_view", None)
         if chat_view is not None:
             chat_view._scroll_to_bottom()
         return GLib.SOURCE_REMOVE
+
+    @staticmethod
+    def _strip_empty_edge_lines(text: str) -> str:
+        lines = str(text or "").splitlines()
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        return "\n".join(lines)
 
     @staticmethod
     def _finalize_response(response_view: Gtk.Label):
@@ -3370,11 +3542,13 @@ class OllamaChatView(Gtk.Box):
             # the stream renderer received only empty/whitespace fragments.
             parser = getattr(label, "_markdown_parser", None)
             rendered = getattr(parser, "raw", "")
-            if reply and parser and not rendered.strip():
+            display_reply = self._strip_empty_edge_lines(reply)
+            label._response_edge_buffer = ""
+            if display_reply and parser and not rendered.strip():
                 parser.raw = ""
-                parser.append(reply, final=True)
-            elif reply and parser and reply.startswith(rendered) and len(reply) > len(rendered):
-                parser.append(reply[len(rendered):], final=True)
+                parser.append(display_reply, final=True)
+            elif display_reply and parser and display_reply.startswith(rendered) and len(display_reply) > len(rendered):
+                self._append_response_text(label, display_reply[len(rendered):])
             if reply and not getattr(label, "_raw_streamed_text", False):
                 self._append_raw_output(reply)
                 label._raw_streamed_text = True
